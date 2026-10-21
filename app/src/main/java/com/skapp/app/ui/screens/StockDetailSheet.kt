@@ -39,6 +39,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.skapp.app.data.EngineScore
 import com.skapp.app.data.KBar
+import com.skapp.app.data.MarketDataClient
 import com.skapp.app.data.LocalEngineResult
 import com.skapp.app.ui.SkappViewModel
 import com.skapp.app.ui.UiState
@@ -388,7 +389,7 @@ private fun KlineChart(bars: List<KBar>, modifier: Modifier = Modifier) {
             val p = Path()
             var started = false
             bars.forEachIndexed { i, _ ->
-                val v = ma.getOrNull(i)
+                val v = (ma.getOrNull(i) as? Double)
                 if (v != null) {
                     val x = i * stepX; val y = yOf(v)
                     if (!started) { p.moveTo(x, y); started = true } else p.lineTo(x, y)
