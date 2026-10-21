@@ -11,6 +11,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.Button
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
@@ -58,6 +59,14 @@ fun AiScreen(vm: SkappViewModel, state: UiState) {
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
                 )
+                Spacer(Modifier.height(4.dp))
+                Button(
+                    onClick = { vm.saveTokenNow() },
+                    enabled = state.aiToken.isNotBlank(),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("保存并启用")
+                }
                 Text(
                     if (state.aiConfigured) "已配置，可用" else "未配置",
                     style = MaterialTheme.typography.bodySmall,
