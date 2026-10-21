@@ -11,12 +11,12 @@ object RemoteSources {
     const val RAW = "https://raw.githubusercontent.com"
 
     /** A 仓：主供数 + API 树 + AI 问答 */
-    const val OWNER_A = "qwerzxcva"
-    const val REPO_A = "stocks-ai-view"
+    const val OWNER_A = "jiegengxiangjianxue"
+    const val REPO_A = "skapp-data"
 
     /** C 仓：镜像 */
-    const val OWNER_C = "dufuwuxin"
-    const val REPO_C = "stocks-ai-view-c"
+    const val OWNER_C = "jiegengxiangjianxue"
+    const val REPO_C = "stocks-ai-view-b"
 
     /** skapp-data：全市场代码表 */
     const val OWNER_SYMBOLS = "jiegengxiangjianxue"
