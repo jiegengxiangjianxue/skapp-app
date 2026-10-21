@@ -165,7 +165,7 @@ class SkappViewModel : ViewModel() {
                 .map { it.code }.distinct()
             if (codes.isEmpty()) return@launch
             val prefixed = codes.map { SkappApi.prefixed(it) }
-            val quotes = MarketDataClient.fetchQuotes(prefixed)
+            val quotes = SkappApi.fetchQuotes(prefixed)
             val byNorm = HashMap<String, Quote>()
             quotes.forEach { (k, v) -> SkappApi.normalize(k)?.let { n -> byNorm[n] = v } }
             _state.value = _state.value.copy(pickQuotes = byNorm)
@@ -232,6 +232,13 @@ class SkappViewModel : ViewModel() {
      * 打开个股详情：缓存优先，避免重复点击已选中的复权按钮也重新拉取。
      * 数据链：日K(缓存→腾讯→东财) → 本地引擎 + 资金流 + 板块 + 实时报价
      */
+    /** 切换复权方式：已选中则忽略（缓存命中，不重新拉取） */
+    fun switchAdjust(adjust: String) {
+        if (_state.value.detailAdjust == adjust) return
+        val code = _state.value.detail?.code ?: return
+        openDetail(code, adjust)
+    }
+
     fun openDetail(code: String, adjust: String = "qfq") {
         val cached = _state.value.detail
         val sameStock = cached?.code == code && _state.value.detailAdjust == adjust
