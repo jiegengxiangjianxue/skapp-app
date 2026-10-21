@@ -6,10 +6,16 @@ import com.skapp.app.data.AskEngine
 import com.skapp.app.data.DataCache
 import com.skapp.app.data.Decision
 import com.skapp.app.data.DecisionCard
+import com.skapp.app.data.HoloBundle
+import com.skapp.app.data.NewsCalc
+import com.skapp.app.data.NewsCalcEngine
+import com.skapp.app.data.HoloClient
 import com.skapp.app.data.KBar
+import com.skapp.app.data.KPeriod
 import com.skapp.app.data.KlineApi
 import com.skapp.app.data.LocalEngine
 import com.skapp.app.data.LocalEngineResult
+import com.skapp.app.data.LocalScreener
 import com.skapp.app.data.MarketDataClient
 import com.skapp.app.data.MarketHours
 import com.skapp.app.data.BundleDetail
@@ -79,6 +85,17 @@ data class UiState(
     val liveQuote: Quote? = null,
     /** 推股列表的实时报价快照（code -> Quote），避免显示过期的本地快照价 */
     val pickQuotes: Map<String, Quote> = emptyMap(),
+    /** K 线周期（日/周/月） */
+    val kPeriod: KPeriod = KPeriod.DAY,
+    /** stocks-holo 全量 bundle */
+    val holo: HoloBundle? = null,
+    /** 本地实时选股结果 */
+    val screened: List<LocalScreener.Screened> = emptyList(),
+    val screening: Boolean = false,
+    val screenMsg: String? = null,
+    /** 逐条快讯的实时算法计算（直接显示在标题下） */
+    val newsCalcs: List<NewsCalc> = emptyList(),
+    val newsCalcLoading: Boolean = false,
 )
 
 class SkappViewModel : ViewModel() {
@@ -117,6 +134,7 @@ class SkappViewModel : ViewModel() {
                 )
                 refreshQuotes()
                 loadIndices()
+                loadNewsCalcs()
             }.onFailure { e ->
                 _state.value = _state.value.copy(
                     loading = false,
@@ -229,39 +247,38 @@ class SkappViewModel : ViewModel() {
     }
 
     /**
-     * 打开个股详情：缓存优先，避免重复点击已选中的复权按钮也重新拉取。
-     * 数据链：日K(缓存→腾讯→东财) → 本地引擎 + 资金流 + 板块 + 实时报价
+     * 打开个股详情：stocks-holo 全量 + 实时行情 + 本地引擎（引擎吃 holo/kline/technical）。
+     * 缓存优先：重复点同一只股票且复权/周期未变则不重新拉。
      */
-    /** 切换复权方式：已选中则忽略（缓存命中，不重新拉取） */
-    fun switchAdjust(adjust: String) {
-        if (_state.value.detailAdjust == adjust) return
-        val code = _state.value.detail?.code ?: return
-        openDetail(code, adjust)
-    }
-
     fun openDetail(code: String, adjust: String = "qfq") {
-        val cached = _state.value.detail
-        val sameStock = cached?.code == code && _state.value.detailAdjust == adjust
+        val same = _state.value.detail?.code == code &&
+            _state.value.detailAdjust == adjust &&
+            _state.value.holo != null
         viewModelScope.launch {
-            _state.value = _state.value.copy(detailLoading = !sameStock, detailAdjust = adjust)
-            // 1) 日 K（缓存优先）
-            val bars = DataCache.kline(code, adjust, 250)
-            if (_state.value.kline.isEmpty() || !sameStock) {
-                _state.value = _state.value.copy(kline = bars)
+            _state.value = _state.value.copy(detailLoading = !same, detailAdjust = adjust)
+            // 1) stocks-holo（网页版同源：kline/technical/finance/moneyflow/news/sentiment）
+            val holo = HoloClient.full(code)
+            // 2) 日 K：holo 优先（全史），退化腾讯/东财
+            val bars = when {
+                holo.kline.size >= 30 -> holo.kline
+                else -> DataCache.kline(code, adjust, 250)
             }
-            // 2) 实时报价（盘中 30s TTL；休市时只取一次）
+            if (!same) _state.value = _state.value.copy(kline = bars, holo = holo)
+            // 3) 实时报价（现价以实时为准，修「多维评分价格与真实价不一致」）
             val q = DataCache.quote(code)
-            // 3) 本地引擎（缓存）
+            // 4) 本地引擎（吃 K 线 + holo technical）
             val engine = DataCache.engine(code, adjust, bars)
-            // 4) 云端 bundle + QA
+            // 5) 资金流：holo 优先，退化东财
+            val flow = holo.moneyflow.ifEmpty { DataCache.fundFlow(code, 60) }
+            // 6) 板块：东财实时 + 云端
+            val boards = DataCache.boards(code)
+            // 7) 云端 bundle/QA（兜底）
             val cloud = SkappApi.fetchStockDetail(code)
             val qa = SkappApi.fetchQa(code)
-            // 5) 资金流 + 板块（缓存）
-            val flow = DataCache.fundFlow(code, 60)
-            val boards = DataCache.boards(code)
             val merged = (cloud ?: StockDetail(code = code)).copy(
-                name = q?.name?.takeIf { it.isNotBlank() } ?: cloud?.name,
-                detail = (cloud?.detail ?: bundleFromLocal(bars, q)),
+                name = q?.name?.takeIf { it.isNotBlank() } ?: holo.holo?.get("name")?.toString()
+                    ?: cloud?.name,
+                detail = cloud?.detail ?: bundleFromLocal(bars, q, holo),
                 aiQa = qa ?: cloud?.aiQa,
             )
             _state.value = _state.value.copy(
@@ -279,25 +296,80 @@ class SkappViewModel : ViewModel() {
         }
     }
 
+    /** 切换 K 线周期（日/周/月由日 K 本地聚合，不重新请求） */
+    fun switchPeriod(p: KPeriod) {
+        if (_state.value.kPeriod == p) return
+        val daily = _state.value.kline
+        _state.value = _state.value.copy(kPeriod = p, kline = aggregateKline(daily, p))
+    }
+
+    /** 快讯 + 主线：逐条标题下实时算（标题命中的股票 → 实时行情 + 本地引擎） */
+    fun loadNewsCalcs() {
+        viewModelScope.launch {
+            _state.value = _state.value.copy(newsCalcLoading = true)
+            val symbols = _state.value.symbols
+            // 快讯：云端 news API 的 hot_news.items + extra.items
+            val items = ArrayList<Map<String, Any?>>()
+            _state.value.news.items.forEach { items.add(it) }
+            // 主线：hot_themes.themes 的 name + 关联个股
+            val themes = _state.value.news.themes.mapNotNull { t ->
+                val name = (t["name"] ?: t["theme"])?.toString() ?: return@mapNotNull null
+                val st = (t["stocks"] as? List<*>)?.mapNotNull { s ->
+                    (s as? Map<*, *>)?.get("name")?.toString()
+                }?.joinToString(" ") ?: ""
+                mapOf<String, Any?>(
+                    "title" to "【主线】$name ${if (st.isNotEmpty()) "关联：$st" else ""}",
+                    "source" to "hot_themes",
+                    "updated" to (t["ts"]?.toString()),
+                )
+            }
+            items.addAll(themes)
+            val calcs = NewsCalcEngine.compute(items, symbols)
+            _state.value = _state.value.copy(newsCalcLoading = false, newsCalcs = calcs)
+        }
+    }
+
+    /** 本地实时选股（不用云端旧快照） */
+    fun runScreen() {
+        viewModelScope.launch {
+            _state.value = _state.value.copy(screening = true, screenMsg = "正在实时拉取全市场行情…")
+            val res = runCatching { LocalScreener.screen() }.getOrElse {
+                _state.value = _state.value.copy(
+                    screening = false,
+                    screenMsg = "实时选股失败：${it.message ?: "行情接口不可达"}",
+                )
+                return@launch
+            }
+            _state.value = _state.value.copy(
+                screening = false,
+                screened = res,
+                screenMsg = if (res.isEmpty()) "预筛后无满足条件的股票" else null,
+            )
+        }
+    }
+
     /** 用本地 K 线造一个 bundle 形状，供 UI 复用同一套渲染 */
-    private fun bundleFromLocal(bars: List<KBar>, q: Quote?): BundleDetail? {
-        if (bars.isEmpty()) return null
+    private fun bundleFromLocal(bars: List<KBar>, q: Quote?, holo: HoloBundle? = null): BundleDetail? {
+        if (bars.isEmpty() && holo == null) return null
         val f = TechnicalCalc.compute(bars)
         return BundleDetail(
             status = "ok",
             ts = bars.last().date,
-            quote = mapOf<String, Double?>(
-                "price" to (q?.price ?: bars.last().close),
-                "pctChg" to q?.pctChg,
-            ).filterValues { it != null } as Map<String, Double?>,
-            technical = mapOf<String, Double?>(
+            quote = buildMap {
+                val hPrice = (holo?.holo?.get("price") as? Number)?.toDouble()
+                val live = q?.price ?: hPrice ?: bars.lastOrNull()?.close
+                if (live != null) put("price", live)
+                val livePct = q?.pctChg ?: (holo?.holo?.get("pctChg") as? Number)?.toDouble()
+                if (livePct != null) put("pctChg", livePct)
+            },
+            technical = (holo?.technical ?: emptyMap()) + mapOf<String, Double?>(
                 "ma5" to f?.ma5, "ma10" to f?.ma10, "ma20" to f?.ma20, "ma60" to f?.ma60,
                 "rsi14" to f?.rsi14, "macd" to f?.macdHist, "vol_ratio" to f?.volRatio,
                 "k" to f?.k, "d" to f?.d, "j" to f?.j,
                 "atr14" to f?.atr14,
                 "boll_lower" to f?.bollLower, "boll_mid" to f?.bollMid, "boll_upper" to f?.bollUpper,
             ).filterValues { it != null },
-            financialLatest = emptyMap(),
+            financialLatest = holo?.finance ?: emptyMap(),
         )
     }
 
