@@ -72,13 +72,13 @@ object SiteBoardClient {
     )
 
     suspend fun pools(): List<Pool> = coroutineScope {
-        val goodD = async(Dispatchers.IO) { getJson("$RAW/good_stock_pool.json") }
-        val sectorD = async(Dispatchers.IO) { getJson("$RAW/sector_pool.json") }
-        val cycleD = async(Dispatchers.IO) { getJson("$RAW/cycle_pool_v2.json") }
-        val lowD = async(Dispatchers.IO) { getJson("$RAW/lowpool.json") }
-        val compD = async(Dispatchers.IO) { getJson("$RAW/composite_pool_v3_eom.json") }
-        val limitD = async(Dispatchers.IO) { getJson("$RAW/limitup_attribution.json") }
-        val moneyD = async(Dispatchers.IO) { getJson("$RAW/moneyflow.json") }
+        val goodD = async(Dispatchers.IO) { getJson("$API/good_stock_pool.json") }
+        val sectorD = async(Dispatchers.IO) { getJson("$API/sector_pool.json") }
+        val cycleD = async(Dispatchers.IO) { getJson("$API/cycle_pool_v2.json") }
+        val lowD = async(Dispatchers.IO) { getJson("$API/lowpool.json") }
+        val compD = async(Dispatchers.IO) { getJson("$API/composite_pool_v3_eom.json") }
+        val limitD = async(Dispatchers.IO) { getJson("$API/limitup_attribution.json") }
+        val moneyD = async(Dispatchers.IO) { getJson("$API/moneyflow.json") }
 
         val out = ArrayList<Pool>()
 
@@ -194,7 +194,7 @@ object SiteBoardClient {
 
     suspend fun board(): Map<String, Any?> = withContext(Dispatchers.IO) {
         val out = LinkedHashMap<String, Any?>()
-        val src = getJson("$RAW/latest.json") ?: getJson("$RAW/market_now.json")
+        val src = getJson("$API/latest.json") ?: getJson("$API/market_now.json")
         if (src == null) {
             out["status"] = "insufficient"
             out["reason"] = "latest.json / market_now.json 均不可达"
@@ -215,14 +215,14 @@ object SiteBoardClient {
 
     suspend fun summary(): Map<String, Any?> = withContext(Dispatchers.IO) {
         val out = LinkedHashMap<String, Any?>()
-        val brief = getJson("$RAW/daily_brief.json")
+        val brief = getJson("$API/daily_brief.json")
         if (brief != null) {
             out["text"] = brief.optString("text").takeIf { it.isNotEmpty() }
             out["date"] = brief.optString("date")
             out["session"] = brief.optString("session")
             out["ts"] = brief.optString("ts")
         }
-        val latest = getJson("$RAW/latest.json")
+        val latest = getJson("$API/latest.json")
         latest?.let { l ->
             out["picks"] = l.optJSONArray("picks")?.toMapList() ?: emptyList<Map<String, Any?>>()
             out["review"] = l.opt("review")
