@@ -7,6 +7,11 @@ import com.skapp.app.data.Decision
 import com.skapp.app.data.DecisionCard
 import com.skapp.app.data.KBar
 import com.skapp.app.data.KlineApi
+import com.skapp.app.data.LocalEngine
+import com.skapp.app.data.LocalEngineResult
+import com.skapp.app.data.MarketDataClient
+import com.skapp.app.data.MarketHours
+import com.skapp.app.data.BundleDetail
 import com.skapp.app.data.MarketSnapshot
 import com.skapp.app.data.NewsSnapshot
 import com.skapp.app.data.PickSignal
@@ -59,6 +64,17 @@ data class UiState(
     val askAnswer: String? = null,
     val askLoading: Boolean = false,
     val askMatches: List<StockDetail> = emptyList(),
+    val marketPhase: String = "加载中",
+    val autoRefresh: Boolean = false,
+    val nextRefreshIn: Long? = null,
+    val aShareIndices: List<Map<String, Any?>> = emptyList(),
+    val globalIndices: List<Map<String, Any?>> = emptyList(),
+    val localEngine: LocalEngineResult? = null,
+    val detailAdjust: String = "qfq",
+    val fundFlow: List<Map<String, Any?>> = emptyList(),
+    val boardsOf: List<Map<String, Any?>> = emptyList(),
+    val minuteTrend: List<Map<String, Any?>> = emptyList(),
+    val liveQuote: Quote? = null,
 )
 
 class SkappViewModel : ViewModel() {
@@ -96,6 +112,7 @@ class SkappViewModel : ViewModel() {
                     symbols = symbols.await(),
                 )
                 refreshQuotes()
+                loadIndices()
             }.onFailure { e ->
                 _state.value = _state.value.copy(
                     loading = false,
@@ -105,14 +122,37 @@ class SkappViewModel : ViewModel() {
         }
     }
 
-    /** 30s 自动刷新实时报价 */
+    /** 行情刷新：只在 A 股交易时段（含竞价）自动刷新，休市时停表 */
     fun startQuoteLoop() {
         quoteJob?.cancel()
         quoteJob = viewModelScope.launch {
             while (isActive) {
-                refreshQuotes()
-                delay(30_000)
+                val now = java.util.Date()
+                val phase = MarketHours.phase(now)
+                val trading = MarketHours.isTrading(now) || MarketHours.isAuction(now)
+                _state.value = _state.value.copy(
+                    marketPhase = MarketHours.describe(now),
+                    autoRefresh = trading,
+                    nextRefreshIn = MarketHours.msUntilAutoRefresh(now),
+                )
+                if (trading) {
+                    refreshQuotes()
+                    delay(30_000)
+                } else {
+                    // 休市：按距离下一次开市的剩余时间睡，最长 10 分钟醒一次更新状态
+                    val wait = MarketHours.msUntilAutoRefresh(now) ?: (10 * 60_000L)
+                    delay(minOf(wait, 10 * 60_000L))
+                }
             }
+        }
+    }
+
+    /** 全球 + A 股指数（东财 ulist，一次批量） */
+    fun loadIndices() {
+        viewModelScope.launch {
+            val a = MarketDataClient.aShareIndices()
+            val g = MarketDataClient.globalIndices()
+            _state.value = _state.value.copy(aShareIndices = a, globalIndices = g)
         }
     }
 
@@ -163,16 +203,72 @@ class SkappViewModel : ViewModel() {
         _state.value = _state.value.copy(searchResults = res)
     }
 
-    /** 打开个股详情：API + bundle + QA + K 线 */
-    fun openDetail(code: String) {
+    /**
+     * 打开个股详情：本地引擎 + 多源数据。
+     * 数据链：日K(腾讯→东财, qfq/hfq) → 本地算技术指标与多引擎评分
+     *        + 资金流(东财 push2his) + 所属板块(东财) + 云端 bundle/QA 兜底
+     */
+    fun openDetail(code: String, adjust: String = "qfq") {
         viewModelScope.launch {
-            _state.value = _state.value.copy(detailLoading = true, detail = null, kline = emptyList())
-            val detail = SkappApi.fetchStockDetail(code)
-            _state.value = _state.value.copy(detailLoading = false, detail = detail)
-            _state.value = _state.value.copy(klineLoading = true)
-            val k = KlineApi.fetchDayKline(code, 120)
-            _state.value = _state.value.copy(klineLoading = false, kline = k)
+            _state.value = _state.value.copy(
+                detailLoading = true, detail = null, kline = emptyList(),
+                detailAdjust = adjust, localEngine = null, fundFlow = emptyList(),
+                boardsOf = emptyList(), minuteTrend = emptyList(),
+            )
+            val q = MarketDataClient.quote(code)
+            val bars = MarketDataClient.dayKline(code, 250, adjust)
+            _state.value = _state.value.copy(kline = bars, klineLoading = false)
+            val engine = LocalEngine.analyze(bars)
+            val cloud = SkappApi.fetchStockDetail(code)
+            val qa = SkappApi.fetchQa(code)
+            val flow = MarketDataClient.fundFlowHistory(code, 60)
+            val boards = MarketDataClient.boardsOf(code)
+            val merged = (cloud ?: StockDetail(code = code)).copy(
+                name = q?.name?.takeIf { it.isNotBlank() } ?: cloud?.name,
+                detail = (cloud?.detail ?: bundleFromLocal(bars, q)),
+                aiQa = qa ?: cloud?.aiQa,
+            )
+            _state.value = _state.value.copy(
+                detailLoading = false,
+                detail = merged,
+                localEngine = engine,
+                fundFlow = flow,
+                boardsOf = boards,
+                liveQuote = q,
+            )
+            if (MarketHours.isTrading() || MarketHours.isAuction() ||
+                MarketHours.phase() == MarketHours.Phase.AFTER_HOURS) {
+                _state.value = _state.value.copy(minuteTrend = MarketDataClient.minuteTrend(code))
+            }
         }
+    }
+
+    /** 切换复权方式重新拉 K 线并重算本地引擎 */
+    fun switchAdjust(adjust: String) {
+        val code = _state.value.detail?.code ?: return
+        openDetail(code, adjust)
+    }
+
+    /** 用本地 K 线造一个 bundle 形状，供 UI 复用同一套渲染 */
+    private fun bundleFromLocal(bars: List<KBar>, q: Quote?): BundleDetail? {
+        if (bars.isEmpty()) return null
+        val f = TechnicalCalc.compute(bars)
+        return BundleDetail(
+            status = "ok",
+            ts = bars.last().date,
+            quote = mapOf<String, Double?>(
+                "price" to (q?.price ?: bars.last().close),
+                "pctChg" to q?.pctChg,
+            ).filterValues { it != null } as Map<String, Double?>,
+            technical = mapOf<String, Double?>(
+                "ma5" to f?.ma5, "ma10" to f?.ma10, "ma20" to f?.ma20, "ma60" to f?.ma60,
+                "rsi14" to f?.rsi14, "macd" to f?.macdHist, "vol_ratio" to f?.volRatio,
+                "k" to f?.k, "d" to f?.d, "j" to f?.j,
+                "atr14" to f?.atr14,
+                "boll_lower" to f?.bollLower, "boll_mid" to f?.bollMid, "boll_upper" to f?.bollUpper,
+            ).filterValues { it != null },
+            financialLatest = emptyMap(),
+        )
     }
 
     fun closeDetail() {
