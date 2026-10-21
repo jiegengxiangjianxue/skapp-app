@@ -415,8 +415,8 @@ object ExtendedIndicators {
     fun upDays20d(bars: List<KBar>, n: Int = 20): Double? {
         if (bars.size <= n) return null
         val closes = bars.map { it.close }
-        return (1 until closes.size).takeLast(n)
-            .count { closes[it] > closes[it - 1] }.toDouble() / n
+        val idx = (1 until closes.size).toList().takeLast(n)
+        return idx.count { closes[it] > closes[it - 1] }.toDouble() / n
     }
 
     fun overnight20d(bars: List<KBar>, n: Int = 20): Double? {
