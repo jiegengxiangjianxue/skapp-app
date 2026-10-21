@@ -16,16 +16,30 @@ import java.net.URL
  */
 object SiteBoardClient {
 
-    private const val RAW = "https://raw.githubusercontent.com/qwerzxcva/stocks-ai-view/main/data"
+    // raw.githubusercontent.com 在部分网络不稳，改用 Contents API + token（支持私有仓）
+    private const val API = "https://api.github.com/repos/qwerzxcva/stocks-ai-view/contents/data"
+    private var token: String? = null
+    fun setToken(t: String?) { token = t?.takeIf { it.isNotBlank() } }
 
     private fun getJson(url: String): JSONObject? {
+        val u = if (url.contains("raw.githubusercontent.com")) {
+            url.replace("https://raw.githubusercontent.com/", "$API/")
+                .replaceFirst("/main/", "/contents/")
+                .replaceFirst("/master/", "/contents/")
+        } else if (url.startsWith(API)) {
+            url
+        } else {
+            url
+        }
         var conn: HttpURLConnection? = null
         return try {
-            conn = (URL(url).openConnection() as HttpURLConnection).apply {
+            conn = (URL(u).openConnection() as HttpURLConnection).apply {
                 connectTimeout = 15000
                 readTimeout = 15000
                 requestMethod = "GET"
                 setRequestProperty("User-Agent", "Mozilla/5.0 (Android) skapp")
+                token?.let { setRequestProperty("Authorization", "Bearer $it") }
+                if (u.startsWith(API)) setRequestProperty("Accept", "application/vnd.github.raw")
             }
             if (conn.responseCode != HttpURLConnection.HTTP_OK) return null
             BufferedReader(InputStreamReader(conn.inputStream, Charsets.UTF_8)).use { it.readText() }
