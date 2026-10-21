@@ -17,15 +17,26 @@ import java.nio.charset.Charset
 object SkappApi {
 
     private const val TIMEOUT = 15000
+    private const val API_ROOT = "https://api.github.com/repos"
+    private var token: String? = null
+    fun setToken(t: String?) { token = t?.takeIf { it.isNotBlank() } }
 
     private fun fetchText(url: String, charset: String = "utf-8"): String? {
+        // raw.githubusercontent.com 在部分网络不可达，GitHub 域名一律走 Contents API
+        val u = if (url.contains("raw.githubusercontent.com")) {
+            url.replace("https://raw.githubusercontent.com/", API_ROOT)
+                .replaceFirst("/main/", "/contents/")
+                .replaceFirst("/master/", "/contents/")
+        } else url
         var conn: HttpURLConnection? = null
         return try {
-            conn = (URL(url).openConnection() as HttpURLConnection).apply {
+            conn = (URL(u).openConnection() as HttpURLConnection).apply {
                 connectTimeout = TIMEOUT
                 readTimeout = TIMEOUT
                 requestMethod = "GET"
                 setRequestProperty("User-Agent", "skapp-android")
+                token?.let { setRequestProperty("Authorization", "Bearer $it") }
+                if (u.startsWith(API_ROOT)) setRequestProperty("Accept", "application/vnd.github.raw")
             }
             if (conn.responseCode != HttpURLConnection.HTTP_OK) return null
             val cs = if (charset == "gbk") Charset.forName("GBK") else Charsets.UTF_8
