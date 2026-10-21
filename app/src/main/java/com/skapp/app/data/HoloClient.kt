@@ -2,6 +2,7 @@ package com.skapp.app.data
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -146,15 +147,15 @@ object HoloClient {
     }
 
     /** 一次拉全（并行）——详情页用 */
-    suspend fun full(code: String): HoloBundle = withContext(Dispatchers.IO) {
-        val metaD = kotlinx.coroutines.async { meta(code) }
-        val holoD = kotlinx.coroutines.async { holo(code) }
-        val techD = kotlinx.coroutines.async { technical(code) }
-        val finD = kotlinx.coroutines.async { finance(code) }
-        val flowD = kotlinx.coroutines.async { moneyflow(code) }
-        val newsD = kotlinx.coroutines.async { news(code) }
-        val sentiD = kotlinx.coroutines.async { sentiment(code) }
-        val klD = kotlinx.coroutines.async { kline(code) }
+    suspend fun full(code: String): HoloBundle = coroutineScope {
+        val metaD = async(Dispatchers.IO) { meta(code) }
+        val holoD = async(Dispatchers.IO) { holo(code) }
+        val techD = async(Dispatchers.IO) { technical(code) }
+        val finD = async(Dispatchers.IO) { finance(code) }
+        val flowD = async(Dispatchers.IO) { moneyflow(code) }
+        val newsD = async(Dispatchers.IO) { news(code) }
+        val sentiD = async(Dispatchers.IO) { sentiment(code) }
+        val klD = async(Dispatchers.IO) { kline(code) }
         HoloBundle(
             code = code,
             meta = metaD.await(),
