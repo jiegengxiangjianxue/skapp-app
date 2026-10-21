@@ -59,8 +59,8 @@ object MarketStateEngine {
     }
 
     private fun fetchCyclePool(): JSONObject? {
-        // 直接从 GitHub API 拉周期池
-        val url = "https://api.github.com/repos/qwerzxcva/stocks-ai-view/contents/data/cycle_pool_v2.json"
+        // 直接从 GitHub API 拉周期池 (cycles/cycle_pool_v2.json)
+        val url = "${RemoteSources.base("jiegengxiangjianxue", "skapp-data")}/cycle_pool_v2.json"
         var conn: HttpURLConnection? = null
         return try {
             conn = (URL(url).openConnection() as HttpURLConnection).apply {
@@ -70,7 +70,10 @@ object MarketStateEngine {
                 setRequestProperty("User-Agent", "Mozilla/5.0 (Android) skapp")
                 setRequestProperty("Accept", "application/vnd.github.v3.raw")
             }
-            if (conn.responseCode != HttpURLConnection.HTTP_OK) return null
+            if (conn.responseCode != HttpURLConnection.HTTP_OK) {
+                // 如果文件不存在或不可访问，返回 null（让 E=0，中立）
+                return null
+            }
             BufferedReader(InputStreamReader(conn.inputStream, Charsets.UTF_8)).use {
                 runCatching { JSONObject(it.readText()) }.getOrNull()
             }
