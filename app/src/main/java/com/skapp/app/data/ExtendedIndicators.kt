@@ -177,10 +177,10 @@ object ExtendedIndicators {
             .sumOf { if (it.second != 0.0) it.first / it.second else 0.0 })
     }
 
-    /** Pivot Points 枢轴点 */
+    /** Pivot Points 枢轴点：pp, r1, s1 */
     fun pivotPoints(bar: KBar): Triple<Double, Double, Double> {
         val pp = (bar.high + bar.low + bar.close) / 3
-        return pp to (2 * pp - bar.low) to (2 * pp - bar.high)
+        return Triple(pp, 2 * pp - bar.low, 2 * pp - bar.high)
     }
 
     /** Hull MA */
@@ -420,12 +420,13 @@ object ExtendedIndicators {
     }
 
     fun overnight20d(bars: List<KBar>, n: Int = 20): Double? {
-        if (bars.size <= n) return null
-        return bars.takeLast(n).mapNotNull { bar ->
-            bars.getOrNull(bars.size - n - 1)?.let { prev ->
-                if (prev.close > 0) (bar.open - prev.close) / prev.close else null
-            }
-        }.takeIf { it.isNotEmpty() }?.average()
+        if (bars.size <= n + 1) return null
+        val rets = ArrayList<Double>()
+        for (i in bars.size - n until bars.size) {
+            val prev = bars.getOrNull(i - 1) ?: continue
+            if (prev.close > 0) rets += (bars[i].open - prev.close) / prev.close
+        }
+        return rets.takeIf { it.isNotEmpty() }?.average()
     }
 
     fun intraday20d(bars: List<KBar>, n: Int = 20): Double? {
