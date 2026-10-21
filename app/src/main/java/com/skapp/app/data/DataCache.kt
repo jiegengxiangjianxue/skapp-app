@@ -39,7 +39,9 @@ object DataCache {
         synchronized(store) { store[key] = CacheEntry(value, now() + ttlMs) }
     }
 
-    fun invalidate(key: String) = synchronized(store) { store.remove(key) }
+    fun invalidate(key: String) {
+        synchronized(store) { store.remove(key) }
+    }
 
     fun invalidatePrefix(prefix: String) {
         synchronized(store) { store.keys.filter { it.startsWith(prefix) }.forEach { store.remove(it) } }
