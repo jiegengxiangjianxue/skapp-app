@@ -1,5 +1,6 @@
 package com.skapp.app.ui.screens
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -71,10 +72,12 @@ fun AskScreen(vm: SkappViewModel, state: UiState) {
                 Text("试试这些：", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
                 SUGGESTIONS.forEach { s ->
                     Card(
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)
+                            .clickable { vm.onQuestionChange(s) },
                         colors = CardDefaults.cardColors(),
-                        onClick = { vm.onQuestionChange(s) },
-                    )
+                    ) {
+                        Text(s, Modifier.padding(12.dp))
+                    }
                 }
             }
         }
@@ -99,11 +102,10 @@ fun AskScreen(vm: SkappViewModel, state: UiState) {
                 }
                 items(state.askMatches, key = { it.code }) { d ->
                     Card(
-                            modifier = Modifier.fillMaxWidth(),
-                            colors = CardDefaults.cardColors(),
-                            onClick = { vm.openDetail(d.code) },
-                        ) {
-                            Row(
+                        modifier = Modifier.fillMaxWidth().clickable { vm.openDetail(d.code) },
+                        colors = CardDefaults.cardColors(),
+                    ) {
+                        Row(
                                 Modifier.fillMaxWidth().padding(12.dp),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                             ) {
