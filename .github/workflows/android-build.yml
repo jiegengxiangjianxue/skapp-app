@@ -65,6 +65,19 @@ jobs:
       - name: Write local.properties
         run: echo "sdk.dir=$RUNNER_TEMP/android-sdk" > local.properties
 
+      - name: Force SDK (arm64) aapt2, not the x86_64 one from Maven
+        run: |
+          set -e
+          # AGP 默认从 Maven 拉 aapt2-*-linux.jar(仅 x86_64)。arm64 runner 上必须用
+          # SDK 自带的 aarch64 二进制，否则报 "Syntax error: ( unexpected"。
+          mkdir -p "$ANDROID_HOME/build-tools/35.0.0"
+          if ! "$ANDROID_HOME/build-tools/35.0.0/aapt2" version >/dev/null 2>&1; then
+            echo "ERROR: SDK aapt2 is not runnable"
+            exit 1
+          fi
+          "$ANDROID_HOME/build-tools/35.0.0/aapt2" version
+          echo "android.aapt2FromMavenOverride=" >> gradle.properties
+
       - name: Build Debug APK
         run: gradle :app:assembleDebug --no-daemon --stacktrace
 
