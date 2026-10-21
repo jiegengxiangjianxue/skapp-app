@@ -29,6 +29,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.skapp.app.data.ExtendedDataClient
 import com.skapp.app.ui.SkappViewModel
 import com.skapp.app.ui.UiState
 import com.skapp.app.ui.Watchlist
@@ -59,6 +60,16 @@ fun MarketScreen(vm: SkappViewModel, state: UiState) {
                 )
             }
         }
+        Spacer(Modifier.height(8.dp))
+
+        // 数据源状态（证明真的接进来了）
+        val sources = remember { ExtendedDataClient.sourceCatalog() }
+        Text(
+            "已接入数据源 ${sources.size} 个：" +
+                sources.take(6).joinToString("、") { it.first } + " 等",
+            style = MaterialTheme.typography.bodySmall,
+            color = Color.Gray,
+        )
         Spacer(Modifier.height(8.dp))
 
         // 全球股市（东财 ulist 批量）
