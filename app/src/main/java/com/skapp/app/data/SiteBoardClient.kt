@@ -69,10 +69,21 @@ object SiteBoardClient {
         val out = ArrayList<Pool>()
 
         goodD.await()?.let { o ->
-            val items = o.optJSONArray("eligible")?.toItems()
-                ?: o.optJSONObject("eligible")?.let { e ->
-                    e.keys().mapNotNull { k -> e.optJSONArray(k)?.toItems() }.flatten()
-                } ?: emptyList()
+            val eligibleArr = o.optJSONArray("eligible")
+            val eligibleObj = o.optJSONObject("eligible")
+            val items: List<PoolItem> = when {
+                eligibleArr != null -> eligibleArr.toItems()
+                eligibleObj != null -> {
+                    val out = ArrayList<PoolItem>()
+                    val keys = eligibleObj.keys()
+                    while (keys.hasNext()) {
+                        val k = keys.next()
+                        eligibleObj.optJSONArray(k)?.let { out.addAll(it.toItems()) }
+                    }
+                    out
+                }
+                else -> emptyList()
+            }
             out.add(Pool(
                 id = "good",
                 name = "推荐池",
