@@ -14,6 +14,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -27,73 +28,169 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.skapp.app.data.NewsCalc
 import com.skapp.app.ui.SkappViewModel
 import com.skapp.app.ui.UiState
 
+private val UP = Color(0xFFF85149)
+private val DOWN = Color(0xFF3FB950)
+
 /**
- * 消息 Tab：顶栏切换「快讯 / 情绪 / 主线 / 影响 / 传导」。
+ * 消息 Tab：只剩「快讯」和「主线」两个顶栏。
+ * 每条快讯标题下方**直接显示实时算法计算**（标题命中的股票 → 实时行情 + 本地引擎）。
  */
 @Composable
 fun NewsScreen(vm: SkappViewModel, state: UiState) {
-    val n = state.news
-    var tab by remember { mutableStateOf(0) }
-
-    val tabs = listOf(
-        "快讯" to n.items,
-        "情绪" to emptyList<Map<String, Any?>>(),
-        "主线" to n.themes,
-        "影响" to n.impacts,
-        "传导" to n.transmission,
-    )
+    var tab by remember { mutableStateOf(0) }   // 0 快讯 / 1 主线
+    val calcs = state.newsCalcs
+    val items = calcs.filter { n ->
+        if (tab == 1) n.newsTitle.startsWith("【主线】") else !n.newsTitle.startsWith("【主线】")
+    }
 
     Column(Modifier.fillMaxWidth()) {
+        // ── 顶栏 ──
         Row(
             Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface)
                 .padding(horizontal = 12.dp, vertical = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(
-                "消息面",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-            )
+            Text("消息", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             Spacer(Modifier.weight(1f))
-            tabs.forEachIndexed { i, (name, list) ->
-                NewsTab(name, if (i == 1) (n.digest["total"] as? Int ?: 0) else list.size, tab == i) { tab = i }
-            }
+            NewsTab("快讯", calcs.count { !it.newsTitle.startsWith("【主线】") }, tab == 0) { tab = 0 }
+            NewsTab("主线", calcs.count { it.newsTitle.startsWith("【主线】") }, tab == 1) { tab = 1 }
         }
         HorizontalDivider()
 
-        Text(
-            n.ts ?: "时点暂无",
-            Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-            style = MaterialTheme.typography.bodySmall,
-            color = Color.Gray,
-        )
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                "标题下方为实时算法计算结果（实时行情 + 本地引擎）",
+                style = MaterialTheme.typography.bodySmall,
+                color = Color.Gray,
+            )
+            if (state.newsCalcLoading) {
+                CircularProgressIndicator()
+            } else {
+                Text(
+                    "刷新",
+                    Modifier.clickable { vm.loadNewsCalcs() },
+                    color = MaterialTheme.colorScheme.primary,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+        }
 
-        when (tab) {
-            1 -> SentimentPanel(n)
-            else -> {
-                val current = tabs[tab].second
-                if (current.isEmpty()) {
-                    Box(
-                        Modifier.fillMaxWidth().padding(24.dp),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text("暂无数据：该分类上游未产出。", color = Color.Gray)
+        if (items.isEmpty() && !state.newsCalcLoading) {
+            Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
+                Text("暂无数据：快讯未拉到或未命中。", color = Color.Gray)
+            }
+        } else {
+            LazyColumn(
+                Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                items(items, key = { it.newsTitle.hashCode() }) { n ->
+                    NewsCardWithCalc(n, vm)
+                }
+            }
+        }
+    }
+}
+
+/** 一条快讯：标题 + 情绪 + 标题下的实时算法结果 */
+@Composable
+private fun NewsCardWithCalc(n: NewsCalc, vm: SkappViewModel) {
+    Card(colors = CardDefaults.cardColors()) {
+        Column(Modifier.padding(12.dp)) {
+            // 标题
+            Text(n.newsTitle, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+
+            // 来源 + 时间 + 情绪
+            Row(
+                Modifier.fillMaxWidth().padding(top = 2.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                n.source?.let {
+                    Text(it, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                }
+                n.ts?.let {
+                    Text(it, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                }
+                val (sentiText, sentiColor) = when (n.sentiment) {
+                    "pos" -> "利好" to UP
+                    "neg" -> "利空" to DOWN
+                    else -> "中性" to Color.Gray
+                }
+                Text(sentiText, style = MaterialTheme.typography.bodySmall, color = sentiColor)
+            }
+
+            HorizontalDivider(Modifier.padding(vertical = 6.dp))
+
+            // ── 标题下的实时计算 ──
+            when (n.status) {
+                "no_stock" -> Text(
+                    "该条未提及具体股票，无个股计算。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.Gray,
+                )
+                else -> {
+                    if (n.stocks.isEmpty()) {
+                        Text("计算中或数据不足。", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
                     }
-                } else {
-                    LazyColumn(
-                        Modifier.fillMaxWidth().padding(horizontal = 12.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        items(current, key = { "n" + it.hashCode() }) { m ->
-                            when (tab) {
-                                3 -> ImpactCard(m, vm)
-                                else -> GenericCard(m)
+                    n.stocks.forEach { s ->
+                        Row(
+                            Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                                .clickable { vm.openDetail(s.code) },
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        s.name ?: s.code,
+                                        fontWeight = FontWeight.Medium,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                    )
+                                    Spacer(Modifier.width(6.dp))
+                                    Text(
+                                        s.code,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = Color.Gray,
+                                    )
+                                }
+                                // 实时价 + 涨跌 + 量比
+                                Text(
+                                    "实时价 ${s.price?.let { String.format("%.2f", it) } ?: "暂无"}" +
+                                        "　涨跌 ${s.pctChg?.let { String.format("%.2f%%", it) } ?: "—"}" +
+                                        (s.volRatio?.let { "　量比 ${String.format("%.2f", it)}" } ?: ""),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = pctColor(s.pctChg),
+                                )
+                                // 本地引擎分 + 信号 + 理由
+                                Text(
+                                    "本地引擎 ${s.localScore?.let { String.format("%.1f", it) } ?: "insufficient"}" +
+                                        "　${signalText(s.signal)}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = signalColor(s.signal),
+                                )
+                                s.topReasons.take(2).forEach {
+                                    Text(
+                                        "· $it",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = Color.LightGray,
+                                    )
+                                }
                             }
+                            Text(
+                                "详情 ›",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.primary,
+                            )
                         }
+                        HorizontalDivider()
                     }
                 }
             }
@@ -123,150 +220,22 @@ private fun NewsTab(name: String, count: Int, selected: Boolean, onClick: () -> 
     }
 }
 
-/** 情绪面板：市场情绪摘要 + 分类计数 */
-@Composable
-private fun SentimentPanel(n: com.skapp.app.data.NewsSnapshot) {
-    val dg = n.digest
-    LazyColumn(
-        Modifier.fillMaxWidth().padding(horizontal = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        if (dg.isNotEmpty()) {
-            item {
-                Card(colors = CardDefaults.cardColors()) {
-                    Column(Modifier.padding(12.dp)) {
-                        Text("市场情绪", fontWeight = FontWeight.SemiBold)
-                        Text(
-                            buildString {
-                                append("情绪：${dg["global_mood"] ?: "暂无数据"}")
-                                dg["global_score"]?.let { append("（评分 $it）") }
-                                dg["total"]?.let { append("　共 $it 条") }
-                            },
-                            style = MaterialTheme.typography.bodySmall,
-                        )
-                        if (dg["stale"] == true) {
-                            Text(
-                                "注意：上游标记 stale，数据可能过期",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = Color(0xFFD29922),
-                            )
-                        }
-                        val cc = dg["cat_counts"]
-                        if (cc is Map<*, *>) {
-                            Spacer(Modifier.height(6.dp))
-                            cc.entries.forEach { (k, v) ->
-                                Text(
-                                    "$k：$v",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = Color.LightGray,
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        // 分类下的新闻（categories 是 dict: 分类 -> 列表）
-        val cats = (dg["categories"] as? Map<*, *>) ?: emptyMap<Any?, Any?>()
-        cats.forEach { (cat, items) ->
-            item {
-                Text(
-                    cat.toString(),
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold,
-                )
-            }
-            if (items is List<*>) {
-                items(items.take(10), key = { "c" + it.hashCode() }) { m ->
-                    val mm = m as? Map<*, *> ?: return@items
-                    Card(colors = CardDefaults.cardColors()) {
-                        Column(Modifier.padding(12.dp)) {
-                            Text(
-                                (mm["title"] ?: "暂无标题").toString(),
-                                style = MaterialTheme.typography.bodyMedium,
-                            )
-                            val senti = mm["sentiment"]
-                            val src = mm["src"]
-                            if (senti != null || src != null) {
-                                Text(
-                                    listOfNotNull(senti?.toString(), src?.toString()).joinToString(" · "),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = sentimentColor(senti?.toString()),
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        if (cats.isEmpty() && dg.isEmpty()) {
-            item { Text("暂无数据：消息面引擎产出不可达。", color = Color.Gray) }
-        }
-    }
+private fun pctColor(pct: Double?): Color = when {
+    pct == null -> Color.Gray
+    pct > 0 -> UP
+    pct < 0 -> DOWN
+    else -> Color.Gray
 }
 
-@Composable
-private fun GenericCard(m: Map<String, Any?>) {
-    Card(colors = CardDefaults.cardColors()) {
-        Column(Modifier.padding(12.dp)) {
-            Text(
-                (m["title"] ?: m["name"] ?: m["theme"] ?: "暂无标题").toString(),
-                fontWeight = FontWeight.Medium,
-            )
-            val sub = listOfNotNull(
-                m["source_name"]?.toString() ?: m["source"]?.toString(),
-                m["updated"]?.toString() ?: m["ts"]?.toString(),
-            ).filter { it.isNotEmpty() && it != "null" }
-            if (sub.isNotEmpty()) {
-                Text(sub.joinToString(" · "), style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-            }
-            val stocks = m["stocks"]
-            if (stocks is List<*>) {
-                Text(
-                    stocks.take(6).joinToString("、") { s ->
-                        (s as? Map<*, *>)?.get("name")?.toString() ?: s.toString()
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = Color.LightGray,
-                )
-            }
-        }
-    }
+private fun signalText(s: String?): String = when (s) {
+    "bullish" -> "偏多"
+    "bearish" -> "偏空"
+    "neutral" -> "中性"
+    else -> "数据不足"
 }
 
-@Composable
-private fun ImpactCard(m: Map<String, Any?>, vm: SkappViewModel) {
-    val code = (m["code"] ?: "").toString()
-    val name = (m["name"] ?: "").toString().ifEmpty { code }
-    val dir = m["direction"]
-    Card(
-        modifier = Modifier.fillMaxWidth()
-            .then(if (code.isNotEmpty()) Modifier.clickable { vm.openDetail(code) } else Modifier),
-        colors = CardDefaults.cardColors(),
-    ) {
-        Row(
-            Modifier.fillMaxWidth().padding(12.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text(name, fontWeight = FontWeight.Medium)
-                if (code.isNotEmpty()) {
-                    Text(code, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-                }
-            }
-            if (dir != null) {
-                Text(
-                    dir.toString(),
-                    color = sentimentColor(dir.toString()),
-                    style = MaterialTheme.typography.bodySmall,
-                )
-            }
-        }
-    }
-}
-
-private fun sentimentColor(v: String?): Color = when (v) {
-    "positive", "利好", "bull" -> Color(0xFFF85149)
-    "negative", "利空", "bear" -> Color(0xFF3FB950)
+private fun signalColor(s: String?): Color = when (s) {
+    "bullish" -> UP
+    "bearish" -> DOWN
     else -> Color.Gray
 }
