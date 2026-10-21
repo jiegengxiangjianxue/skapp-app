@@ -24,6 +24,7 @@ import com.skapp.app.data.MarketSnapshot
 import com.skapp.app.data.NewsSnapshot
 import com.skapp.app.data.PickSignal
 import com.skapp.app.data.Quote
+import com.skapp.app.data.SiteBoardClient
 import com.skapp.app.data.SkappApi
 import com.skapp.app.data.StockDetail
 import com.skapp.app.data.TechnicalCalc
@@ -97,6 +98,13 @@ data class UiState(
     /** 逐条快讯的实时算法计算（直接显示在标题下） */
     val newsCalcs: List<NewsCalc> = emptyList(),
     val newsCalcLoading: Boolean = false,
+    /** 多池选股（网页版 8 池） */
+    val pools: List<SiteBoardClient.Pool> = emptyList(),
+    val poolsLoading: Boolean = false,
+    /** 看板 */
+    val board: Map<String, Any?> = emptyMap(),
+    /** 实时总结 */
+    val summary: Map<String, Any?> = emptyMap(),
 )
 
 class SkappViewModel : ViewModel() {
@@ -136,6 +144,9 @@ class SkappViewModel : ViewModel() {
                 refreshQuotes()
                 loadIndices()
                 loadNewsCalcs()
+                loadPools()
+                loadBoard()
+                loadSummary()
             }.onFailure { e ->
                 _state.value = _state.value.copy(
                     loading = false,
@@ -334,6 +345,35 @@ class SkappViewModel : ViewModel() {
             items.addAll(themes)
             val calcs = NewsCalcEngine.compute(items, symbols)
             _state.value = _state.value.copy(newsCalcLoading = false, newsCalcs = calcs)
+        }
+    }
+
+    /** 多池选股（网页版 8 池） */
+    fun loadPools() {
+        viewModelScope.launch {
+            _state.value = _state.value.copy(poolsLoading = true)
+            val ps = runCatching { SiteBoardClient.pools() }.getOrElse { emptyList() }
+            _state.value = _state.value.copy(poolsLoading = false, pools = ps)
+        }
+    }
+
+    /** 看板 */
+    fun loadBoard() {
+        viewModelScope.launch {
+            val b = runCatching { SiteBoardClient.board() }.getOrElse {
+                mapOf<String, Any?>("status" to "insufficient", "reason" to it.message)
+            }
+            _state.value = _state.value.copy(board = b)
+        }
+    }
+
+    /** 实时总结 */
+    fun loadSummary() {
+        viewModelScope.launch {
+            val s = runCatching { SiteBoardClient.summary() }.getOrElse {
+                mapOf<String, Any?>("status" to "insufficient", "reason" to it.message)
+            }
+            _state.value = _state.value.copy(summary = s)
         }
     }
 
