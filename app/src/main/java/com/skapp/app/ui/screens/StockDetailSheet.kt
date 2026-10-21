@@ -38,6 +38,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.skapp.app.data.EngineScore
+import com.skapp.app.data.ExtendedIndicators
 import com.skapp.app.data.KBar
 import com.skapp.app.data.MarketDataClient
 import com.skapp.app.data.LocalEngineResult
@@ -133,6 +134,53 @@ fun StockDetailSheet(vm: SkappViewModel, state: UiState) {
                         style = MaterialTheme.typography.bodySmall,
                         color = Color.Gray,
                     )
+                    // 逐日明细（可展开），让每个点位的时间与数值可读
+                    var showTable by remember { mutableStateOf(false) }
+                    Row(
+                        Modifier.fillMaxWidth().clickable { showTable = !showTable },
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Text(
+                            if (showTable) "收起逐日明细 ▲" else "展开逐日明细（日期/开高低收/涨跌幅）▼",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                    if (showTable) {
+                        HorizontalDivider()
+                        Row(Modifier.fillMaxWidth()) {
+                            listOf("日期", "开", "高", "低", "收", "涨跌%").forEach {
+                                Text(
+                                    it,
+                                    Modifier.weight(1f),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = Color.Gray,
+                                )
+                            }
+                        }
+                        state.kline.asReversed().take(60).forEachIndexed { i, b ->
+                            val prev = state.kline.getOrNull(state.kline.size - 1 - i - 1)
+                            val chg = prev?.let { if (it.close > 0) (b.close - it.close) / it.close * 100 else null }
+                            Row(Modifier.fillMaxWidth()) {
+                                Text(b.date, Modifier.weight(1.4f), style = MaterialTheme.typography.bodySmall)
+                                Text(String.format("%.2f", b.open), Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
+                                Text(String.format("%.2f", b.high), Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, color = UP)
+                                Text(String.format("%.2f", b.low), Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, color = DOWN)
+                                Text(String.format("%.2f", b.close), Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
+                                Text(
+                                    chg?.let { String.format("%.2f", it) } ?: "—",
+                                    Modifier.weight(1f),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = when {
+                                        chg == null -> Color.Gray
+                                        chg > 0 -> UP
+                                        chg < 0 -> DOWN
+                                        else -> Color.Gray
+                                    },
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -161,7 +209,7 @@ fun StockDetailSheet(vm: SkappViewModel, state: UiState) {
                     Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
-                    Text("本地引擎评分", fontWeight = FontWeight.SemiBold)
+                    Text("本地引擎评分（12 引擎）", fontWeight = FontWeight.SemiBold)
                     eng?.composite?.let {
                         Text(
                             "综合 ${String.format("%.1f", it)}",
@@ -171,7 +219,8 @@ fun StockDetailSheet(vm: SkappViewModel, state: UiState) {
                     }
                 }
                 Text(
-                    "在设备上直接计算，不依赖服务端；基于 ${eng?.barsUsed ?: 0} 根日 K",
+                    "在设备上直接计算，不依赖服务端；基于 ${eng?.barsUsed ?: 0} 根日 K，" +
+                        "有效引擎 ${eng?.nValid ?: 0}/12",
                     style = MaterialTheme.typography.bodySmall,
                     color = Color.Gray,
                 )
@@ -278,6 +327,30 @@ fun StockDetailSheet(vm: SkappViewModel, state: UiState) {
             }
         }
 
+        // ── 29 因子库 ──
+        Card(colors = CardDefaults.cardColors()) {
+            Column(Modifier.padding(12.dp)) {
+                Text("因子库（29 因子，本机计算）", fontWeight = FontWeight.SemiBold)
+                Text(
+                    "对应站点 factor_lib.py",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.Gray,
+                )
+                HorizontalDivider()
+                Spacer(Modifier.height(6.dp))
+                if (state.kline.size < 30) {
+                    Text("暂无数据：K 线不足 30 根。", color = Color.Gray)
+                } else {
+                    ExtendedIndicators.allFactors(state.kline).entries.forEach { (k, v) ->
+                        Text(
+                            "${factorLabel(k)}：${v?.let { String.format("%.4f", it) } ?: "暂无"}",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                }
+            }
+        }
+
         // ── 数据来源 ──
         SectionCard("数据来源") {
             Text("实时报价：腾讯 qt.gtimg.cn（兜底 东财 push2 / 新浪 hq.sinajs）")
@@ -286,6 +359,11 @@ fun StockDetailSheet(vm: SkappViewModel, state: UiState) {
             Text("资金流：东财 push2his fflow（兜底 push2delay）")
             Text("所属板块：东财 push2 stock/get")
             Text("技术指标与评分：本机计算（MA/MACD/RSI/KDJ/BOLL/ATR/量比）")
+            Text("同花顺：d/basic/news/zx 四域（日K/F10/快讯/强势股）")
+            Text("问财选股：iwencai.com（自然语言）")
+            Text("东财：F10 财务 / 龙虎榜 / 板块资金 / 全球指数")
+            Text("新浪：hq.sinajs.cn / vip.stock.finance.sina.com.cn")
+            Text("雪球热搜：stock.xueqiu.com")
             Text("云端 bundle / AI 问答：qwerzxcva/stocks-ai-view + 镜像")
         }
     }
@@ -363,46 +441,91 @@ private fun SectionCard(title: String, content: @Composable () -> Unit) {
     }
 }
 
-/** K 线图：收盘价折线 + 最后一点标记 + 均线(MA5/MA20) */
+/** 日期轴标签（首/中/末） */
+private fun dateAxisLabel(dates: List<String>, idx: Int): String? =
+    when (idx) {
+        0, dates.size - 1 -> dates.getOrNull(idx)
+        dates.size / 4, dates.size / 2, dates.size * 3 / 4 -> dates.getOrNull(idx)
+        else -> null
+    }
+
+/**
+ * 日 K 图：K 线蜡烛（开高低收）+ MA5/MA20 叠加 + 日期轴。
+ * 下方列出「最近 10 个交易日的日期/收盘/涨跌幅」，让每个点位的时间可读。
+ */
 @Composable
 private fun KlineChart(bars: List<KBar>, modifier: Modifier = Modifier) {
-    Canvas(modifier) {
-        if (bars.size < 2) return@Canvas
-        val closes = bars.map { it.close }
-        val min = closes.min(); val max = closes.max()
-        val range = (max - min).takeIf { it > 0 } ?: 1.0
-        val stepX = size.width / (bars.size - 1).toFloat()
-        fun yOf(v: Double) = (size.height - ((v - min) / range) * size.height).toFloat()
-
-        // 收盘价
-        val path = Path()
-        bars.forEachIndexed { i, b ->
-            val x = i * stepX
-            val y = yOf(b.close)
-            if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
+    if (bars.size < 2) {
+        Box(modifier, contentAlignment = Alignment.Center) {
+            Text("暂无数据", color = Color.Gray)
         }
-        drawPath(path, color = BLUE, style = Stroke(width = 3f))
+        return
+    }
+    val lows = bars.map { it.low }
+    val highs = bars.map { it.high }
+    val minP = lows.min()
+    val maxP = highs.max()
+    val range = (maxP - minP).takeIf { it > 0 } ?: 1.0
+    val stepX = modifierSize(bars.size)
 
-        // MA5 / MA20
-        listOf(5 to Color(0xFFD29922), 20 to Color(0xFFA371F7)).forEach { (n, col) ->
-            val ma = MarketDataClient.ma(bars, n)
-            val p = Path()
-            var started = false
-            bars.forEachIndexed { i, _ ->
-                val v = (ma.getOrNull(i) as? Double)
-                if (v != null) {
-                    val x = i * stepX; val y = yOf(v)
-                    if (!started) { p.moveTo(x, y); started = true } else p.lineTo(x, y)
-                }
+    Column(modifier) {
+        Canvas(Modifier.fillMaxWidth().height(160.dp)) {
+            val w = size.width
+            val h = size.height
+            val bw = maxOf(1.5f, (w / bars.size) * 0.62f)
+            fun yOf(v: Double) = (h - ((v - minP) / range) * h).toFloat()
+
+            bars.forEachIndexed { i, b ->
+                val cx = i * (w / (bars.size - 1))
+                // 影线
+                drawLine(
+                    color = if (b.close >= b.open) UP else DOWN,
+                    start = Offset(cx, yOf(b.high)),
+                    end = Offset(cx, yOf(b.low)),
+                    strokeWidth = 1.2f,
+                )
+                // 实体
+                val yO = yOf(b.open)
+                val yC = yOf(b.close)
+                val top = minOf(yO, yC)
+                val bh = maxOf(1.5f, kotlin.math.abs(yC - yO))
+                drawRect(
+                    color = if (b.close >= b.open) UP else DOWN,
+                    topLeft = Offset(cx - bw / 2, top),
+                    size = androidx.compose.ui.geometry.Size(bw, bh),
+                )
             }
-            if (started) drawPath(p, color = col, style = Stroke(width = 2f))
-        }
 
-        // 最新点
-        val last = bars.last()
-        drawCircle(BLUE, radius = 5f, center = Offset(size.width, yOf(last.close)))
+            // MA5 / MA20
+            listOf(5 to Color(0xFFD29922), 20 to Color(0xFFA371F7)).forEach { (n, col) ->
+                val ma = MarketDataClient.ma(bars, n)
+                val path = Path()
+                var started = false
+                bars.forEachIndexed { i, _ ->
+                    val v = (ma.getOrNull(i) as? Double)
+                    if (v != null) {
+                        val x = i * (w / (bars.size - 1))
+                        val y = yOf(v)
+                        if (!started) { path.moveTo(x, y); started = true } else path.lineTo(x, y)
+                    }
+                }
+                if (started) drawPath(path, color = col, style = Stroke(width = 1.6f))
+            }
+        }
+        // 日期轴
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            val mid = bars[bars.size / 2].date
+            Text(bars.first().date, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+            Text(mid, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+            Text(bars.last().date, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+        }
     }
 }
+
+private fun modifierSize(n: Int) = n
 
 /** 分时图 */
 @Composable
@@ -456,6 +579,30 @@ private fun engineName(k: String): String = when (k) {
     "volume" -> "量能"
     "boll" -> "布林"
     "macd" -> "MACD"
+    "supertrend" -> "SuperTrend"
+    "keltner" -> "Keltner"
+    "choppiness" -> "震荡指数"
+    "mfi" -> "MFI资金流"
+    "vortex" -> "涡旋"
+    "obv" -> "能量潮"
+    "position" -> "位置分位"
+    else -> k
+}
+
+private fun factorLabel(k: String): String = when (k) {
+    "momentum_5d" -> "5日动量"; "momentum_10d" -> "10日动量"
+    "momentum_20d" -> "20日动量"; "momentum_60d" -> "60日动量"
+    "ret_1d" -> "日涨跌幅"; "ma20_bias" -> "MA20乖离"; "ma60_bias" -> "MA60乖离"
+    "rsi_14" -> "RSI14"; "macd_hist_pct" -> "MACD柱强度"
+    "vol_ratio_5d" -> "5日量比"; "vol_trend_5_10" -> "量能趋势"
+    "obv_trend_20d" -> "量能潮20日"; "amplitude" -> "日振幅"
+    "vol_20d" -> "20日波动率"; "downside_vol_20d" -> "下行波动率"
+    "close_position" -> "收盘位置"; "gap_return" -> "跳空收益"
+    "intraday_return" -> "日内收益"; "dist_high_60d" -> "距60日高点"
+    "position_240d" -> "240日分位"; "ret_skew_20d" -> "20日偏度"
+    "max_ret_20d" -> "20日最大涨幅"; "up_days_20d" -> "20日上涨天数"
+    "overnight_20d" -> "隔夜收益"; "intraday_20d" -> "日内收益20日"
+    "amihud_20d" -> "Amihud非流动性"; "vol_price_corr_20d" -> "量价相关"
     else -> k
 }
 
