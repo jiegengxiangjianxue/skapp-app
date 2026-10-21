@@ -64,6 +64,14 @@ object RemoteSources {
     fun apiMarket(owner: String = OWNER_A, repo: String = REPO_A): String =
         "${base(owner, repo)}/api/market.json"
 
+    /** 消息面: 站点 news_* 四个引擎 + hot_news/news_digest 聚合 */
+    fun apiNews(owner: String = OWNER_A, repo: String = REPO_A): String =
+        "${base(owner, repo)}/api/news.json"
+
+    /** 板块: 行业/概念/板块池/成分股(移植站点 sector 面板) */
+    fun apiSectors(owner: String = OWNER_A, repo: String = REPO_A): String =
+        "${base(owner, repo)}/api/sectors.json"
+
     fun apiStock(owner: String, repo: String, code: String): String =
         "${base(owner, repo)}/api/stocks/$code.json"
 
