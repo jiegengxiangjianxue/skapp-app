@@ -113,7 +113,7 @@ fun MarketScreen(vm: SkappViewModel, state: UiState) {
         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             if (query.isNotBlank()) {
                 if (state.searchResults.isEmpty()) {
-                    Text("没有匹配的股票。", color = Color.Gray)
+                    item { Text("没有匹配的股票。", color = Color.Gray) }
                 }
                 items(state.searchResults, key = { it.code }) { s ->
                     Card(
