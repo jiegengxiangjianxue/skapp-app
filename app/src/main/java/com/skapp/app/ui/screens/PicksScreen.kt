@@ -173,13 +173,12 @@ fun PicksScreen(vm: SkappViewModel, state: UiState) {
         // ── 云端快照列表（非实时，标注数据来源与年龄）──
         val current = tabs.getOrNull(tab)?.second ?: emptyList()
         if (tab > 0) {
-            item {
-                Text(
-                    "该页为云端 CI 快照（ts=${p.ts ?: "未知"}），盘中非实时；本地实时数据在「本地实时」页。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = Color(0xFFD29922),
-                )
-            }
+            Text(
+                "该页为云端 CI 快照（ts=${p.ts ?: "未知"}），盘中非实时；本地实时数据在「本地实时」页。",
+                Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                style = MaterialTheme.typography.bodySmall,
+                color = Color(0xFFD29922),
+            )
         }
         if (current.isEmpty()) {
             Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
