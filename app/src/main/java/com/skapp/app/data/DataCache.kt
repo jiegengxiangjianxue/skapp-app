@@ -19,7 +19,7 @@ object DataCache {
     private const val DAY_TTL_MS = 6 * 60 * 60_000L      // 日 K / 资金流：半天
     private const val BOARDS_TTL_MS = 24 * 60 * 60_000L  // 板块归属：一天
 
-    private data class Entry(val value: Any?, val expiresAt: Long)
+    private class Entry(val value: Any?, val expiresAt: Long)
 
     private val store = HashMap<String, Entry>()
 
@@ -32,7 +32,7 @@ object DataCache {
             synchronized(store) { store.remove(key) }
             return null
         }
-        return e.value as? T
+        return try { e.value as? T } catch (t: Throwable) { null }
     }
 
     fun put(key: String, value: Any?, ttlMs: Long) {
