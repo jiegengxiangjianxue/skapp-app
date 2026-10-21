@@ -52,8 +52,7 @@ object LocalScreener {
             val url = "https://push2.eastmoney.com/api/qt/clist/get?pn=$pn&pz=$pz&po=1&fid=f3" +
                 "&fs=m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81+s:2048" +
                 "&fields=f2,f3,f5,f6,f8,f9,f10,f12,f14,f20,f21,f62,f115,f124"
-            var conn: HttpURLConnectionBridge(url) ?: return@withContext emptyList()
-            val txt = conn.readText()
+            val txt = HttpURLConnectionBridge(url).readText()
             val obj = runCatching { org.json.JSONObject(txt) }.getOrNull()
             val arr = obj?.optJSONObject("data")?.optJSONArray("diff")
                 ?: return@withContext emptyList()
@@ -129,8 +128,8 @@ object LocalScreener {
 
 /** 极简 HTTP 桥（避免与 MarketDataClient 的 private get 重复） */
 private class HttpURLConnectionBridge(url: String) {
-    private val conn: HttpURLConnection =
-        (java.net.URL(url).openConnection() as HttpURLConnection).apply {
+    private val conn: java.net.HttpURLConnection =
+        (java.net.URL(url).openConnection() as java.net.HttpURLConnection).apply {
             connectTimeout = 20000
             readTimeout = 20000
             requestMethod = "GET"
