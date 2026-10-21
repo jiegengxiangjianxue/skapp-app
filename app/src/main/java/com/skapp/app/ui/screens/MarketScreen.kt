@@ -112,6 +112,9 @@ fun MarketScreen(vm: SkappViewModel, state: UiState) {
 
         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             if (query.isNotBlank()) {
+                if (state.searchResults.isEmpty()) {
+                    Text("没有匹配的股票。", color = Color.Gray)
+                }
                 items(state.searchResults, key = { it.code }) { s ->
                     Card(
                         modifier = Modifier.fillMaxWidth().clickable {
@@ -119,12 +122,27 @@ fun MarketScreen(vm: SkappViewModel, state: UiState) {
                         },
                         colors = CardDefaults.cardColors(),
                     ) {
-                        Row(
-                            Modifier.fillMaxWidth().padding(14.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                        ) {
-                            Text(s.name ?: s.code, fontWeight = FontWeight.Medium)
-                            Text(s.code, color = Color.Gray)
+                        Column(Modifier.padding(14.dp)) {
+                            Row(
+                                Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                            ) {
+                                Column {
+                                    Text(s.name ?: s.code, fontWeight = FontWeight.Medium)
+                                    Text(s.code, color = Color.Gray, style = MaterialTheme.typography.bodySmall)
+                                }
+                                Text(
+                                    "实时分析 ›",
+                                    color = MaterialTheme.colorScheme.primary,
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                            }
+                            // 搜索即触发本地引擎分析（点开详情时算，这里给提示）
+                            Text(
+                                "点击查看：实时行情 + 12 引擎 + 29 因子 + 日/周/月K + 资金流 + 板块",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color.Gray,
+                            )
                         }
                     }
                 }
