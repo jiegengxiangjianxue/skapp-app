@@ -3,6 +3,7 @@ package com.skapp.app.ui
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.skapp.app.data.AskEngine
+import com.skapp.app.data.DataCache
 import com.skapp.app.data.Decision
 import com.skapp.app.data.DecisionCard
 import com.skapp.app.data.KBar
@@ -76,6 +77,8 @@ data class UiState(
     val boardsOf: List<Map<String, Any?>> = emptyList(),
     val minuteTrend: List<Map<String, Any?>> = emptyList(),
     val liveQuote: Quote? = null,
+    /** 推股列表的实时报价快照（code -> Quote），避免显示过期的本地快照价 */
+    val pickQuotes: Map<String, Quote> = emptyMap(),
 )
 
 class SkappViewModel : ViewModel() {
@@ -138,6 +141,7 @@ class SkappViewModel : ViewModel() {
                 )
                 if (trading) {
                     refreshQuotes()
+                    refreshPickQuotes()
                     delay(30_000)
                 } else {
                     // 休市：按距离下一次开市的剩余时间睡，最长 10 分钟醒一次更新状态
@@ -145,6 +149,26 @@ class SkappViewModel : ViewModel() {
                     delay(minOf(wait, 10 * 60_000L))
                 }
             }
+        }
+    }
+
+    /**
+     * 给推股/决策列表补实时报价。用户实测：列表里的价格是本地快照，
+     * 与实时行情不一致（引力传媒 快照 +4% 实际 +6%）。
+     * 这里盘中直接从腾讯批量拉，覆盖快照价；休市时保留快照（快照即收盘价）。
+     */
+    fun refreshPickQuotes() {
+        if (!MarketHours.isTrading() && !MarketHours.isAuction()) return
+        viewModelScope.launch {
+            val codes = (_state.value.picks.signals + _state.value.picks.values +
+                _state.value.decision.cards.map { PickSignal(it.code, it.name, it.price, it.pctChg) })
+                .map { it.code }.distinct()
+            if (codes.isEmpty()) return@launch
+            val prefixed = codes.map { SkappApi.prefixed(it) }
+            val quotes = MarketDataClient.fetchQuotes(prefixed)
+            val byNorm = HashMap<String, Quote>()
+            quotes.forEach { (k, v) -> SkappApi.normalize(k)?.let { n -> byNorm[n] = v } }
+            _state.value = _state.value.copy(pickQuotes = byNorm)
         }
     }
 
@@ -205,25 +229,29 @@ class SkappViewModel : ViewModel() {
     }
 
     /**
-     * 打开个股详情：本地引擎 + 多源数据。
-     * 数据链：日K(腾讯→东财, qfq/hfq) → 本地算技术指标与多引擎评分
-     *        + 资金流(东财 push2his) + 所属板块(东财) + 云端 bundle/QA 兜底
+     * 打开个股详情：缓存优先，避免重复点击已选中的复权按钮也重新拉取。
+     * 数据链：日K(缓存→腾讯→东财) → 本地引擎 + 资金流 + 板块 + 实时报价
      */
     fun openDetail(code: String, adjust: String = "qfq") {
+        val cached = _state.value.detail
+        val sameStock = cached?.code == code && _state.value.detailAdjust == adjust
         viewModelScope.launch {
-            _state.value = _state.value.copy(
-                detailLoading = true, detail = null, kline = emptyList(),
-                detailAdjust = adjust, localEngine = null, fundFlow = emptyList(),
-                boardsOf = emptyList(), minuteTrend = emptyList(),
-            )
-            val q = MarketDataClient.quote(code)
-            val bars = MarketDataClient.dayKline(code, 250, adjust)
-            _state.value = _state.value.copy(kline = bars, klineLoading = false)
-            val engine = LocalEngine.analyze(bars)
+            _state.value = _state.value.copy(detailLoading = !sameStock, detailAdjust = adjust)
+            // 1) 日 K（缓存优先）
+            val bars = DataCache.kline(code, adjust, 250)
+            if (_state.value.kline.isEmpty() || !sameStock) {
+                _state.value = _state.value.copy(kline = bars)
+            }
+            // 2) 实时报价（盘中 30s TTL；休市时只取一次）
+            val q = DataCache.quote(code)
+            // 3) 本地引擎（缓存）
+            val engine = DataCache.engine(code, adjust, bars)
+            // 4) 云端 bundle + QA
             val cloud = SkappApi.fetchStockDetail(code)
             val qa = SkappApi.fetchQa(code)
-            val flow = MarketDataClient.fundFlowHistory(code, 60)
-            val boards = MarketDataClient.boardsOf(code)
+            // 5) 资金流 + 板块（缓存）
+            val flow = DataCache.fundFlow(code, 60)
+            val boards = DataCache.boards(code)
             val merged = (cloud ?: StockDetail(code = code)).copy(
                 name = q?.name?.takeIf { it.isNotBlank() } ?: cloud?.name,
                 detail = (cloud?.detail ?: bundleFromLocal(bars, q)),
@@ -239,15 +267,9 @@ class SkappViewModel : ViewModel() {
             )
             if (MarketHours.isTrading() || MarketHours.isAuction() ||
                 MarketHours.phase() == MarketHours.Phase.AFTER_HOURS) {
-                _state.value = _state.value.copy(minuteTrend = MarketDataClient.minuteTrend(code))
+                _state.value = _state.value.copy(minuteTrend = DataCache.minute(code))
             }
         }
-    }
-
-    /** 切换复权方式重新拉 K 线并重算本地引擎 */
-    fun switchAdjust(adjust: String) {
-        val code = _state.value.detail?.code ?: return
-        openDetail(code, adjust)
     }
 
     /** 用本地 K 线造一个 bundle 形状，供 UI 复用同一套渲染 */
