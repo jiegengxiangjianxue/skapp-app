@@ -85,6 +85,25 @@ object ExtendedDataClient {
     private fun getJson(url: String, domain: String = ""): JSONObject? =
         get(url, domain)?.let { runCatching { JSONObject(it) }.getOrNull() }
 
+    /** JSONObject → Map（含嵌套） */
+    private fun JSONObject.toMap(): Map<String, Any?> {
+        val out = LinkedHashMap<String, Any?>()
+        keys().forEach { k -> out[k] = valueOf(this, k) }
+        return out
+    }
+
+    private fun valueOf(o: JSONObject, key: String): Any? = when (val v = o.opt(key)) {
+        is JSONObject -> v.toMap()
+        is JSONArray -> (0 until v.length()).map { valueOf(v, it) }
+        else -> v
+    }
+
+    private fun valueOf(a: JSONArray, i: Int): Any? = when (val v = a.opt(i)) {
+        is JSONObject -> v.toMap()
+        is JSONArray -> (0 until v.length()).map { valueOf(v, it) }
+        else -> v
+    }
+
     // ════════════════════════════════════════════════════════
     //  同花顺（五域）
     // ════════════════════════════════════════════════════════
