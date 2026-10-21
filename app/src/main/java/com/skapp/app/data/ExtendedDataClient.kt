@@ -103,27 +103,24 @@ object ExtendedDataClient {
         parseJsArray(m.value)
     }
 
+    /** 解析 [["date","o","c","h","l","v"], ...] 或 [(...) , ...] 两种形态 */
     private fun parseJsArray(s: String): List<KBar> {
-        val inner = s.trim('[', ']')
-        if (inner.isEmpty()) return emptyList()
-        return Regex("\\(\\s*\\[([^\\]]*)\\]\\s*\\)|\"([^\"]+)\"|\\[([^\\]]*)\\]").findAll(s)
-            .mapNotNull { m ->
-                val raw = m.groupValues[1].ifEmpty { m.groupValues[3] }
-                if (raw.isEmpty()) null
-                else raw.split(",").map { it.trim(' ', '"') }
+        val body = s.trim().trim('[', ']')
+        if (body.isEmpty()) return emptyList()
+        val out = ArrayList<KBar>()
+        // 逐组抓 [a,b,c,d,e,f]（引号可选）
+        val group = Regex("\\[\\s*\"?([0-9A-Za-z.\\-]+)\"?\\s*,\\s*\"?([0-9.\\-]+)\"?\\s*,\\s*\"?([0-9.\\-]+)\"?\\s*,\\s*\"?([0-9.\\-]+)\"?\\s*,\\s*\"?([0-9.\\-]+)\"?\\s*,\\s*\"?([0-9.\\-]+)\"?\\s*\\]")
+        group.findAll(body).forEach { m ->
+            val o = m.groupValues[2].toDoubleOrNull()
+            val c = m.groupValues[3].toDoubleOrNull()
+            val h = m.groupValues[4].toDoubleOrNull()
+            val l = m.groupValues[5].toDoubleOrNull()
+            val v = m.groupValues[6].toDoubleOrNull() ?: 0.0
+            if (o != null && c != null && h != null && l != null) {
+                out += KBar(m.groupValues[1], o, c, h, l, v)
             }
-            .filter { it.size >= 6 }
-            .mapNotNull { p ->
-                KBar(
-                    date = p[0],
-                    open = p[1].toDoubleOrNull() ?: return@mapNotNull null,
-                    close = p[2].toDoubleOrNull() ?: return@mapNotNull null,
-                    high = p[3].toDoubleOrNull() ?: return@mapNotNull null,
-                    low = p[4].toDoubleOrNull() ?: return@mapNotNull null,
-                    vol = p[5].toDoubleOrNull() ?: 0.0,
-                )
-            }
-            .toList()
+        }
+        return out
     }
 
     /** 同花顺 7x24 快讯（零签名，news 域） */
