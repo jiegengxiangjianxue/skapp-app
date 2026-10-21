@@ -2,6 +2,7 @@ package com.skapp.app.ui
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.skapp.app.data.aggregateKline
 import com.skapp.app.data.AskEngine
 import com.skapp.app.data.DataCache
 import com.skapp.app.data.Decision
