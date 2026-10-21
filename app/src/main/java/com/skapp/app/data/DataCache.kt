@@ -19,7 +19,7 @@ object DataCache {
     private const val DAY_TTL_MS = 6 * 60 * 60_000L      // 日 K / 资金流：半天
     private const val BOARDS_TTL_MS = 24 * 60 * 60_000L  // 板块归属：一天
 
-    private class Entry(val value: Any?, val expiresAt: Long)
+    internal class Entry(val value: Any?, val expiresAt: Long)
 
     private val store = HashMap<String, Entry>()
 
