@@ -445,3 +445,60 @@ object MarketDataClient {
         return Triple(mid - k * sd, mid, mid + k * sd)
     }
 }
+
+// ════════════════════════════════════════════════════════
+//  周 K / 月 K 聚合（由日 K 本地聚合，无需额外请求）
+// ════════════════════════════════════════════════════════
+
+/** 周期类型 */
+enum class KPeriod(val label: String) {
+    DAY("日K"), WEEK("周K"), MONTH("月K")
+}
+
+/**
+ * 把日 K 聚合为周 K / 月 K。
+ * 周：自然周（周一为起始，按 ISO 周分组）
+ * 月：自然月
+ */
+fun aggregateKline(daily: List<KBar>, period: KPeriod): List<KBar> {
+    if (daily.isEmpty() || period == KPeriod.DAY) return daily
+    val out = ArrayList<KBar>()
+    var curKey = ""
+    var open = 0.0; var close = 0.0; var high = 0.0; var low = 0.0; var vol = 0.0
+    var first = true
+    daily.forEach { b ->
+        val key = when (period) {
+            KPeriod.WEEK -> weekKey(b.date)
+            KPeriod.MONTH -> b.date.take(7)
+            else -> b.date
+        }
+        if (key != curKey) {
+            if (!first) out += KBar(curKey, open, close, high, low, vol)
+            curKey = key; open = b.open; close = b.close; high = b.high; low = b.low; vol = b.vol
+            first = false
+        } else {
+            close = b.close
+            high = maxOf(high, b.high)
+            low = minOf(low, b.low)
+            vol += b.vol
+        }
+    }
+    if (!first) out += KBar(curKey, open, close, high, low, vol)
+    return out
+}
+
+/** yyyy-MM-dd → ISO 周标识 yyyyWww */
+private fun weekKey(date: String): String {
+    return try {
+        val parts = date.split("-")
+        if (parts.size != 3) return date.take(7)
+        val c = java.util.Calendar.getInstance().apply {
+            set(parts[0].toInt(), parts[1].toInt() - 1, parts[2].toInt())
+        }
+        val y = c.get(java.util.Calendar.YEAR)
+        val w = c.get(java.util.Calendar.WEEK_OF_YEAR)
+        String.format("%dW%02d", y, w)
+    } catch (e: Exception) {
+        date.take(7)
+    }
+}
