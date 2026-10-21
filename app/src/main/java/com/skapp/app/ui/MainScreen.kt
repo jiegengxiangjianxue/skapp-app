@@ -9,6 +9,7 @@ import androidx.compose.material.icons.filled.ShowChart
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.TrendingUp
 import androidx.compose.material3.Icon
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -30,6 +31,7 @@ import com.skapp.app.ui.screens.StockDetailSheet
 
 private data class Tab(val label: String, val icon: androidx.compose.ui.graphics.vector.ImageVector)
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainScreen(vm: SkappViewModel) {
     val state by vm.state.collectAsStateWithLifecycle()
