@@ -14,6 +14,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -60,6 +61,28 @@ fun BoardScreen(vm: SkappViewModel, state: UiState) {
                     color = MaterialTheme.colorScheme.primary,
                     style = MaterialTheme.typography.bodySmall,
                 )
+            }
+        }
+
+        // 市场状态机（进攻/防守）—— 决策根基，置顶
+        state.marketState?.let { ms ->
+            item { MarketStateCard(ms) }
+        }
+
+        // 首屏加载中：骨架提示，避免白屏
+        if (state.loading && state.quotes.isEmpty() && b.isEmpty()) {
+            item {
+                Card(colors = CardDefaults.cardColors()) {
+                    Row(
+                        Modifier.fillMaxWidth().padding(16.dp),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        CircularProgressIndicator(Modifier.height(18.dp))
+                        Spacer(Modifier.height(0.dp))
+                        Text("  正在拉取行情与看板数据…", color = Color.Gray)
+                    }
+                }
             }
         }
 
@@ -275,6 +298,74 @@ fun BoardScreen(vm: SkappViewModel, state: UiState) {
             }
         }
     }
+}
+
+/** 市场状态卡：E 分 + 状态标签 + 5 部件得分 */
+@Composable
+private fun MarketStateCard(ms: com.skapp.app.data.MarketState) {
+    val color = when {
+        ms.state.startsWith("进攻") -> UP
+        ms.state.startsWith("防守") -> DOWN
+        else -> Color(0xFFD29922)
+    }
+    Card(colors = CardDefaults.cardColors()) {
+        Column(Modifier.fillMaxWidth().padding(12.dp)) {
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("市场状态", fontWeight = FontWeight.SemiBold)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        String.format("E=%+.1f", ms.E),
+                        color = color,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    Text(
+                        ms.state,
+                        color = color,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+            }
+            Text(
+                "一致性 ${String.format("%.0f%%", ms.agreement * 100)}" +
+                    if (ms.missingInputs.isNotEmpty()) " · 缺输入: ${ms.missingInputs.joinToString(", ")}" else "",
+                style = MaterialTheme.typography.bodySmall,
+                color = Color.Gray,
+            )
+            Spacer(Modifier.height(6.dp))
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                ms.parts.forEach { (k, v) ->
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            String.format("%+.0f", v),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (v > 0) UP else if (v < 0) DOWN else Color.Gray,
+                        )
+                        Text(
+                            partLabel(k),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color.Gray,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun partLabel(k: String): String = when (k) {
+    "market_phase" -> "阶段"
+    "cycle_v2" -> "周期"
+    "global" -> "全球"
+    "win_loop" -> "胜负"
+    "kelly" -> "凯利"
+    else -> k
 }
 
 @Composable
