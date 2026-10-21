@@ -4,6 +4,8 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Article
+import androidx.compose.material.icons.filled.Category
 import androidx.compose.material.icons.filled.QuestionAnswer
 import androidx.compose.material.icons.filled.ShowChart
 import androidx.compose.material.icons.filled.Star
@@ -26,7 +28,9 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.skapp.app.ui.screens.AskScreen
 import com.skapp.app.ui.screens.DecisionScreen
 import com.skapp.app.ui.screens.MarketScreen
+import com.skapp.app.ui.screens.NewsScreen
 import com.skapp.app.ui.screens.PicksScreen
+import com.skapp.app.ui.screens.SectorsScreen
 import com.skapp.app.ui.screens.StockDetailSheet
 
 private data class Tab(val label: String, val icon: androidx.compose.ui.graphics.vector.ImageVector)
@@ -41,6 +45,8 @@ fun MainScreen(vm: SkappViewModel) {
         Tab("行情", Icons.Filled.ShowChart),
         Tab("推股", Icons.Filled.TrendingUp),
         Tab("决策", Icons.Filled.Star),
+        Tab("消息", Icons.Filled.Article),
+        Tab("板块", Icons.Filled.Category),
         Tab("提问", Icons.Filled.QuestionAnswer),
     )
 
@@ -63,7 +69,9 @@ fun MainScreen(vm: SkappViewModel) {
                 0 -> MarketScreen(vm, state)
                 1 -> PicksScreen(vm, state)
                 2 -> DecisionScreen(vm, state)
-                3 -> AskScreen(vm, state)
+                3 -> NewsScreen(vm, state)
+                4 -> SectorsScreen(vm, state)
+                5 -> AskScreen(vm, state)
             }
         }
 
