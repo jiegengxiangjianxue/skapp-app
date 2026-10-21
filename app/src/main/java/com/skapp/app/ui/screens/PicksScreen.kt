@@ -78,7 +78,7 @@ fun PicksScreen(vm: SkappViewModel, state: UiState) {
         // ── 本地实时选股 Tab（默认，实时数据 + 本地算法引擎）──
         // 首次进入自动跑（盘中才跑；休市时点按钮手动跑）
         if (tab == 0) {
-            if (state.screened.isEmpty() && !state.screening && !state.screenMsg?.contains("休市")!!) {
+            if (state.screened.isEmpty() && !state.screening && !(state.screenMsg?.contains("休市") ?: false)) {
                 LaunchedEffect(Unit) { vm.runScreen() }
             }
             Column(Modifier.fillMaxWidth().padding(12.dp)) {
