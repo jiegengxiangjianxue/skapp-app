@@ -94,7 +94,7 @@ fun PicksScreen(vm: SkappViewModel, state: UiState) {
                     )
                 }
                 items(current, key = { it.code + "_" + tabs[tab].first }) { s ->
-                    PickCard(s, tabs[tab].first, vm)
+                    PickCard(s, tabs[tab].first, vm, state)
                 }
             }
         }
@@ -168,8 +168,12 @@ private fun MarketOverview(state: UiState) {
 }
 
 @Composable
-private fun PickCard(s: PickSignal, group: String, vm: SkappViewModel) {
-    val pct = s.pctChg
+private fun PickCard(s: PickSignal, group: String, vm: SkappViewModel, state: UiState) {
+    // 实时报价优先；休市时回落到云端快照价（快照即收盘价）
+    val live = state.pickQuotes[s.code]
+    val price = live?.price ?: s.price
+    val pct = live?.pctChg ?: s.pctChg
+    val priceTag = if (live != null) "实时" else "快照"
     val color = when {
         pct == null -> Color.Gray
         pct > 0 -> Color(0xFFF85149)
@@ -188,12 +192,12 @@ private fun PickCard(s: PickSignal, group: String, vm: SkappViewModel) {
                 }
                 Column(horizontalAlignment = Alignment.End) {
                     Text(
-                        s.price?.let { String.format("%.2f", it) } ?: "暂无数据",
+                        price?.let { String.format("%.2f", it) } ?: "暂无数据",
                         color = color,
                         fontWeight = FontWeight.SemiBold,
                     )
                     Text(
-                        pct?.let { String.format("%.2f%%", it) } ?: "—",
+                        (pct?.let { String.format("%.2f%%", it) } ?: "—") + "　$priceTag",
                         color = color,
                         style = MaterialTheme.typography.bodySmall,
                     )
