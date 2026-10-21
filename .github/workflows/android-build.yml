@@ -42,7 +42,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
-            /usr/local/lib/android/sdk
+            ${{ runner.temp }}/android-sdk
             ~/.android
           key: android-sdk-arm-${{ runner.os }}-${{ runner.arch }}
 
@@ -50,20 +50,20 @@ jobs:
         if: steps.sdk-cache.outputs.cache-hit != 'true'
         run: |
           set -e
-          SDK=/usr/local/lib/android/sdk
-          sudo mkdir -p "$SDK/cmdline-tools"
+          SDK="$RUNNER_TEMP/android-sdk"
+          mkdir -p "$SDK/cmdline-tools"
           curl -fsSL -o /tmp/cmdline.zip \
             https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
-          sudo unzip -q /tmp/cmdline.zip -d /tmp/cmdline
-          sudo mv /tmp/cmdline/cmdline-tools "$SDK/cmdline-tools/latest"
-          yes | sudo "$SDK/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null 2>&1 || true
-          sudo "$SDK/cmdline-tools/latest/bin/sdkmanager" --install \
-            "platforms;android-35" "build-tools;35.0.0" "platform-tools"
+          unzip -q /tmp/cmdline.zip -d /tmp/cmdline
+          mv /tmp/cmdline/cmdline-tools "$SDK/cmdline-tools/latest"
+          yes | "$SDK/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null 2>&1 || true
+          "$SDK/cmdline-tools/latest/bin/sdkmanager" --install \
+            "platforms;android-35" "build-tools;35.0.0" "build-tools;34.0.0" "platform-tools"
           echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
           echo "$SDK/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
 
       - name: Write local.properties
-        run: echo "sdk.dir=/usr/local/lib/android/sdk" > local.properties
+        run: echo "sdk.dir=$RUNNER_TEMP/android-sdk" > local.properties
 
       - name: Build Debug APK
         run: gradle :app:assembleDebug --no-daemon --stacktrace
