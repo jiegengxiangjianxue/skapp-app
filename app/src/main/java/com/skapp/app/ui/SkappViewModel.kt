@@ -149,39 +149,44 @@ class SkappViewModel : ViewModel() {
             .edit().putString(KEY_TOKEN, _state.value.aiToken).apply()
     }
 
+    /** AiScreen 的「保存并启用」按钮调它（需要 context，由 MainActivity 提供） */
+    var _context: android.content.Context? = null
+    fun saveTokenNow() {
+        _context?.let { saveToken(it) }
+    }
+
     fun load() {
         viewModelScope.launch {
             _state.value = _state.value.copy(loading = true, error = null)
-            runCatching {
-                val names = async { SkappApi.fetchStockNames() }
-                val symbols = async { SkappApi.fetchSymbols() }
-                val picks = async { SkappApi.fetchTodayPicks() }
-                val decision = async { SkappApi.fetchDecision() }
-                val market = async { SkappApi.fetchMarket() }
-                val news = async { SkappApi.fetchNews() }
-                val sectors = async { SkappApi.fetchSectors() }
-                askEngine = AskEngine(symbols.await(), names.await())
-                _state.value = _state.value.copy(
-                    loading = false,
-                    picks = picks.await(),
-                    decision = decision.await(),
-                    market = market.await(),
-                    news = news.await(),
-                    sectors = sectors.await(),
-                    symbols = symbols.await(),
-                )
-                refreshQuotes()
-                loadIndices()
-                loadNewsCalcs()
-                loadPools()
-                loadBoard()
-                loadSummary()
-            }.onFailure { e ->
-                _state.value = _state.value.copy(
-                    loading = false,
-                    error = e.message ?: "数据加载失败",
-                )
-            }
+            val namesD = async { SkappApi.fetchStockNames() }
+            val symbolsD = async { SkappApi.fetchSymbols() }
+            val picksD = async { SkappApi.fetchTodayPicks() }
+            val decisionD = async { SkappApi.fetchDecision() }
+            val marketD = async { SkappApi.fetchMarket() }
+            val newsD = async { SkappApi.fetchNews() }
+            val sectorsD = async { SkappApi.fetchSectors() }
+            val poolsD = async { SiteBoardClient.pools() }
+            val boardD = async { SiteBoardClient.board() }
+            val summaryD = async { SiteBoardClient.summary() }
+
+            val symbols = symbolsD.await()
+            val names = namesD.await()
+            askEngine = AskEngine(symbols, names)
+            _state.value = _state.value.copy(
+                loading = false,
+                picks = picksD.await(),
+                decision = decisionD.await(),
+                market = marketD.await(),
+                news = newsD.await(),
+                sectors = sectorsD.await(),
+                pools = poolsD.await(),
+                board = boardD.await(),
+                summary = summaryD.await(),
+                symbols = symbols,
+            )
+            refreshQuotes()
+            loadIndices()
+            loadNewsCalcs()
         }
     }
 
