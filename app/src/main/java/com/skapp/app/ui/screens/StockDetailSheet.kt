@@ -87,11 +87,15 @@ fun StockDetailSheet(vm: SkappViewModel, state: UiState) {
         // ── 实时报价 ──
         val q = state.liveQuote
         val row = state.quotes.firstOrNull { it.code == d.code }
-        val price = q?.price ?: row?.price ?: d.detail?.quote?.get("price")
-        val pct = q?.pctChg ?: row?.pctChg ?: d.detail?.quote?.get("pctChg")
+        val holoPrice = (state.holo?.holo?.get("price") as? Number)?.toDouble()
+        val holoPct = (state.holo?.holo?.get("pctChg") as? Number)?.toDouble()
+        val price = q?.price ?: row?.price ?: holoPrice ?: d.detail?.quote?.get("price")
+        val pct = q?.pctChg ?: row?.pctChg ?: holoPct ?: d.detail?.quote?.get("pctChg")
+        val priceSrc = if (q != null) "实时" else if (row != null) "实时" else "holo/快照"
         Card(colors = CardDefaults.cardColors()) {
             Column(Modifier.padding(12.dp)) {
                 Text("代码 ${d.code}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                Text("价格来源：$priceSrc", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
                 Text(
                     "现价 ${price?.let { String.format("%.2f", it) } ?: "暂无数据"}" +
                         (pct?.let { "　${String.format("%.2f%%", it)}" } ?: ""),
@@ -232,6 +236,15 @@ fun StockDetailSheet(vm: SkappViewModel, state: UiState) {
                     eng.engines.forEach { e -> EngineRow(e) }
                 }
             }
+        }
+
+        // ── holo 覆盖状态 ──
+        state.holo?.meta?.let { m ->
+            Text(
+                "holo 仓：已覆盖（${m["ts"] ?: m["generated_at"] ?: "时点未知"}）",
+                style = MaterialTheme.typography.bodySmall,
+                color = Color(0xFF3FB950),
+            )
         }
 
         // ── 技术参数 ──
@@ -415,6 +428,22 @@ private fun EngineRow(e: EngineScore) {
 
 @Composable
 private fun AdjustChip(text: String, selected: Boolean, onClick: () -> Unit) {
+    Card(
+        modifier = Modifier.clickable { onClick() },
+        colors = CardDefaults.cardColors(),
+    ) {
+        Text(
+            text,
+            Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+            color = if (selected) MaterialTheme.colorScheme.primary else Color.Gray,
+            style = MaterialTheme.typography.bodySmall,
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+        )
+    }
+}
+
+@Composable
+private fun PeriodChip(text: String, selected: Boolean, onClick: () -> Unit) {
     Card(
         modifier = Modifier.clickable { onClick() },
         colors = CardDefaults.cardColors(),
