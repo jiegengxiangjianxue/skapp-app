@@ -20,8 +20,11 @@ permissions:
 
 jobs:
   build:
-    # arm64 runner：2026-01 起 GitHub 对公开仓免费提供 Linux/Windows arm64 runner
-    runs-on: ubuntu-24.04-arm
+    # 构建机用 x86_64 runner（Google 的 build-tools/aapt2 只发布 x86_64 二进制，
+    # arm64 runner 上跑不了 aapt2）。
+    # 产物是 Android arm64-v8a APK：本 app 纯 Kotlin/Compose、无 native 代码，
+    # 与构建机架构无关；下方 splits 已限定只出 arm64-v8a。
+    runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
@@ -46,7 +49,7 @@ jobs:
             ~/.android
           key: android-sdk-arm-${{ runner.os }}-${{ runner.arch }}
 
-      - name: Install Android SDK (arm64 native tools)
+      - name: Install Android SDK
         if: steps.sdk-cache.outputs.cache-hit != 'true'
         run: |
           set -e
@@ -58,25 +61,12 @@ jobs:
           mv /tmp/cmdline/cmdline-tools "$SDK/cmdline-tools/latest"
           yes | "$SDK/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null 2>&1 || true
           "$SDK/cmdline-tools/latest/bin/sdkmanager" --install \
-            "platforms;android-35" "build-tools;35.0.0" "build-tools;34.0.0" "platform-tools"
+            "platforms;android-35" "build-tools;35.0.0" "platform-tools"
           echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
           echo "$SDK/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
 
       - name: Write local.properties
         run: echo "sdk.dir=$RUNNER_TEMP/android-sdk" > local.properties
-
-      - name: Force SDK (arm64) aapt2, not the x86_64 one from Maven
-        run: |
-          set -e
-          # AGP 默认从 Maven 拉 aapt2-*-linux.jar(仅 x86_64)。arm64 runner 上必须用
-          # SDK 自带的 aarch64 二进制，否则报 "Syntax error: ( unexpected"。
-          mkdir -p "$ANDROID_HOME/build-tools/35.0.0"
-          if ! "$ANDROID_HOME/build-tools/35.0.0/aapt2" version >/dev/null 2>&1; then
-            echo "ERROR: SDK aapt2 is not runnable"
-            exit 1
-          fi
-          "$ANDROID_HOME/build-tools/35.0.0/aapt2" version
-          echo "android.aapt2FromMavenOverride=" >> gradle.properties
 
       - name: Build Debug APK
         run: gradle :app:assembleDebug --no-daemon --stacktrace
