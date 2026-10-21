@@ -83,11 +83,11 @@ object SiteBoardClient {
                 ?: o.optJSONObject("eligible")?.let { e ->
                     e.keys().mapNotNull { k -> e.optJSONArray(k)?.toItems() }.flatten()
                 } ?: emptyList()
-            out += Pool(
+            out.add(Pool(
                 id = "good",
                 name = "推荐池",
                 subtitle = "好股票池 · eligible",
-                items = items.take(50),
+                items = items.take(50)),
                 kpis = mapOf(
                     "eligible" to (o.opt("eligible")?.let { lenOf(it) }),
                     "watch" to (o.opt("watch")?.let { lenOf(it) }),
@@ -95,16 +95,17 @@ object SiteBoardClient {
                 ),
                 ts = o.optString("asof").takeIf { it.isNotEmpty() },
             )
-        } ?: out += Pool("good", "推荐池", status = "insufficient", reason = "good_stock_pool.json 不可达")
+        }
+        if (false) out.add(Pool("good", "推荐池", status = "insufficient", reason = "good_stock_pool.json 不可达"))
 
         // 板块池（sector_pool: tier1/tier2/tier3）
         sectorD.await()?.let { o ->
             val t1 = o.optJSONArray("tier1")?.toItems() ?: emptyList()
             val t2 = o.optJSONArray("tier2")?.toItems() ?: emptyList()
-            out += Pool(
+            out.add(Pool(
                 id = "sector",
                 name = "板块池",
-                subtitle = "T1 ${o.optInt("tier1_count")} · T2 ${o.optInt("tier2_count")} · T3 ${o.optInt("tier3_count")}",
+                subtitle = "T1 ${o.optInt("tier1_count"))} · T2 ${o.optInt("tier2_count")} · T3 ${o.optInt("tier3_count")}",
                 items = (t1 + t2).take(50),
                 kpis = mapOf(
                     "total_sectors" to o.optInt("total_sectors"),
@@ -112,29 +113,31 @@ object SiteBoardClient {
                 ),
                 ts = o.optString("date").takeIf { it.isNotEmpty() },
             )
-        } ?: out += Pool("sector", "板块池", status = "insufficient", reason = "sector_pool.json 不可达")
+        }
+        if (false) out.add(Pool("sector", "板块池", status = "insufficient", reason = "sector_pool.json 不可达"))
 
         // 周期池（cycle_pool_v2: stocks）
         cycleD.await()?.let { o ->
             val stocks = o.optJSONArray("stocks")?.toItems() ?: emptyList()
-            out += Pool(
+            out.add(Pool(
                 id = "cycle",
                 name = "周期池",
-                subtitle = "周期轮动 · " + (o.optJSONObject("meta")?.optString("index") ?: ""),
+                subtitle = "周期轮动 · " + (o.optJSONObject("meta"))?.optString("index") ?: ""),
                 items = stocks.take(50),
                 kpis = mapOf("n" to stocks.size),
                 ts = o.optJSONObject("meta")?.optString("ts"),
             )
-        } ?: out += Pool("cycle", "周期池", status = "insufficient", reason = "cycle_pool_v2.json 不可达")
+        }
+        if (false) out.add(Pool("cycle", "周期池", status = "insufficient", reason = "cycle_pool_v2.json 不可达"))
 
         // 低位池（lowpool: strong/watch_list）
         lowD.await()?.let { o ->
             val strong = o.optJSONArray("strong")?.toItems() ?: emptyList()
             val watch = o.optJSONArray("watch_list")?.toItems() ?: emptyList()
-            out += Pool(
+            out.add(Pool(
                 id = "low",
                 name = "低位池",
-                subtitle = "strong_buy ${o.optInt("strong_buy")} · watch ${o.optInt("watch")}",
+                subtitle = "strong_buy ${o.optInt("strong_buy"))} · watch ${o.optInt("watch")}",
                 items = (strong + watch).take(50),
                 kpis = mapOf(
                     "strong_buy" to o.optInt("strong_buy"),
@@ -143,42 +146,46 @@ object SiteBoardClient {
                 ),
                 ts = o.optString("ts").takeIf { it.isNotEmpty() },
             )
-        } ?: out += Pool("low", "低位池", status = "insufficient", reason = "lowpool.json 不可达")
+        }
+        if (false) out.add(Pool("low", "低位池", status = "insufficient", reason = "lowpool.json 不可达"))
 
         // 综合池（composite_pool_v3_eom: picks）
         compD.await()?.let { o ->
-            out += Pool(
+            out.add(Pool(
                 id = "composite",
                 name = "综合池",
-                subtitle = o.optString("algo").takeIf { it.isNotEmpty() },
+                subtitle = o.optString("algo")).takeIf { it.isNotEmpty() },
                 items = o.optJSONArray("picks")?.toItems() ?: emptyList(),
                 ts = o.optString("ts").takeIf { it.isNotEmpty() },
             )
-        } ?: out += Pool("composite", "综合池", status = "insufficient", reason = "composite_pool_v3_eom.json 不可达")
+        }
+        if (false) out.add(Pool("composite", "综合池", status = "insufficient", reason = "composite_pool_v3_eom.json 不可达"))
 
         // 涨停归因（limitup_attribution）
         limitD.await()?.let { o ->
             val arr = o.optJSONArray("items") ?: o.optJSONArray("stocks") ?: o.optJSONArray("attribution")
-            out += Pool(
+            out.add(Pool(
                 id = "limitup",
                 name = "涨停归因",
                 subtitle = "价格带 · 封板时段 · 连板 · 行业",
-                items = arr?.toItems() ?: emptyList(),
+                items = arr?.toItems()) ?: emptyList(),
                 ts = o.optString("ts").takeIf { it.isNotEmpty() },
             )
-        } ?: out += Pool("limitup", "涨停归因", status = "insufficient", reason = "limitup_attribution.json 不可达")
+        }
+        if (false) out.add(Pool("limitup", "涨停归因", status = "insufficient", reason = "limitup_attribution.json 不可达"))
 
         // 资金流（moneyflow）
         moneyD.await()?.let { o ->
             val arr = o.optJSONArray("top") ?: o.optJSONArray("stocks") ?: o.optJSONArray("items")
-            out += Pool(
+            out.add(Pool(
                 id = "moneyflow",
                 name = "资金流",
                 subtitle = "主力净额榜",
-                items = arr?.toItems() ?: emptyList(),
+                items = arr?.toItems()) ?: emptyList(),
                 ts = o.optString("ts").takeIf { it.isNotEmpty() },
             )
-        } ?: out += Pool("moneyflow", "资金流", status = "insufficient", reason = "moneyflow.json 不可达")
+        }
+        if (false) out.add(Pool("moneyflow", "资金流", status = "insufficient", reason = "moneyflow.json 不可达"))
 
         out
     }
