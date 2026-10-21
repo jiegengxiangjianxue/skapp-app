@@ -17,6 +17,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.Card
+import androidx.compose.material3.Button
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
@@ -245,6 +246,42 @@ fun StockDetailSheet(vm: SkappViewModel, state: UiState) {
                 style = MaterialTheme.typography.bodySmall,
                 color = Color(0xFF3FB950),
             )
+        }
+
+        // ── AI 复盘按钮 ──
+        Card(colors = CardDefaults.cardColors()) {
+            Column(Modifier.padding(12.dp)) {
+                Text("GitCode AI 复盘", fontWeight = FontWeight.SemiBold)
+                Text(
+                    "把本页全部真实数据（行情/12引擎/29因子/holo/财务/新闻/板块）给 AI 做综合复盘。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.Gray,
+                )
+                Spacer(Modifier.height(6.dp))
+                if (state.aiConfigured) {
+                    Button(
+                        onClick = { vm.aiReviewCurrent() },
+                        enabled = !state.aiReviewLoading,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(if (state.aiReviewLoading) "AI 复盘中…" else "AI 复盘这只股票")
+                    }
+                    if (state.aiReviewLoading) {
+                        CircularProgressIndicator()
+                    }
+                    state.aiReview?.let {
+                        HorizontalDivider()
+                        Spacer(Modifier.height(6.dp))
+                        Text(it, style = MaterialTheme.typography.bodySmall)
+                    }
+                } else {
+                    Text(
+                        "未配置 GitCode token（在「AI」Tab 填入即可用）",
+                        color = Color(0xFFD29922),
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            }
         }
 
         // ── 技术参数 ──
