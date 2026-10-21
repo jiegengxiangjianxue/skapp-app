@@ -140,6 +140,54 @@ object SkappApi {
         } ?: MarketSnapshot()
     }
 
+    /** 消息面: A 仓优先, 退 C 仓 */
+    suspend fun fetchNews(): NewsSnapshot = withContext(Dispatchers.IO) {
+        val o = fetchJson(RemoteSources.apiNews())
+            ?: fetchJson(RemoteSources.apiNews(RemoteSources.OWNER_C, RemoteSources.REPO_C))
+            ?: return@withContext NewsSnapshot()
+        val items = ArrayList<Map<String, Any?>>()
+        o.optJSONObject("hot_news")?.optJSONArray("items")?.let { items.addAll(it.toMapList()) }
+        o.optJSONObject("extra")?.optJSONArray("items")?.let { items.addAll(it.toMapList()) }
+        NewsSnapshot(
+            ts = o.optString("ts").takeIf { it.isNotEmpty() },
+            digest = o.optJSONObject("digest")?.toMap() ?: emptyMap(),
+            items = items,
+            themes = o.optJSONObject("themes")?.optJSONArray("themes")?.toMapList() ?: emptyList(),
+            impacts = o.optJSONObject("impact")?.optJSONArray("impacts")?.toMapList() ?: emptyList(),
+            transmission = o.optJSONObject("transmission")?.optJSONArray("items")?.toMapList() ?: emptyList(),
+        )
+    }
+
+    /** 板块: A 仓优先, 退 C 仓 */
+    suspend fun fetchSectors(): SectorsSnapshot = withContext(Dispatchers.IO) {
+        val o = fetchJson(RemoteSources.apiSectors())
+            ?: fetchJson(RemoteSources.apiSectors(RemoteSources.OWNER_C, RemoteSources.REPO_C))
+            ?: return@withContext SectorsSnapshot()
+        fun boards(name: String): List<Board> =
+            o.optJSONArray(name)?.let { arr ->
+                (0 until arr.length()).mapNotNull { i ->
+                    val b = arr.optJSONObject(i) ?: return@mapNotNull null
+                    val bk = b.optString("bk").takeIf { it.isNotEmpty() } ?: return@mapNotNull null
+                    Board(
+                        bk = bk,
+                        name = b.optString("name").takeIf { it.isNotEmpty() },
+                        totalMktcap = b.optDoubleOrNull("total_mktcap"),
+                        nStocks = b.optIntOrNull("n_stocks"),
+                    )
+                }
+            } ?: emptyList()
+        val members = mutableMapOf<String, Map<String, Any?>>()
+        o.optJSONObject("board_members")?.let { bm ->
+            bm.keys().forEach { k -> bm.optJSONObject(k)?.let { members[k] = it.toMap() } }
+        }
+        SectorsSnapshot(
+            ts = o.optString("ts").takeIf { it.isNotEmpty() },
+            industries = boards("industries"),
+            concepts = boards("concepts"),
+            boardMembers = members,
+        )
+    }
+
     private suspend fun fetchBundle(code: String): StockDetail? = withContext(Dispatchers.IO) {
         val url = RemoteSources.shardBundle(code) ?: return@withContext null
         val o = fetchJson(url) ?: return@withContext null
