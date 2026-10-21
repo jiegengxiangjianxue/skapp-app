@@ -18,6 +18,7 @@ import com.skapp.app.data.PickSignal
 import com.skapp.app.data.Quote
 import com.skapp.app.data.SkappApi
 import com.skapp.app.data.StockDetail
+import com.skapp.app.data.TechnicalCalc
 import com.skapp.app.data.SectorsSnapshot
 import com.skapp.app.data.SymbolEntry
 import com.skapp.app.data.TodayPicks
