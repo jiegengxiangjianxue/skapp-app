@@ -19,6 +19,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -41,11 +42,12 @@ fun PicksScreen(vm: SkappViewModel, state: UiState) {
     val p = state.picks
     var tab by remember { mutableStateOf(0) }
 
+    // 本地实时为默认（用户核心诉求：不用云端旧快照）；云端池做兜底
     val tabs = listOf(
+        "本地实时" to emptyList<com.skapp.app.data.PickSignal>(),
         "指标共振" to p.signals,
         "多维评分" to p.values,
         "涨停" to p.limitUp,
-        "本地实时" to emptyList<com.skapp.app.data.PickSignal>(),
     )
 
     Column(Modifier.fillMaxWidth()) {
@@ -73,8 +75,12 @@ fun PicksScreen(vm: SkappViewModel, state: UiState) {
 
         HorizontalDivider()
 
-        // ── 本地实时选股 Tab ──
-        if (tab == 3) {
+        // ── 本地实时选股 Tab（默认，实时数据 + 本地算法引擎）──
+        // 首次进入自动跑（盘中才跑；休市时点按钮手动跑）
+        if (tab == 0) {
+            if (state.screened.isEmpty() && !state.screening && !state.screenMsg?.contains("休市")!!) {
+                LaunchedEffect(Unit) { vm.runScreen() }
+            }
             Column(Modifier.fillMaxWidth().padding(12.dp)) {
                 Row(
                     Modifier.fillMaxWidth(),
@@ -164,8 +170,17 @@ fun PicksScreen(vm: SkappViewModel, state: UiState) {
             return@Column
         }
 
-        // ── 列表 ──
+        // ── 云端快照列表（非实时，标注数据来源与年龄）──
         val current = tabs.getOrNull(tab)?.second ?: emptyList()
+        if (tab > 0) {
+            item {
+                Text(
+                    "该页为云端 CI 快照（ts=${p.ts ?: "未知"}），盘中非实时；本地实时数据在「本地实时」页。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color(0xFFD29922),
+                )
+            }
+        }
         if (current.isEmpty()) {
             Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
                 Text(
