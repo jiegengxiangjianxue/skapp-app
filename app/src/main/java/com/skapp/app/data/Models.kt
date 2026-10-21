@@ -110,6 +110,31 @@ data class MarketSnapshot(
     val hotNews: List<Map<String, Any?>> = emptyList(),
 )
 
+/** 消息面：移植站点 news_* 四个引擎产出 */
+data class NewsSnapshot(
+    val ts: String? = null,
+    val digest: Map<String, Any?> = emptyMap(),
+    val items: List<Map<String, Any?>> = emptyList(),
+    val themes: List<Map<String, Any?>> = emptyList(),
+    val impacts: List<Map<String, Any?>> = emptyList(),
+    val transmission: List<Map<String, Any?>> = emptyList(),
+)
+
+/** 板块 */
+data class Board(
+    val bk: String,
+    val name: String? = null,
+    val totalMktcap: Double? = null,
+    val nStocks: Int? = null,
+)
+
+data class SectorsSnapshot(
+    val ts: String? = null,
+    val industries: List<Board> = emptyList(),
+    val concepts: List<Board> = emptyList(),
+    val boardMembers: Map<String, Map<String, Any?>> = emptyMap(),
+)
+
 /** 用户提问 → 命中个股 → 答案 */
 data class AskResult(
     val question: String,
