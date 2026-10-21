@@ -25,6 +25,7 @@ import com.skapp.app.data.NewsSnapshot
 import com.skapp.app.data.PickSignal
 import com.skapp.app.data.Quote
 import com.skapp.app.data.SiteBoardClient
+import com.skapp.app.data.GitCodeAiClient
 import com.skapp.app.data.SkappApi
 import com.skapp.app.data.StockDetail
 import com.skapp.app.data.TechnicalCalc
@@ -98,6 +99,14 @@ data class UiState(
     /** 逐条快讯的实时算法计算（直接显示在标题下） */
     val newsCalcs: List<NewsCalc> = emptyList(),
     val newsCalcLoading: Boolean = false,
+    /** GitCode AI */
+    val aiToken: String = "",
+    val aiConfigured: Boolean = false,
+    val aiReview: String? = null,
+    val aiReviewLoading: Boolean = false,
+    val aiAnswer: String? = null,
+    val aiAnswerLoading: Boolean = false,
+    val aiQuestion: String = "",
     /** 多池选股（网页版 8 池） */
     val pools: List<SiteBoardClient.Pool> = emptyList(),
     val poolsLoading: Boolean = false,
@@ -109,6 +118,11 @@ data class UiState(
 
 class SkappViewModel : ViewModel() {
 
+    companion object {
+        private const val PREFS = "skapp_prefs"
+        private const val KEY_TOKEN = "gitcode_token"
+    }
+
     private val _state = MutableStateFlow(UiState())
     val state: StateFlow<UiState> = _state.asStateFlow()
 
@@ -118,6 +132,20 @@ class SkappViewModel : ViewModel() {
     init {
         load()
         startQuoteLoop()
+    }
+
+    /** MainActivity 启动时调用：从 SharedPreferences 恢复 GitCode token */
+    fun loadSavedToken(context: android.content.Context) {
+        val t = context.getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE)
+            .getString(KEY_TOKEN, "") ?: ""
+        GitCodeAiClient.setToken(t)
+        _state.value = _state.value.copy(aiToken = t, aiConfigured = t.isNotBlank())
+    }
+
+    /** 保存 token 到 SharedPreferences */
+    fun saveToken(context: android.content.Context) {
+        context.getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE)
+            .edit().putString(KEY_TOKEN, _state.value.aiToken).apply()
     }
 
     fun load() {
@@ -375,6 +403,83 @@ class SkappViewModel : ViewModel() {
             }
             _state.value = _state.value.copy(summary = s)
         }
+    }
+
+    // ── GitCode AI ─────────────────────────────────────
+
+    fun setAiToken(t: String) {
+        GitCodeAiClient.setToken(t)
+        _state.value = _state.value.copy(
+            aiToken = t,
+            aiConfigured = t.isNotBlank(),
+        )
+    }
+
+    /** AI 复盘当前详情页的股票（全部真实数据喂给 AI） */
+    fun aiReviewCurrent() {
+        val d = _state.value.detail ?: return
+        viewModelScope.launch {
+            _state.value = _state.value.copy(aiReviewLoading = true, aiReview = null)
+            val out = GitCodeAiClient.reviewStock(
+                code = d.code,
+                name = d.name,
+                quote = _state.value.liveQuote,
+                engine = _state.value.localEngine,
+                factors = ExtendedIndicators.allFactors(_state.value.kline),
+                holo = _state.value.holo,
+                news = _state.value.holo?.news ?: emptyList(),
+                boards = _state.value.boardsOf,
+            )
+            _state.value = _state.value.copy(aiReviewLoading = false, aiReview = out)
+        }
+    }
+
+    /** 自由提问（把当前上下文全部给 AI） */
+    fun aiAsk() {
+        val q = _state.value.aiQuestion.trim()
+        if (q.isEmpty()) return
+        viewModelScope.launch {
+            _state.value = _state.value.copy(aiAnswerLoading = true, aiAnswer = null)
+            val ctx = buildAiContext()
+            val out = GitCodeAiClient.askFree(q, ctx)
+            _state.value = _state.value.copy(aiAnswerLoading = false, aiAnswer = out)
+        }
+    }
+
+    fun onAiQuestionChange(q: String) {
+        _state.value = _state.value.copy(aiQuestion = q)
+    }
+
+    /** 把当前 app 已拉到的全部数据序列化成 AI 底稿 */
+    private fun buildAiContext(): String {
+        val s = _state.value
+        val sb = StringBuilder()
+        sb.appendLine("【市场时段】${s.marketPhase}")
+        sb.appendLine("【行情】${s.quotes.joinToString("；") { "${it.name} ${it.price} ${it.pctChg?.let { "%.2f%%".format(it) } ?: ""}" }}")
+        val p = s.picks
+        sb.appendLine("【推股】signals=${p.signals.size} values=${p.values.size} 涨停=${p.limitUp.size}")
+        p.signals.take(8).forEach { sb.appendLine("  · ${it.name ?: it.code} 分=${it.score} ${it.engine ?: ""} 价=${it.price}") }
+        val d = s.decision
+        sb.appendLine("【决策】${d.marketRegime} ${d.regimeDetail ?: ""} 仓位=${d.positionAdvice}")
+        val m = s.market
+        sb.appendLine("【看板】${m.market.entries.joinToString(" ") { "${it.key}=${it.value}" }.take(200)}")
+        val n = s.news
+        sb.appendLine("【消息情绪】${n.digest["global_mood"]} 评分=${n.digest["global_score"]} 共 ${n.digest["total"]} 条")
+        val sec = s.sectors
+        sb.appendLine("【板块】行业 ${sec.industries.size} 概念 ${sec.concepts.size}")
+        val ps = s.pools
+        sb.appendLine("【多池】" + ps.joinToString("；") { "${it.name}${it.items.size}只" })
+        // 若当前打开了某只股，带上它的完整本地分析
+        s.detail?.let { dd ->
+            sb.appendLine("【当前详情】${dd.name ?: dd.code}（${dd.code}）")
+            s.localEngine?.let { e ->
+                sb.appendLine("  本地引擎综合=${e.composite?.let { "%.1f".format(it) } ?: "insufficient"}（${e.nValid}/${e.engines.size}）")
+                e.engines.filter { it.score != null }.forEach {
+                    sb.appendLine("    · ${it.engine}=${"%.1f".format(it.score!!)} ${it.signal}")
+                }
+            }
+        }
+        return sb.toString()
     }
 
     /** 本地实时选股（不用云端旧快照） */
