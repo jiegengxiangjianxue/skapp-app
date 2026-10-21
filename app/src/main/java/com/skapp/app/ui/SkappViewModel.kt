@@ -8,10 +8,12 @@ import com.skapp.app.data.DecisionCard
 import com.skapp.app.data.KBar
 import com.skapp.app.data.KlineApi
 import com.skapp.app.data.MarketSnapshot
+import com.skapp.app.data.NewsSnapshot
 import com.skapp.app.data.PickSignal
 import com.skapp.app.data.Quote
 import com.skapp.app.data.SkappApi
 import com.skapp.app.data.StockDetail
+import com.skapp.app.data.SectorsSnapshot
 import com.skapp.app.data.SymbolEntry
 import com.skapp.app.data.TodayPicks
 import kotlinx.coroutines.Job
@@ -45,6 +47,8 @@ data class UiState(
     val picks: TodayPicks = TodayPicks(),
     val decision: Decision = Decision(),
     val market: MarketSnapshot = MarketSnapshot(),
+    val news: NewsSnapshot = NewsSnapshot(),
+    val sectors: SectorsSnapshot = SectorsSnapshot(),
     val symbols: List<SymbolEntry> = emptyList(),
     val searchResults: List<SymbolEntry> = emptyList(),
     val detail: StockDetail? = null,
@@ -79,12 +83,16 @@ class SkappViewModel : ViewModel() {
                 val picks = async { SkappApi.fetchTodayPicks() }
                 val decision = async { SkappApi.fetchDecision() }
                 val market = async { SkappApi.fetchMarket() }
+                val news = async { SkappApi.fetchNews() }
+                val sectors = async { SkappApi.fetchSectors() }
                 askEngine = AskEngine(symbols.await(), names.await())
                 _state.value = _state.value.copy(
                     loading = false,
                     picks = picks.await(),
                     decision = decision.await(),
                     market = market.await(),
+                    news = news.await(),
+                    sectors = sectors.await(),
                     symbols = symbols.await(),
                 )
                 refreshQuotes()
