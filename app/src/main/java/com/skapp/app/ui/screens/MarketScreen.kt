@@ -1,0 +1,131 @@
+package com.skapp.app.ui.screens
+
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import com.skapp.app.ui.SkappViewModel
+import com.skapp.app.ui.UiState
+import com.skapp.app.ui.Watchlist
+
+private val UP = Color(0xFFF85149)
+private val DOWN = Color(0xFF3FB950)
+
+/** 行情 Tab：自选股实时报价 + 搜索入口 */
+@Composable
+fun MarketScreen(vm: SkappViewModel, state: UiState) {
+    var query by remember { mutableStateOf("") }
+
+    Column(Modifier.fillMaxWidth().padding(12.dp)) {
+        Text(
+            "自选行情 · 30s 自动刷新",
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold,
+        )
+        state.quoteTs?.let {
+            Text("报价时点：$it", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+        }
+        Spacer(Modifier.height(8.dp))
+
+        OutlinedTextField(
+            value = query,
+            onValueChange = { query = it; vm.search(it) },
+            label = { Text("搜股票名字或代码") },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+        )
+        Spacer(Modifier.height(8.dp))
+
+        if (state.loading) {
+            Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator()
+            }
+        }
+
+        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (query.isNotBlank()) {
+                items(state.searchResults, key = { it.code }) { s ->
+                    Card(
+                        modifier = Modifier.fillMaxWidth().clickable {
+                            vm.openDetail(s.code); query = ""
+                        },
+                        colors = CardDefaults.cardColors(),
+                    ) {
+                        Row(
+                            Modifier.fillMaxWidth().padding(14.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            Text(s.name ?: s.code, fontWeight = FontWeight.Medium)
+                            Text(s.code, color = Color.Gray)
+                        }
+                    }
+                }
+            } else {
+                items(Watchlist.codes, key = { it }) { code ->
+                    val row = state.quotes.firstOrNull { it.code == code }
+                    QuoteCard(row = row, code = code, onClick = { vm.openDetail(code) })
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun QuoteCard(row: com.skapp.app.ui.QuoteRow?, code: String, onClick: () -> Unit) {
+    val pct = row?.pctChg
+    val color = when {
+        pct == null -> Color.Gray
+        pct > 0 -> UP
+        pct < 0 -> DOWN
+        else -> Color.Gray
+    }
+    Card(
+        modifier = Modifier.fillMaxWidth().clickable { onClick() },
+        colors = CardDefaults.cardColors(),
+    ) {
+        Row(
+            Modifier.fillMaxWidth().padding(14.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column {
+                Text(row?.name ?: code, fontWeight = FontWeight.Medium)
+                Text(row?.display ?: code, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+            }
+            Column(horizontalAlignment = Alignment.End) {
+                Text(
+                    row?.price?.let { String.format("%.2f", it) } ?: "暂无数据",
+                    color = color,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    pct?.let { String.format("%.2f%%", it) } ?: "—",
+                    color = color,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+        }
+    }
+}
