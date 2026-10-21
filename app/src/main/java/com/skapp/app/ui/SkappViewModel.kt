@@ -2,6 +2,8 @@ package com.skapp.app.ui
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.skapp.app.data.MarketState
+import com.skapp.app.data.MarketStateEngine
 import com.skapp.app.data.aggregateKline
 import com.skapp.app.data.AskEngine
 import com.skapp.app.data.DataCache
@@ -91,6 +93,9 @@ data class UiState(
     val pickQuotes: Map<String, Quote> = emptyMap(),
     /** K 线周期（日/周/月） */
     val kPeriod: KPeriod = KPeriod.DAY,
+    /** 市场状态机输出 */
+    val marketState: MarketState? = null,
+    val marketStateLoading: Boolean = false,
     /** stocks-holo 全量 bundle */
     val holo: HoloBundle? = null,
     /** 本地实时选股结果 */
@@ -187,6 +192,20 @@ class SkappViewModel : ViewModel() {
             refreshQuotes()
             loadIndices()
             loadNewsCalcs()
+            loadMarketState()
+        }
+    }
+
+    /** 市场状态计算 */
+    fun loadMarketState() {
+        viewModelScope.launch {
+            _state.value = _state.value.copy(marketStateLoading = true)
+            try {
+                val ms = MarketStateEngine.compute()
+                _state.value = _state.value.copy(marketState = ms, marketStateLoading = false)
+            } catch (e: Exception) {
+                _state.value = _state.value.copy(marketStateLoading = false)
+            }
         }
     }
 
