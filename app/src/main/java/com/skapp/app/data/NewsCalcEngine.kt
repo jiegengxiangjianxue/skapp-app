@@ -1,5 +1,9 @@
 package com.skapp.app.data
 
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+
 /**
  * 快讯标题下的实时算法计算结果。
  *
