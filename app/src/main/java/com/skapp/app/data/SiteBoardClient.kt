@@ -13,13 +13,6 @@ import java.net.URL
 
 /**
  * 网页版板块数据聚合 —— 把站点的「实时总结 / 多池选股 / 看板 / 消息」搬到 app。
- *
- * 对应网页版 tab：
- *   实时总结 → daily_brief / latest / market_now / realtime_minute
- *   多池选股 → good_stock_pool / sector_pool / cycle_pool_v2 / lowpool /
- *             composite_pool_v3_eom / limitup_attribution / moneyflow
- *   看板    → latest（指数/涨跌统计/分布/涨跌幅榜/情绪仪表盘/涨停池）
- *   消息    → hot_news / news_digest / hot_themes / news_impact
  */
 object SiteBoardClient {
 
@@ -44,7 +37,6 @@ object SiteBoardClient {
         }
     }
 
-    /** 一个池 */
     data class Pool(
         val id: String,
         val name: String,
@@ -52,7 +44,7 @@ object SiteBoardClient {
         val items: List<PoolItem> = emptyList(),
         val kpis: Map<String, Any?> = emptyMap(),
         val ts: String? = null,
-        val status: String = "ok",     // ok | insufficient
+        val status: String = "ok",
         val reason: String? = null,
     )
 
@@ -65,7 +57,6 @@ object SiteBoardClient {
         val extra: Map<String, Any?> = emptyMap(),
     )
 
-    /** 多池选股 */
     suspend fun pools(): List<Pool> = coroutineScope {
         val goodD = async(Dispatchers.IO) { getJson("$RAW/good_stock_pool.json") }
         val sectorD = async(Dispatchers.IO) { getJson("$RAW/sector_pool.json") }
@@ -77,7 +68,6 @@ object SiteBoardClient {
 
         val out = ArrayList<Pool>()
 
-        // 推荐池（good_stock_pool: eligible/watch）
         goodD.await()?.let { o ->
             val items = o.optJSONArray("eligible")?.toItems()
                 ?: o.optJSONObject("eligible")?.let { e ->
@@ -87,57 +77,51 @@ object SiteBoardClient {
                 id = "good",
                 name = "推荐池",
                 subtitle = "好股票池 · eligible",
-                items = items.take(50)),
+                items = items.take(50),
                 kpis = mapOf(
-                    "eligible" to (o.opt("eligible")?.let { lenOf(it) }),
-                    "watch" to (o.opt("watch")?.let { lenOf(it) }),
-                    "reject" to (o.opt("reject")?.let { lenOf(it) }),
+                    "eligible" to lenOf(o.opt("eligible")),
+                    "watch" to lenOf(o.opt("watch")),
+                    "reject" to lenOf(o.opt("reject")),
                 ),
                 ts = o.optString("asof").takeIf { it.isNotEmpty() },
-            )
-        }
-        if (false) out.add(Pool("good", "推荐池", status = "insufficient", reason = "good_stock_pool.json 不可达"))
+            ))
+        } ?: out.add(Pool("good", "推荐池", status = "insufficient", reason = "good_stock_pool.json 不可达"))
 
-        // 板块池（sector_pool: tier1/tier2/tier3）
         sectorD.await()?.let { o ->
             val t1 = o.optJSONArray("tier1")?.toItems() ?: emptyList()
             val t2 = o.optJSONArray("tier2")?.toItems() ?: emptyList()
             out.add(Pool(
                 id = "sector",
                 name = "板块池",
-                subtitle = "T1 ${o.optInt("tier1_count"))} · T2 ${o.optInt("tier2_count")} · T3 ${o.optInt("tier3_count")}",
+                subtitle = "T1 " + o.optInt("tier1_count") + " · T2 " + o.optInt("tier2_count") + " · T3 " + o.optInt("tier3_count"),
                 items = (t1 + t2).take(50),
                 kpis = mapOf(
                     "total_sectors" to o.optInt("total_sectors"),
                     "tier1" to o.optInt("tier1_count"),
                 ),
                 ts = o.optString("date").takeIf { it.isNotEmpty() },
-            )
-        }
-        if (false) out.add(Pool("sector", "板块池", status = "insufficient", reason = "sector_pool.json 不可达"))
+            ))
+        } ?: out.add(Pool("sector", "板块池", status = "insufficient", reason = "sector_pool.json 不可达"))
 
-        // 周期池（cycle_pool_v2: stocks）
         cycleD.await()?.let { o ->
             val stocks = o.optJSONArray("stocks")?.toItems() ?: emptyList()
             out.add(Pool(
                 id = "cycle",
                 name = "周期池",
-                subtitle = "周期轮动 · " + (o.optJSONObject("meta"))?.optString("index") ?: ""),
+                subtitle = "周期轮动 · " + (o.optJSONObject("meta")?.optString("index") ?: ""),
                 items = stocks.take(50),
                 kpis = mapOf("n" to stocks.size),
                 ts = o.optJSONObject("meta")?.optString("ts"),
-            )
-        }
-        if (false) out.add(Pool("cycle", "周期池", status = "insufficient", reason = "cycle_pool_v2.json 不可达"))
+            ))
+        } ?: out.add(Pool("cycle", "周期池", status = "insufficient", reason = "cycle_pool_v2.json 不可达"))
 
-        // 低位池（lowpool: strong/watch_list）
         lowD.await()?.let { o ->
             val strong = o.optJSONArray("strong")?.toItems() ?: emptyList()
             val watch = o.optJSONArray("watch_list")?.toItems() ?: emptyList()
             out.add(Pool(
                 id = "low",
                 name = "低位池",
-                subtitle = "strong_buy ${o.optInt("strong_buy"))} · watch ${o.optInt("watch")}",
+                subtitle = "strong_buy " + o.optInt("strong_buy") + " · watch " + o.optInt("watch"),
                 items = (strong + watch).take(50),
                 kpis = mapOf(
                     "strong_buy" to o.optInt("strong_buy"),
@@ -145,57 +129,47 @@ object SiteBoardClient {
                     "total_filtered" to o.optInt("total_filtered"),
                 ),
                 ts = o.optString("ts").takeIf { it.isNotEmpty() },
-            )
-        }
-        if (false) out.add(Pool("low", "低位池", status = "insufficient", reason = "lowpool.json 不可达"))
+            ))
+        } ?: out.add(Pool("low", "低位池", status = "insufficient", reason = "lowpool.json 不可达"))
 
-        // 综合池（composite_pool_v3_eom: picks）
         compD.await()?.let { o ->
             out.add(Pool(
                 id = "composite",
                 name = "综合池",
-                subtitle = o.optString("algo")).takeIf { it.isNotEmpty() },
+                subtitle = o.optString("algo").takeIf { it.isNotEmpty() },
                 items = o.optJSONArray("picks")?.toItems() ?: emptyList(),
                 ts = o.optString("ts").takeIf { it.isNotEmpty() },
-            )
-        }
-        if (false) out.add(Pool("composite", "综合池", status = "insufficient", reason = "composite_pool_v3_eom.json 不可达"))
+            ))
+        } ?: out.add(Pool("composite", "综合池", status = "insufficient", reason = "composite_pool_v3_eom.json 不可达"))
 
-        // 涨停归因（limitup_attribution）
         limitD.await()?.let { o ->
             val arr = o.optJSONArray("items") ?: o.optJSONArray("stocks") ?: o.optJSONArray("attribution")
             out.add(Pool(
                 id = "limitup",
                 name = "涨停归因",
                 subtitle = "价格带 · 封板时段 · 连板 · 行业",
-                items = arr?.toItems()) ?: emptyList(),
+                items = arr?.toItems() ?: emptyList(),
                 ts = o.optString("ts").takeIf { it.isNotEmpty() },
-            )
-        }
-        if (false) out.add(Pool("limitup", "涨停归因", status = "insufficient", reason = "limitup_attribution.json 不可达"))
+            ))
+        } ?: out.add(Pool("limitup", "涨停归因", status = "insufficient", reason = "limitup_attribution.json 不可达"))
 
-        // 资金流（moneyflow）
         moneyD.await()?.let { o ->
             val arr = o.optJSONArray("top") ?: o.optJSONArray("stocks") ?: o.optJSONArray("items")
             out.add(Pool(
                 id = "moneyflow",
                 name = "资金流",
                 subtitle = "主力净额榜",
-                items = arr?.toItems()) ?: emptyList(),
+                items = arr?.toItems() ?: emptyList(),
                 ts = o.optString("ts").takeIf { it.isNotEmpty() },
-            )
-        }
-        if (false) out.add(Pool("moneyflow", "资金流", status = "insufficient", reason = "moneyflow.json 不可达"))
+            ))
+        } ?: out.add(Pool("moneyflow", "资金流", status = "insufficient", reason = "moneyflow.json 不可达"))
 
         out
     }
 
-    /** 看板：指数 / 涨跌统计 / 涨跌幅榜 / 情绪 / 涨停池 */
     suspend fun board(): Map<String, Any?> = withContext(Dispatchers.IO) {
         val out = LinkedHashMap<String, Any?>()
-        val latest = getJson("$RAW/latest.json")
-        val mn = getJson("$RAW/market_now.json")
-        val src = latest ?: mn
+        val src = getJson("$RAW/latest.json") ?: getJson("$RAW/market_now.json")
         if (src == null) {
             out["status"] = "insufficient"
             out["reason"] = "latest.json / market_now.json 均不可达"
@@ -203,7 +177,7 @@ object SiteBoardClient {
         }
         out["ts"] = src.optString("ts").takeIf { it.isNotEmpty() } ?: src.optString("asof")
         out["indices"] = src.optJSONArray("indices")?.toMapList()
-            ?: src.optJSONObject("indices")?.let { it.toMap() } ?: emptyMap<String, Any>()
+            ?: src.optJSONObject("indices")?.toMap() ?: emptyMap<String, Any>()
         out["market"] = src.optJSONObject("market")?.toMap() ?: emptyMap<String, Any>()
         out["phase"] = src.opt("phase")
         out["gainers"] = src.optJSONArray("gainers")?.toMapList() ?: emptyList<Map<String, Any?>>()
@@ -214,7 +188,6 @@ object SiteBoardClient {
         out
     }
 
-    /** 实时总结（daily_brief 文本 + 最新推股验证） */
     suspend fun summary(): Map<String, Any?> = withContext(Dispatchers.IO) {
         val out = LinkedHashMap<String, Any?>()
         val brief = getJson("$RAW/daily_brief.json")
@@ -236,15 +209,12 @@ object SiteBoardClient {
         out
     }
 
-    // ── 小工具 ────────────────────────────────────────────
-
     private fun lenOf(v: Any?): Int = when (v) {
         is JSONArray -> v.length()
         is JSONObject -> v.length()
         else -> 0
     }
 
-    /** 数组 → PoolItem，字段名兼容多种上游形状 */
     private fun JSONArray.toItems(): List<PoolItem> =
         (0 until length()).mapNotNull { i ->
             val o = optJSONObject(i) ?: return@mapNotNull null
