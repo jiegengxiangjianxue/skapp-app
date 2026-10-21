@@ -7,6 +7,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Article
 import androidx.compose.material.icons.filled.Category
 import androidx.compose.material.icons.filled.Dashboard
+import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.QuestionAnswer
 import androidx.compose.material.icons.filled.ShowChart
 import androidx.compose.material.icons.filled.Star
@@ -35,6 +36,7 @@ import com.skapp.app.ui.screens.NewsScreen
 import com.skapp.app.ui.screens.PicksScreen
 import com.skapp.app.ui.screens.PoolsScreen
 import com.skapp.app.ui.screens.SectorsScreen
+import com.skapp.app.ui.screens.AiScreen
 import com.skapp.app.ui.screens.StockDetailSheet
 import com.skapp.app.ui.screens.SummaryScreen
 
@@ -47,15 +49,16 @@ fun MainScreen(vm: SkappViewModel) {
     var tab by remember { mutableStateOf(0) }
 
     // 与网页版 tab 对齐：实时总结 / 推股 / 决策 / 看板 / 多池 / 消息 / 板块 / 提问
+    // 合并后 5 个：看板(自选行情+全球+指数+涨跌榜+实时总结+决策卡)
+    //           推股(多池+本地实时选股+云端推股)
+    //           消息(快讯/主线, 标题下实时算法)
+    //           提问(本地规则引擎) / AI(GitCode 复盘+问答)
     val tabs = listOf(
-        Tab("总结", Icons.Filled.Summarize),
-        Tab("推股", Icons.Filled.TrendingUp),
-        Tab("决策", Icons.Filled.Star),
         Tab("看板", Icons.Filled.Dashboard),
-        Tab("多池", Icons.Filled.Category),
+        Tab("推股", Icons.Filled.TrendingUp),
         Tab("消息", Icons.Filled.Article),
-        Tab("板块", Icons.Filled.Category),
         Tab("提问", Icons.Filled.QuestionAnswer),
+        Tab("AI", Icons.Filled.SmartToy),
     )
 
     Scaffold(
@@ -74,14 +77,11 @@ fun MainScreen(vm: SkappViewModel) {
     ) { padding ->
         Box(Modifier.fillMaxSize().padding(padding)) {
             when (tab) {
-                0 -> SummaryScreen(vm, state)
+                0 -> BoardScreen(vm, state)
                 1 -> PicksScreen(vm, state)
-                2 -> DecisionScreen(vm, state)
-                3 -> BoardScreen(vm, state)
-                4 -> PoolsScreen(vm, state)
-                5 -> NewsScreen(vm, state)
-                6 -> SectorsScreen(vm, state)
-                7 -> AskScreen(vm, state)
+                2 -> NewsScreen(vm, state)
+                3 -> AskScreen(vm, state)
+                4 -> AiScreen(vm, state)
             }
         }
 
