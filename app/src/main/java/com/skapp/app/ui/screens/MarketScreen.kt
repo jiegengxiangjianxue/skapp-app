@@ -43,14 +43,46 @@ fun MarketScreen(vm: SkappViewModel, state: UiState) {
 
     Column(Modifier.fillMaxWidth().padding(12.dp)) {
         Text(
-            "自选行情 · 30s 自动刷新",
+            "自选行情 · " + state.marketPhase + if (state.autoRefresh) " · 自动刷新中" else " · 休市停表",
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.Bold,
         )
         state.quoteTs?.let {
             Text("报价时点：$it", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
         }
+        if (!state.autoRefresh) {
+            state.nextRefreshIn?.let { ms ->
+                Text(
+                    "下次自动刷新：${fmtUntil(ms)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color(0xFFD29922),
+                )
+            }
+        }
         Spacer(Modifier.height(8.dp))
+
+        // 全球股市（东财 ulist 批量）
+        if (state.globalIndices.isNotEmpty()) {
+            Text("全球股市", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(4.dp))
+            LazyColumn(Modifier.height(150.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                items(state.globalIndices, key = { "g_" + it.hashCode() }) { g ->
+                    IndexCard(g)
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+        }
+        // A 股指数
+        if (state.aShareIndices.isNotEmpty()) {
+            Text("A 股指数", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(4.dp))
+            LazyColumn(Modifier.height(150.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                items(state.aShareIndices, key = { "a_" + it.hashCode() }) { g ->
+                    IndexCard(g)
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+        }
 
         OutlinedTextField(
             value = query,
@@ -92,6 +124,61 @@ fun MarketScreen(vm: SkappViewModel, state: UiState) {
                 }
             }
         }
+    }
+}
+
+/** 指数卡片（全球 / A 股共用）：名称 + 现价 + 涨跌幅 */
+@Composable
+private fun IndexCard(idx: Map<String, Any?>) {
+    val pct = (idx["pctChg"] as? Number)?.toDouble()
+    val color = when {
+        pct == null -> Color.Gray
+        pct > 0 -> UP
+        pct < 0 -> DOWN
+        else -> Color.Gray
+    }
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(),
+    ) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    (idx["name"] ?: idx["code"] ?: "未知").toString(),
+                    fontWeight = FontWeight.Medium,
+                )
+                (idx["source"] as? String)?.let {
+                    Text(it, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                }
+            }
+            Column(horizontalAlignment = Alignment.End) {
+                Text(
+                    (idx["price"] as? Number)?.let { String.format("%.2f", it.toDouble()) } ?: "暂无数据",
+                    color = color,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    pct?.let { String.format("%+.2f%%", it) } ?: "—",
+                    color = color,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+        }
+    }
+}
+
+/** 毫秒 → 「x 小时 y 分」 */
+private fun fmtUntil(ms: Long): String {
+    val totalMin = ms / 60000
+    val h = totalMin / 60
+    val m = totalMin % 60
+    return when {
+        h > 0 -> "$h 小时 $m 分"
+        else -> "$m 分钟"
     }
 }
 
