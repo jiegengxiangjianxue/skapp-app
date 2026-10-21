@@ -251,6 +251,13 @@ class SkappViewModel : ViewModel() {
      * 打开个股详情：stocks-holo 全量 + 实时行情 + 本地引擎（引擎吃 holo/kline/technical）。
      * 缓存优先：重复点同一只股票且复权/周期未变则不重新拉。
      */
+    /** 切换复权方式：已选中则忽略 */
+    fun switchAdjust(adjust: String) {
+        if (_state.value.detailAdjust == adjust) return
+        val code = _state.value.detail?.code ?: return
+        openDetail(code, adjust)
+    }
+
     fun openDetail(code: String, adjust: String = "qfq") {
         val same = _state.value.detail?.code == code &&
             _state.value.detailAdjust == adjust &&
