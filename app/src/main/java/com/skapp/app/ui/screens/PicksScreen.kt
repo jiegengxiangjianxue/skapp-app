@@ -13,7 +13,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Card
+import androidx.compose.material3.CircularProgressIndicatorDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -44,6 +46,7 @@ fun PicksScreen(vm: SkappViewModel, state: UiState) {
         "指标共振" to p.signals,
         "多维评分" to p.values,
         "涨停" to p.limitUp,
+        "本地实时" to emptyList<com.skapp.app.data.PickSignal>(),
     )
 
     Column(Modifier.fillMaxWidth()) {
@@ -70,6 +73,97 @@ fun PicksScreen(vm: SkappViewModel, state: UiState) {
         MarketOverview(state)
 
         HorizontalDivider()
+
+        // ── 本地实时选股 Tab ──
+        if (tab == 3) {
+            Column(Modifier.fillMaxWidth().padding(12.dp)) {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("本地实时选股", fontWeight = FontWeight.SemiBold)
+                        Text(
+                            "实时拉全市场行情 → 预筛 → 本地 12 引擎 + 29 因子现算（非云端快照）",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color.Gray,
+                        )
+                    }
+                    if (state.screening) {
+                        CircularProgressIndicator()
+                    } else {
+                        Card(modifier = Modifier.clickable { vm.runScreen() },
+                            colors = CardDefaults.cardColors()) {
+                            Text("开始实时选股", Modifier.padding(10.dp),
+                                color = MaterialTheme.colorScheme.primary,
+                                style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                }
+                state.screenMsg?.let {
+                    Spacer(Modifier.height(6.dp))
+                    Text(it, style = MaterialTheme.typography.bodySmall, color = Color(0xFFD29922))
+                }
+                Spacer(Modifier.height(8.dp))
+                if (state.screened.isEmpty() && !state.screening) {
+                    Text("暂无结果：点击「开始实时选股」（约需 10-40 秒，视网络）", color = Color.Gray)
+                } else {
+                    Text("命中 ${state.screened.size} 只（按本地引擎综合分降序）",
+                        style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                    Spacer(Modifier.height(6.dp))
+                    state.screened.forEach { sc ->
+                        Card(
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp)
+                                .clickable { vm.openDetail(sc.code) },
+                            colors = CardDefaults.cardColors(),
+                        ) {
+                            Column(Modifier.padding(12.dp)) {
+                                Row(Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween) {
+                                    Column {
+                                        Text(sc.name ?: sc.code, fontWeight = FontWeight.Medium)
+                                        Text(sc.code, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                                    }
+                                    Column(horizontalAlignment = Alignment.End) {
+                                        Text(
+                                            sc.price?.let { String.format("%.2f", it) } ?: "暂无",
+                                            color = pctColorS(sc.pctChg),
+                                            fontWeight = FontWeight.SemiBold,
+                                        )
+                                        Text(
+                                            "实时 " + (sc.pctChg?.let { String.format("%.2f%%", it) } ?: "—"),
+                                            color = pctColorS(sc.pctChg),
+                                            style = MaterialTheme.typography.bodySmall,
+                                        )
+                                    }
+                                }
+                                Spacer(Modifier.height(4.dp))
+                                Text(
+                                    "本地引擎 ${sc.engine?.composite?.let { String.format("%.1f", it) } ?: "insufficient"}" +
+                                        "（${sc.engine?.nValid ?: 0}/12 引擎）" +
+                                        (sc.volRatio?.let { "　量比 ${String.format("%.2f", it)}" } ?: "") +
+                                        (sc.mv?.let { "　市值 ${String.format("%.0f 亿", it / 1e8)}" } ?: ""),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = scoreColorS(sc.engine?.composite),
+                                )
+                                sc.engine?.engines?.filter { it.score != null }
+                                    ?.sortedByDescending { it.score }?.take(3)
+                                    ?.forEach { e ->
+                                        Text(
+                                            "· ${engineLabel(e.engine)} ${String.format("%.0f", e.score!!)} " +
+                                                (e.reasons.firstOrNull() ?: ""),
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = Color.LightGray,
+                                        )
+                                    }
+                            }
+                        }
+                    }
+                }
+            }
+            return@Column
+        }
 
         // ── 列表 ──
         val current = tabs.getOrNull(tab)?.second ?: emptyList()
@@ -247,6 +341,28 @@ private fun marketLabel(k: String): String = when (k) {
     "limit_down" -> "跌停"
     "turnover_yi" -> "成交(亿)"
     "turnover" -> "成交"
+    else -> k
+}
+
+private fun pctColorS(pct: Double?): Color = when {
+    pct == null -> Color.Gray
+    pct > 0 -> Color(0xFFF85149)
+    pct < 0 -> Color(0xFF3FB950)
+    else -> Color.Gray
+}
+
+private fun scoreColorS(s: Double?): Color = when {
+    s == null -> Color.Gray
+    s >= 65 -> Color(0xFFF85149)
+    s <= 35 -> Color(0xFF3FB950)
+    else -> Color.Gray
+}
+
+private fun engineLabel(k: String): String = when (k) {
+    "trend" -> "趋势"; "momentum" -> "动量"; "volume" -> "量能"
+    "boll" -> "布林"; "macd" -> "MACD"; "supertrend" -> "SuperTrend"
+    "keltner" -> "Keltner"; "choppiness" -> "震荡"; "mfi" -> "MFI"
+    "vortex" -> "涡旋"; "obv" -> "OBV"; "position" -> "位置"
     else -> k
 }
 
