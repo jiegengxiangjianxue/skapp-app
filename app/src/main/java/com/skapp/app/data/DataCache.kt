@@ -12,6 +12,8 @@ package com.skapp.app.data
  *   detail:{code}                  → StockDetail（云端）
  *   minute:{code}                  → List<Map>（分时，盘中 60s TTL）
  */
+private class CacheEntry(val value: Any?, val expiresAt: Long)
+
 object DataCache {
 
     private const val QUOTE_TTL_MS = 30_000L
@@ -19,9 +21,7 @@ object DataCache {
     private const val DAY_TTL_MS = 6 * 60 * 60_000L      // 日 K / 资金流：半天
     private const val BOARDS_TTL_MS = 24 * 60 * 60_000L  // 板块归属：一天
 
-    internal class Entry(val value: Any?, val expiresAt: Long)
-
-    private val store = HashMap<String, Entry>()
+    private val store = HashMap<String, CacheEntry>()
 
     private fun now() = System.currentTimeMillis()
 
@@ -36,7 +36,7 @@ object DataCache {
     }
 
     fun put(key: String, value: Any?, ttlMs: Long) {
-        synchronized(store) { store[key] = Entry(value, now() + ttlMs) }
+        synchronized(store) { store[key] = CacheEntry(value, now() + ttlMs) }
     }
 
     fun invalidate(key: String) = synchronized(store) { store.remove(key) }
