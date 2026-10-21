@@ -31,20 +31,38 @@ import java.nio.charset.Charset
  */
 object HoloClient {
 
-    private const val RAW = "https://raw.githubusercontent.com"
+    // GitHub raw 在部分网络下不稳，contents API 更可靠；带 token 还能读私有仓
+    private const val API = "https://api.github.com/repos"
     private const val REPO = "jiegengxiangjianxue1/stocks-holo"
+
+    // token 由 app 设置页配置；不填时读公开仓的公开文件
+    private var token: String? = null
+    fun setToken(t: String?) { token = t?.takeIf { it.isNotBlank() } }
 
     /** sh600519 / sz000001 / hk00700 —— holo 仓用带前缀代码做目录名 */
     fun dirName(code: String): String = SkappApi.prefixed(code)
 
+    /** 文件路径 → 文本。优先 contents API；raw 兜底（有 token 时也行）。 */
     private fun getText(url: String, charset: String = "utf-8"): String? {
+        // url 形如 raw 或 API; 统一走 API（更稳）
+        val apiUrl = when {
+            url.contains("raw.githubusercontent.com") -> {
+                // raw.githubusercontent.com/owner/repo/main/path → api.github.com/repos/owner/repo/contents/path
+                url.replace("https://raw.githubusercontent.com/", "$API/")
+                    .replace("/main/", "/contents/")
+                    .replace("/master/", "/contents/")
+            }
+            else -> url
+        }
         var conn: HttpURLConnection? = null
         return try {
-            conn = (URL(url).openConnection() as HttpURLConnection).apply {
+            conn = (URL(apiUrl).openConnection() as HttpURLConnection).apply {
                 connectTimeout = 15000
                 readTimeout = 15000
                 requestMethod = "GET"
                 setRequestProperty("User-Agent", "skapp-android")
+                token?.let { setRequestProperty("Authorization", "Bearer $it") }
+                setRequestProperty("Accept", "application/vnd.github.raw")
             }
             if (conn.responseCode != HttpURLConnection.HTTP_OK) return null
             val cs = if (charset == "gbk") Charset.forName("GBK") else Charsets.UTF_8
@@ -66,7 +84,7 @@ object HoloClient {
     suspend fun exists(code: String): Boolean = withContext(Dispatchers.IO) {
         val d = dirName(code)
         val conn = runCatching {
-            (URL("$RAW/$REPO/main/$d/meta.json").openConnection() as HttpURLConnection).apply {
+            (URL("$API/$REPO/contents/$d/meta.json").openConnection() as HttpURLConnection).apply {
                 requestMethod = "HEAD"
                 connectTimeout = 10000
                 readTimeout = 10000
@@ -78,43 +96,43 @@ object HoloClient {
 
     /** 摘要 */
     suspend fun holo(code: String): Map<String, Any?>? = withContext(Dispatchers.IO) {
-        getJson("$RAW/$REPO/main/${dirName(code)}/holo.json")?.toMap()
+        getJson("$API/$REPO/contents/${dirName(code)}/holo.json")?.toMap()
     }
 
     /** 元信息（覆盖状态/时点） */
     suspend fun meta(code: String): Map<String, Any?>? = withContext(Dispatchers.IO) {
-        getJson("$RAW/$REPO/main/${dirName(code)}/meta.json")?.toMap()
+        getJson("$API/$REPO/contents/${dirName(code)}/meta.json")?.toMap()
     }
 
     /** 技术面 */
     suspend fun technical(code: String): Map<String, Double?>? = withContext(Dispatchers.IO) {
-        getJson("$RAW/$REPO/main/${dirName(code)}/technical.json")?.toDoubleMap()
+        getJson("$API/$REPO/contents/${dirName(code)}/technical.json")?.toDoubleMap()
     }
 
     /** 财务 */
     suspend fun finance(code: String): Map<String, Any?>? = withContext(Dispatchers.IO) {
-        getJson("$RAW/$REPO/main/${dirName(code)}/finance.json")?.toMap()
+        getJson("$API/$REPO/contents/${dirName(code)}/finance.json")?.toMap()
     }
 
     /** 资金流历史 */
     suspend fun moneyflow(code: String): List<Map<String, Any?>> = withContext(Dispatchers.IO) {
-        val arr = getArr("$RAW/$REPO/main/${dirName(code)}/moneyflow.json")
-            ?: getJson("$RAW/$REPO/main/${dirName(code)}/moneyflow.json")?.optJSONArray("data")
+        val arr = getArr("$API/$REPO/contents/${dirName(code)}/moneyflow.json")
+            ?: getJson("$API/$REPO/contents/${dirName(code)}/moneyflow.json")?.optJSONArray("data")
             ?: return@withContext emptyList()
         (0 until arr.length()).mapNotNull { i -> arr.optJSONObject(i)?.toMap() }
     }
 
     /** 该股新闻 */
     suspend fun news(code: String): List<Map<String, Any?>> = withContext(Dispatchers.IO) {
-        val arr = getArr("$RAW/$REPO/main/${dirName(code)}/news.json")
-            ?: getJson("$RAW/$REPO/main/${dirName(code)}/news.json")?.optJSONArray("items")
+        val arr = getArr("$API/$REPO/contents/${dirName(code)}/news.json")
+            ?: getJson("$API/$REPO/contents/${dirName(code)}/news.json")?.optJSONArray("items")
             ?: return@withContext emptyList()
         (0 until arr.length()).mapNotNull { i -> arr.optJSONObject(i)?.toMap() }
     }
 
     /** 情绪 */
     suspend fun sentiment(code: String): Map<String, Any?>? = withContext(Dispatchers.IO) {
-        getJson("$RAW/$REPO/main/${dirName(code)}/sentiment.json")?.toMap()
+        getJson("$API/$REPO/contents/${dirName(code)}/sentiment.json")?.toMap()
     }
 
     /**
@@ -123,7 +141,7 @@ object HoloClient {
      */
     suspend fun kline(code: String): List<KBar> = withContext(Dispatchers.IO) {
         val d = dirName(code)
-        val txt = getText("$RAW/$REPO/main/$d/kline.json") ?: return@withContext emptyList()
+        val txt = getText("$API/$REPO/contents/$d/kline.json") ?: return@withContext emptyList()
         val arr: JSONArray? = runCatching { JSONArray(txt) }.getOrNull()
             ?: runCatching {
                 JSONObject(txt).let { o ->
