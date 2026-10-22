@@ -97,6 +97,9 @@ data class UiState(
     /** 市场状态机输出 */
     val marketState: MarketState? = null,
     val marketStateLoading: Boolean = false,
+    /** 云端 190 源合并产物摘要（兜底数据源） */
+    val allSourcesSummary: String? = null,
+    val allSourcesQuotes: Map<String, AllSourcesClient.Quote> = emptyMap(),
     /** stocks-holo 全量 bundle */
     val holo: HoloBundle? = null,
     /** 本地实时选股结果 */
@@ -190,6 +193,7 @@ class SkappViewModel : ViewModel() {
                 summary = summaryD.await(),
                 symbols = symbols,
             )
+            loadAllSources()
             refreshQuotes()
             refreshPickQuotes()   // 推股/决策列表补实时报价（覆盖快照价）
             loadIndices()
@@ -210,6 +214,22 @@ class SkappViewModel : ViewModel() {
                 _state.value = _state.value.copy(marketState = ms, marketStateLoading = false)
             } catch (e: Exception) {
                 _state.value = _state.value.copy(marketStateLoading = false)
+            }
+        }
+    }
+
+    private val allSources = AllSourcesClient()
+
+    /** 拉云端 190 源合并产物：作行情兜底 + 数据源健康度展示 */
+    fun loadAllSources() {
+        viewModelScope.launch {
+            try {
+                val j = allSources.fetch() ?: return@launch
+                _state.value = _state.value.copy(
+                    allSourcesSummary = allSources.summaryLine(j),
+                    allSourcesQuotes = allSources.parseQuotes(j),
+                )
+            } catch (_: Exception) {
             }
         }
     }
