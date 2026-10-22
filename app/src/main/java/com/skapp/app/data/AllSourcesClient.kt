@@ -122,7 +122,7 @@ class AllSourcesClient {
         val newsCount = groups?.optJSONObject("news")?.optInt("merged", 0) ?: 0
         val totalMerged = summary?.optInt("total_merged", 0) ?: 0
 
-        return "190源 ${quoteCount}行情 ${sectorCount}板块 ${newsCount}新闻 / 合并$totalMerged条"
+        return "190源 ${quoteCount}行情 ${sectorCount}板块 ${newsCount}新闻 / 合并${totalMerged}条"
     }
 
     // Quote 数据类
