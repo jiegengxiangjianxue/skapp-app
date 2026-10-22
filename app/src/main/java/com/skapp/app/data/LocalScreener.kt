@@ -52,8 +52,8 @@ object LocalScreener {
             val url = "https://push2.eastmoney.com/api/qt/clist/get?pn=$pn&pz=$pz&po=1&fid=f3" +
                 "&fs=m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81+s:2048" +
                 "&fields=f2,f3,f5,f6,f8,f9,f10,f12,f14,f20,f21,f62,f115,f124"
-            val txt = HttpURLConnectionBridge(url).readText()
-            val obj = runCatching { org.json.JSONObject(txt) }.getOrNull()
+            val txt = HttpURLConnectionBridge(url).readText() ?: return@withContext emptyList()
+            val obj = runCatching { org.json.JSONObject(txt) }.getOrNull() ?: return@withContext emptyList()
             val arr = obj?.optJSONObject("data")?.optJSONArray("diff")
                 ?: return@withContext emptyList()
             (0 until arr.length()).mapNotNull { i ->
@@ -135,8 +135,16 @@ private class HttpURLConnectionBridge(url: String) {
             requestMethod = "GET"
             setRequestProperty("User-Agent", "Mozilla/5.0 (Android) skapp")
             setRequestProperty("Referer", "https://quote.eastmoney.com/")
+            setRequestProperty("Accept", "application/json")
         }
 
-    fun readText(): String =
-        conn.inputStream.bufferedReader().use { it.readText() }.also { conn.disconnect() }
+    fun readText(): String? =
+        try {
+            if (conn.responseCode != java.net.HttpURLConnection.HTTP_OK) null
+            else conn.inputStream.bufferedReader().use { it.readText() }
+        } catch (e: Exception) {
+            null
+        } finally {
+            conn.disconnect()
+        }
 }
