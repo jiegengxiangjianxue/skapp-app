@@ -238,10 +238,10 @@ private fun AiMode(vm: SkappViewModel, state: UiState) {
 
     // AI 输出
     state.aiReview?.let {
-        AiOutput("AI 复盘结果", it)
+        AiOutputBlock("AI 复盘结果", it)
     }
     state.aiAnswer?.let {
-        AiOutput("AI 回答", it)
+        AiOutputBlock("AI 回答", it)
     }
 
     if (!state.aiConfigured) {
@@ -252,6 +252,18 @@ private fun AiMode(vm: SkappViewModel, state: UiState) {
                 style = MaterialTheme.typography.bodySmall,
                 color = Color.Gray,
             )
+        }
+    }
+}
+
+@Composable
+private fun AiOutputBlock(title: String, text: String) {
+    Card(colors = CardDefaults.cardColors()) {
+        Column(Modifier.padding(12.dp)) {
+            Text(title, fontWeight = FontWeight.SemiBold)
+            HorizontalDivider()
+            Spacer(Modifier.height(6.dp))
+            Text(text, style = MaterialTheme.typography.bodyMedium)
         }
     }
 }
