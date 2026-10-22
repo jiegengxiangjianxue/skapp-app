@@ -22,21 +22,35 @@ object SkappApi {
     fun setToken(t: String?) { token = t?.takeIf { it.isNotBlank() } }
 
     private fun fetchText(url: String, charset: String = "utf-8"): String? {
-        // raw.githubusercontent.com 在部分网络不可达，GitHub 域名一律走 Contents API
-        val u = if (url.contains("raw.githubusercontent.com")) {
+        // 公开仓数据：优先 raw.githubusercontent.com（不限流），失败才回退 Contents API
+        // 原因：api.github.com 匿名 60 req/h 限流，而 raw 不限流
+        val rawUrl = url
+        val apiUrl = if (url.contains("raw.githubusercontent.com")) {
             url.replace("https://raw.githubusercontent.com/", API_ROOT)
                 .replaceFirst("/main/", "/contents/")
                 .replaceFirst("/master/", "/contents/")
-        } else url
+        } else null
+        
+        // 先尝试 raw（不限流）
+        fetchFromUrl(rawUrl, charset)?.let { return it }
+        
+        // raw 失败才走 API（有 token 时带 token）
+        if (apiUrl != null) {
+            return fetchFromUrl(apiUrl, charset, isApi = true)
+        }
+        return null
+    }
+    
+    private fun fetchFromUrl(u: String, charset: String, isApi: Boolean = false): String? {
         var conn: HttpURLConnection? = null
         return try {
             conn = (URL(u).openConnection() as HttpURLConnection).apply {
-                connectTimeout = TIMEOUT
-                readTimeout = TIMEOUT
+                connectTimeout = 20000  // 20s，给弱网留时间
+                readTimeout = 20000
                 requestMethod = "GET"
                 setRequestProperty("User-Agent", "skapp-android")
                 token?.let { setRequestProperty("Authorization", "Bearer $it") }
-                if (u.startsWith(API_ROOT)) setRequestProperty("Accept", "application/vnd.github.raw")
+                if (isApi) setRequestProperty("Accept", "application/vnd.github.raw")
             }
             if (conn.responseCode != HttpURLConnection.HTTP_OK) return null
             val cs = if (charset == "gbk") Charset.forName("GBK") else Charsets.UTF_8
