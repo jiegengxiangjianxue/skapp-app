@@ -29,7 +29,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.skapp.app.ui.screens.AskScreen
+import com.skapp.app.ui.screens.UnifiedAskScreen
 import com.skapp.app.ui.screens.BoardScreen
 import com.skapp.app.ui.screens.DecisionScreen
 import com.skapp.app.ui.screens.MarketScreen
@@ -60,8 +60,7 @@ fun MainScreen(vm: SkappViewModel) {
         Tab("推股", Icons.Filled.TrendingUp),
         Tab("消息", Icons.Filled.Article),
         Tab("引擎", Icons.Filled.Science),
-        Tab("提问", Icons.Filled.QuestionAnswer),
-        Tab("AI", Icons.Filled.SmartToy),
+        Tab("问答", Icons.Filled.QuestionAnswer),
     )
 
     Scaffold(
@@ -84,8 +83,7 @@ fun MainScreen(vm: SkappViewModel) {
                 1 -> PicksScreen(vm, state)
                 2 -> NewsScreen(vm, state)
                 3 -> EnginesScreen(vm, state)
-                4 -> AskScreen(vm, state)
-                5 -> AiScreen(vm, state)
+                4 -> UnifiedAskScreen(vm, state)
             }
         }
 
