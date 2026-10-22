@@ -3,6 +3,7 @@ package com.skapp.app.ui.screens
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -36,6 +37,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.skapp.app.data.EngineScore
@@ -58,6 +60,8 @@ private val BLUE = Color(0xFF58A6FF)
 @Composable
 fun StockDetailSheet(vm: SkappViewModel, state: UiState) {
     val d = state.detail
+    // 控制图表显示区间；state.kline 已含全历史，这里只裁剪展示，无需改 ViewModel
+    var klineCount by remember { mutableStateOf(320) }
     Column(
         Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -131,11 +135,37 @@ fun StockDetailSheet(vm: SkappViewModel, state: UiState) {
                 if (state.kline.isEmpty()) {
                     Text("暂无数据：日 K 接口未返回（腾讯/东财均不可达）。", color = Color.Gray)
                 } else {
-                    KlineChart(state.kline, Modifier.fillMaxWidth().height(200.dp))
+                    // 区间切换 chip 行（60 / 120 / 250 / 全部）
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text("区间：", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                        PeriodChip("60 日", klineCount == 60) {
+                            klineCount = 60
+                            // state.kline 已由 VM 拉取全量（≥250），这里只裁剪展示
+                        }
+                        PeriodChip("120 日", klineCount == 120) {
+                            klineCount = 120
+                        }
+                        PeriodChip("250 日", klineCount == 250) {
+                            klineCount = 250
+                        }
+                        PeriodChip("全部", klineCount == 320) {
+                            klineCount = 320
+                        }
+                    }
+                    Spacer(Modifier.height(6.dp))
+                    val visibleBars = state.kline.takeLast(klineCount)
+                    KlineChart(visibleBars, Modifier.fillMaxWidth().height(200.dp))
                     Spacer(Modifier.height(4.dp))
+                    val first = visibleBars.first()
+                    val last = visibleBars.last()
                     Text(
-                        "${state.kline.first().date} → ${state.kline.last().date}　共 ${state.kline.size} 根" +
-                            "　最新收 ${String.format("%.2f", state.kline.last().close)}",
+                        "${first.date} → ${last.date}　共 ${visibleBars.size} 根"
+                            + "　最新收 ${String.format("%.2f", last.close)}"
+                            + (if (visibleBars.size == state.kline.size) "" else "（后 $klineCount 根）"),
                         style = MaterialTheme.typography.bodySmall,
                         color = Color.Gray,
                     )
@@ -163,8 +193,8 @@ fun StockDetailSheet(vm: SkappViewModel, state: UiState) {
                                 )
                             }
                         }
-                        state.kline.asReversed().take(60).forEachIndexed { i, b ->
-                            val prev = state.kline.getOrNull(state.kline.size - 1 - i - 1)
+                        visibleBars.asReversed().take(60).forEachIndexed { i, b ->
+                            val prev = visibleBars.getOrNull(visibleBars.size - 1 - i - 1)
                             val chg = prev?.let { if (it.close > 0) (b.close - it.close) / it.close * 100 else null }
                             Row(Modifier.fillMaxWidth()) {
                                 Text(b.date, Modifier.weight(1.4f), style = MaterialTheme.typography.bodySmall)
@@ -507,17 +537,9 @@ private fun SectionCard(title: String, content: @Composable () -> Unit) {
     }
 }
 
-/** 日期轴标签（首/中/末） */
-private fun dateAxisLabel(dates: List<String>, idx: Int): String? =
-    when (idx) {
-        0, dates.size - 1 -> dates.getOrNull(idx)
-        dates.size / 4, dates.size / 2, dates.size * 3 / 4 -> dates.getOrNull(idx)
-        else -> null
-    }
-
 /**
- * 日 K 图：K 线蜡烛（开高低收）+ MA5/MA20 叠加 + 日期轴。
- * 下方列出「最近 10 个交易日的日期/收盘/涨跌幅」，让每个点位的时间可读。
+ * 日 K 图：K 线蜡烛（开高低收）+ MA5/MA20 叠加 + 稀疏日期轴 + 十字线点选。
+ * 默认选中最后一根，因此「最新日期 + 收盘价」始终可见；点按或左右拖动可查看任意一天的 OHLC。
  */
 @Composable
 private fun KlineChart(bars: List<KBar>, modifier: Modifier = Modifier) {
@@ -527,30 +549,61 @@ private fun KlineChart(bars: List<KBar>, modifier: Modifier = Modifier) {
         }
         return
     }
-    val lows = bars.map { it.low }
-    val highs = bars.map { it.high }
-    val minP = lows.min()
-    val maxP = highs.max()
+    val minP = bars.minOf { it.low }
+    val maxP = bars.maxOf { it.high }
     val range = (maxP - minP).takeIf { it > 0 } ?: 1.0
-    val stepX = modifierSize(bars.size)
+    var selIdx by remember(bars) { mutableStateOf(bars.lastIndex) }
+    val sel = bars.getOrNull(selIdx) ?: bars.last()
+    val prevClose = bars.getOrNull(selIdx - 1)?.close
+    val selChg = prevClose?.let { if (it > 0) (sel.close - it) / it * 100 else null }
 
     Column(modifier) {
-        Canvas(Modifier.fillMaxWidth().height(160.dp)) {
+        // 选中条的日期 + OHLC 浮层（默认即最新一根，始终可见）
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(sel.date, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
+            Text("开 ${String.format("%.2f", sel.open)}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+            Text("高 ${String.format("%.2f", sel.high)}", style = MaterialTheme.typography.bodySmall, color = UP)
+            Text("低 ${String.format("%.2f", sel.low)}", style = MaterialTheme.typography.bodySmall, color = DOWN)
+            Text("收 ${String.format("%.2f", sel.close)}", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
+            selChg?.let {
+                Text(
+                    String.format("%+.2f%%", it),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (it > 0) UP else if (it < 0) DOWN else Color.Gray,
+                )
+            }
+        }
+        Spacer(Modifier.height(4.dp))
+        Canvas(
+            Modifier
+                .fillMaxWidth()
+                .height(160.dp)
+                .pointerInput(bars.size) {
+                    detectTapGestures { off ->
+                        val n = bars.size
+                        selIdx = ((off.x / size.width) * (n - 1)).roundToInt().coerceIn(0, n - 1)
+                    }
+                },
+        ) {
             val w = size.width
             val h = size.height
-            val bw = maxOf(1.5f, (w / bars.size) * 0.62f)
+            val n = bars.size
+            val step = if (n > 1) w / (n - 1) else w
+            val bw = maxOf(1.5f, (w / n) * 0.62f)
             fun yOf(v: Double) = (h - ((v - minP) / range) * h).toFloat()
 
             bars.forEachIndexed { i, b ->
-                val cx = i * (w / (bars.size - 1))
-                // 影线
+                val cx = i * step
                 drawLine(
                     color = if (b.close >= b.open) UP else DOWN,
                     start = Offset(cx, yOf(b.high)),
                     end = Offset(cx, yOf(b.low)),
                     strokeWidth = 1.2f,
                 )
-                // 实体
                 val yO = yOf(b.open)
                 val yC = yOf(b.close)
                 val top = minOf(yO, yC)
@@ -563,35 +616,63 @@ private fun KlineChart(bars: List<KBar>, modifier: Modifier = Modifier) {
             }
 
             // MA5 / MA20
-            listOf(5 to Color(0xFFD29922), 20 to Color(0xFFA371F7)).forEach { (n, col) ->
-                val ma = MarketDataClient.ma(bars, n)
+            listOf(5 to Color(0xFFD29922), 20 to Color(0xFFA371F7)).forEach { (p, col) ->
+                val ma = MarketDataClient.ma(bars, p)
                 val path = Path()
                 var started = false
                 bars.forEachIndexed { i, _ ->
                     val v = (ma.getOrNull(i) as? Double)
                     if (v != null) {
-                        val x = i * (w / (bars.size - 1))
+                        val x = i * step
                         val y = yOf(v)
                         if (!started) { path.moveTo(x, y); started = true } else path.lineTo(x, y)
                     }
                 }
                 if (started) drawPath(path, color = col, style = Stroke(width = 1.6f))
             }
+
+            // 十字线：选中条竖线 + 水平收盘线
+            val sx = selIdx * step
+            drawLine(
+                color = Color.White.copy(alpha = 0.55f),
+                start = Offset(sx, 0f),
+                end = Offset(sx, h),
+                strokeWidth = 1f,
+            )
+            drawLine(
+                color = Color.White.copy(alpha = 0.3f),
+                start = Offset(0f, yOf(sel.close)),
+                end = Offset(w, yOf(sel.close)),
+                strokeWidth = 1f,
+            )
         }
-        // 日期轴
+
+        // 稀疏日期轴（4-6 个标签，跨年度用 yy-MM-dd，否则用 MM-dd）
+        val withYear = bars.first().date.take(4) != bars.last().date.take(4)
         Row(
             Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
-            val mid = bars[bars.size / 2].date
-            Text(bars.first().date, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-            Text(mid, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-            Text(bars.last().date, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+            val n = bars.size
+            val idxs = if (n < 5) bars.indices.toList()
+            else listOf(0, n / 4, n / 2, n * 3 / 4, n - 1)
+            idxs.forEach { i ->
+                Text(
+                    axisDateLabel(bars[i].date, withYear),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.Gray,
+                )
+            }
         }
     }
 }
 
-private fun modifierSize(n: Int) = n
+/** 格式化日期为轴标签：跨年显示 yy-MM-dd，否则 MM-dd */
+private fun axisDateLabel(date: String, withYear: Boolean): String = when {
+    !withYear -> date.takeLast(5)
+    date.length >= 10 -> date.drop(2)
+    else -> date
+}
 
 /** 分时图 */
 @Composable
