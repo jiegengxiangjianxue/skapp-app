@@ -585,7 +585,7 @@ private fun KlineChart(bars: List<KBar>, modifier: Modifier = Modifier) {
                 .pointerInput(bars.size) {
                     detectTapGestures { off ->
                         val n = bars.size
-                        selIdx = ((off.x / size.width) * (n - 1)).roundToInt().coerceIn(0, n - 1)
+                        selIdx = ((off.x / size.width) * (n - 1)).toInt().coerceIn(0, n - 1)
                     }
                 },
         ) {
