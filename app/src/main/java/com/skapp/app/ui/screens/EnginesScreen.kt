@@ -86,6 +86,7 @@ fun EnginesScreen(vm: SkappViewModel, state: UiState) {
     }
 }
 
+@Composable
 private fun FeedHeader(f: EngineFeed.EngineFeeds) {
     val ts = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.CHINA).format(java.util.Date(f.ts))
     Card(
@@ -106,6 +107,7 @@ private fun FeedHeader(f: EngineFeed.EngineFeeds) {
 
 // ── engine_v5 ───────────────────────────────────────────────
 
+@Composable
 private fun EngineV5Section(e: EngineFeed.EngineV5Payload?) {
     if (e == null) return
     Card(modifier = Modifier.fillMaxWidth()) {
@@ -127,6 +129,7 @@ private fun EngineV5Section(e: EngineFeed.EngineV5Payload?) {
     Spacer(Modifier.height(8.dp))
 }
 
+@Composable
 private fun EngineV5Row(t: EngineFeed.EngineV5Top) {
     val bullPct = (t.bull * 100.0 / maxOf(t.bull + t.bear + t.neutral, 1)).toInt()
     Row(
@@ -147,10 +150,10 @@ private fun EngineV5Row(t: EngineFeed.EngineV5Top) {
             }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            Box(Modifier.background(Color(0xFF3FB950).copy(alpha = 0.15)).padding(horizontal = 6.dp, vertical = 2.dp)) {
+            Box(Modifier.background(Color(0xFF3FB950).copy(alpha = 0.15f)).padding(horizontal = 6.dp, vertical = 2.dp)) {
                 Text("看 ${t.bull}", style = MaterialTheme.typography.labelSmall, color = Color(0xFF3FB950))
             }
-            Box(Modifier.background(Color(0xFFF85149).copy(alpha = 0.15)).padding(horizontal = 6.dp, vertical = 2.dp)) {
+            Box(Modifier.background(Color(0xFFF85149).copy(alpha = 0.15f)).padding(horizontal = 6.dp, vertical = 2.dp)) {
                 Text("空 ${t.bear}", style = MaterialTheme.typography.labelSmall, color = Color(0xFFF85149))
             }
         }
@@ -159,6 +162,7 @@ private fun EngineV5Row(t: EngineFeed.EngineV5Top) {
 
 // ── cycle_pool_v2 ──────────────────────────────────────────
 
+@Composable
 private fun CycleSection(c: EngineFeed.CycleMeta?) {
     if (c == null) return
     Card(modifier = Modifier.fillMaxWidth()) {
@@ -174,6 +178,7 @@ private fun CycleSection(c: EngineFeed.CycleMeta?) {
 
 // ── rps_rotation ───────────────────────────────────────────
 
+@Composable
 private fun RpsSection(r: EngineFeed.RpsPayload?) {
     if (r == null) return
     Card(modifier = Modifier.fillMaxWidth()) {
@@ -202,6 +207,7 @@ private fun RpsSection(r: EngineFeed.RpsPayload?) {
 
 // ── strategy_card ───────────────────────────────────────────
 
+@Composable
 private fun StrategySection(s: EngineFeed.StrategyCard?) {
     if (s == null) return
     Card(modifier = Modifier.fillMaxWidth()) {
@@ -227,6 +233,7 @@ private fun StrategySection(s: EngineFeed.StrategyCard?) {
 
 // ── market_phase ────────────────────────────────────────────
 
+@Composable
 private fun MarketPhaseSection(m: EngineFeed.MarketPhase?) {
     if (m == null) return
     Card(modifier = Modifier.fillMaxWidth()) {
@@ -264,6 +271,7 @@ private fun phaseColor(label: String): Color = when {
 
 // ── decision ────────────────────────────────────────────────
 
+@Composable
 private fun DecisionSection(d: EngineFeed.Decision?) {
     if (d == null) return
     val regimeColor = when (d.marketRegime) {
@@ -293,6 +301,7 @@ private fun DecisionSection(d: EngineFeed.Decision?) {
     Spacer(Modifier.height(8.dp))
 }
 
+@Composable
 private fun DecisionCardRow(c: EngineFeed.DecisionCard) {
     val actionColor = when (c.action) {
         "buy" -> Color(0xFFF85149)
@@ -306,7 +315,7 @@ private fun DecisionCardRow(c: EngineFeed.DecisionCard) {
         c.price?.let { p ->
             Text("¥${String.format("%.2f", p)}", style = MaterialTheme.typography.bodySmall)
         }
-        Box(Modifier.background(actionColor.copy(alpha = 0.12)).padding(horizontal = 6.dp, vertical = 2.dp)) {
+        Box(Modifier.background(actionColor.copy(alpha = 0.12f)).padding(horizontal = 6.dp, vertical = 2.dp)) {
             Text(c.action, color = actionColor, style = MaterialTheme.typography.labelSmall)
         }
         Text("评分 ${String.format("%.1f", c.composite)}", style = MaterialTheme.typography.labelSmall)
@@ -315,6 +324,7 @@ private fun DecisionCardRow(c: EngineFeed.DecisionCard) {
 
 // ── 兜底 ───────────────────────────────────────────────────
 
+@Composable
 private fun MissingInfo(missing: List<String>) {
     if (missing.isEmpty()) return
     Card(
