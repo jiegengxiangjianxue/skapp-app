@@ -175,7 +175,7 @@ object EngineFeed {
         val results = mutableMapOf<String, JSONObject>()
         val missing = mutableListOf<String>()
         files.forEach { (file, key) ->
-            try {
+            return try {
                 val url = "$BASE/$file"
                 val conn = URL(url).openConnection() as HttpURLConnection
                 conn.connectTimeout = TIMEOUT
@@ -211,7 +211,7 @@ object EngineFeed {
 
     private fun parseEngineV5(j: JSONObject?): EngineV5Payload? {
         if (j == null) return null
-        try {
+        return try {
         val top = j.optJSONArray("top")?.let { arr ->
             (0 until arr.length()).mapNotNull { i -> arr.optJSONObject(i)?.let { o ->
                 val votes = o.optJSONArray("votes")?.let { va ->
@@ -266,7 +266,7 @@ object EngineFeed {
 
     private fun parseCycleMeta(j: JSONObject?): CycleMeta? {
         if (j == null) return null
-        try {
+        return try {
         val meta = j.optJSONObject("meta") ?: return null
         CycleMeta(
             index = meta.optString("index", ""),
@@ -282,7 +282,7 @@ object EngineFeed {
 
     private fun parseRps(j: JSONObject?): RpsPayload? {
         if (j == null) return null
-        try {
+        return try {
         val top = j.optJSONArray("top")?.let { arr ->
             (0 until arr.length()).mapNotNull { i -> arr.optJSONObject(i)?.let { o ->
                 RpsTop(
@@ -309,7 +309,7 @@ object EngineFeed {
 
     private fun parseStrategy(j: JSONObject?): StrategyCard? {
         if (j == null) return null
-        try {
+        return try {
         val gate = j.optJSONObject("gate")
         val candidates = j.optJSONArray("candidates")?.let { arr ->
             (0 until arr.length()).mapNotNull { i -> arr.optJSONObject(i)?.let { o ->
@@ -325,7 +325,7 @@ object EngineFeed {
         StrategyCard(
             ts = j.optString("ts"),
             strategy = j.optString("strategy", ""),
-            tradeOk = gate?.optBoolean("trade_ok", false),
+            tradeOk = gate?.optBoolean("trade_ok", false) ?: false,
             candidates = candidates,
             note = j.optString("note", ""),
         )
@@ -336,7 +336,7 @@ object EngineFeed {
 
     private fun parseMarketPhase(j: JSONObject?): MarketPhase? {
         if (j == null) return null
-        try {
+        return try {
         val labels = j.optJSONObject("labels")?.let { lbl ->
             mapOf(
                 "ice" to lbl.optString("ice"),
@@ -371,7 +371,7 @@ object EngineFeed {
 
     private fun parseGlobal(j: JSONObject?): GlobalMarkets? {
         if (j == null) return null
-        try {
+        return try {
         val meta = j.optJSONObject("meta")
         GlobalMarkets(
             ts = j.optString("ts"),
@@ -386,7 +386,7 @@ object EngineFeed {
 
     private fun parseAiPick(j: JSONObject?): AiPick? {
         if (j == null) return null
-        try {
+        return try {
         AiPick(
             ts = j.optString("ts"),
             nScanned = j.optInt("n_scanned", 0),
@@ -399,7 +399,7 @@ object EngineFeed {
 
     private fun parseDecision(j: JSONObject?): Decision? {
         if (j == null) return null
-        try {
+        return try {
         val advice = j.optJSONObject("position_advice")
         val cards = j.optJSONArray("cards")?.let { arr ->
             (0 until arr.length()).mapNotNull { i -> arr.optJSONObject(i)?.let { o ->
