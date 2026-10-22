@@ -2,6 +2,7 @@ package com.skapp.app.ui
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.skapp.app.data.AllSourcesClient
 import com.skapp.app.data.MarketState
 import com.skapp.app.data.MarketStateEngine
 import com.skapp.app.data.aggregateKline
