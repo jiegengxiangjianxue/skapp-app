@@ -272,13 +272,18 @@ class SkappViewModel : ViewModel() {
         quoteJob = viewModelScope.launch {
             while (isActive) {
                 val now = java.util.Date()
-                val phase = MarketHours.phase(now)
                 val trading = MarketHours.isTrading(now) || MarketHours.isAuction(now)
-                _state.value = _state.value.copy(
-                    marketPhase = MarketHours.describe(now),
-                    autoRefresh = trading,
-                    nextRefreshIn = MarketHours.msUntilAutoRefresh(now),
-                )
+                val newPhase = MarketHours.describe(now)
+                val newRefreshIn = MarketHours.msUntilAutoRefresh(now)
+                // 只在真正变化时更新 state，避免无谓重组（休市时每次醒来都触发全屏重绘）
+                val cur = _state.value
+                if (cur.marketPhase != newPhase || cur.autoRefresh != trading || cur.nextRefreshIn != newRefreshIn) {
+                    _state.value = cur.copy(
+                        marketPhase = newPhase,
+                        autoRefresh = trading,
+                        nextRefreshIn = newRefreshIn,
+                    )
+                }
                 if (trading) {
                     refreshQuotes()
                     refreshPickQuotes()
