@@ -7,6 +7,7 @@ import com.skapp.app.data.MarketStateEngine
 import com.skapp.app.data.aggregateKline
 import com.skapp.app.data.AskEngine
 import com.skapp.app.data.DataCache
+import com.skapp.app.data.EngineFeed
 import com.skapp.app.data.ExtendedIndicators
 import com.skapp.app.data.Decision
 import com.skapp.app.data.DecisionCard
@@ -190,11 +191,15 @@ class SkappViewModel : ViewModel() {
                 symbols = symbols,
             )
             refreshQuotes()
+            refreshPickQuotes()   // 推股/决策列表补实时报价（覆盖快照价）
             loadIndices()
             loadNewsCalcs()
             loadMarketState()
         }
     }
+
+    /** 云端引擎产物（qwerzxcva/stocks-ai-view），供 EnginesScreen 使用 */
+    suspend fun loadEngineFeeds(): EngineFeed.EngineFeeds = EngineFeed.loadAll()
 
     /** 市场状态计算 */
     fun loadMarketState() {
