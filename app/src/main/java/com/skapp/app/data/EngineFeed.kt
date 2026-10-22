@@ -175,7 +175,7 @@ object EngineFeed {
         val results = mutableMapOf<String, JSONObject>()
         val missing = mutableListOf<String>()
         files.forEach { (file, key) ->
-            return try {
+            try {
                 val url = "$BASE/$file"
                 val conn = URL(url).openConnection() as HttpURLConnection
                 conn.connectTimeout = TIMEOUT
