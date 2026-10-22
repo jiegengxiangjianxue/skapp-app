@@ -9,6 +9,7 @@ import androidx.compose.material.icons.filled.Category
 import androidx.compose.material.icons.filled.Dashboard
 import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.QuestionAnswer
+import androidx.compose.material.icons.filled.Science
 import androidx.compose.material.icons.filled.ShowChart
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Summarize
@@ -33,6 +34,7 @@ import com.skapp.app.ui.screens.BoardScreen
 import com.skapp.app.ui.screens.DecisionScreen
 import com.skapp.app.ui.screens.MarketScreen
 import com.skapp.app.ui.screens.NewsScreen
+import com.skapp.app.ui.screens.EnginesScreen
 import com.skapp.app.ui.screens.PicksScreen
 import com.skapp.app.ui.screens.PoolsScreen
 import com.skapp.app.ui.screens.SectorsScreen
@@ -57,6 +59,7 @@ fun MainScreen(vm: SkappViewModel) {
         Tab("看板", Icons.Filled.Dashboard),
         Tab("推股", Icons.Filled.TrendingUp),
         Tab("消息", Icons.Filled.Article),
+        Tab("引擎", Icons.Filled.Science),
         Tab("提问", Icons.Filled.QuestionAnswer),
         Tab("AI", Icons.Filled.SmartToy),
     )
@@ -80,8 +83,9 @@ fun MainScreen(vm: SkappViewModel) {
                 0 -> BoardScreen(vm, state)
                 1 -> PicksScreen(vm, state)
                 2 -> NewsScreen(vm, state)
-                3 -> AskScreen(vm, state)
-                4 -> AiScreen(vm, state)
+                3 -> EnginesScreen(vm, state)
+                4 -> AskScreen(vm, state)
+                5 -> AiScreen(vm, state)
             }
         }
 
