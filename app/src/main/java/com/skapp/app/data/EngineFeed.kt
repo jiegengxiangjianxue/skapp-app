@@ -209,9 +209,9 @@ object EngineFeed {
 
     // ── 解析器 ──────────────────────────────────────────────
 
-    private fun parseEngineV5(j: JSONObject?): EngineV5Payload? = j
-        ?: return null
-    try {
+    private fun parseEngineV5(j: JSONObject?): EngineV5Payload? {
+        if (j == null) return null
+        try {
         val top = j.optJSONArray("top")?.let { arr ->
             (0 until arr.length()).mapNotNull { i -> arr.optJSONObject(i)?.let { o ->
                 val votes = o.optJSONArray("votes")?.let { va ->
@@ -259,13 +259,14 @@ object EngineFeed {
             top = top,
             staleTop = staleTop,
         )
-    } catch (_: Exception) {
-        null
+        } catch (_: Exception) {
+            null
+        }
     }
 
-    private fun parseCycleMeta(j: JSONObject?): CycleMeta? = j
-        ?: return null
-    try {
+    private fun parseCycleMeta(j: JSONObject?): CycleMeta? {
+        if (j == null) return null
+        try {
         val meta = j.optJSONObject("meta") ?: return null
         CycleMeta(
             index = meta.optString("index", ""),
@@ -274,13 +275,14 @@ object EngineFeed {
             spanStart = meta.optJSONArray("span")?.optString(0) ?: "",
             spanEnd = meta.optJSONArray("span")?.optString(1) ?: "",
         )
-    } catch (_: Exception) {
-        null
+        } catch (_: Exception) {
+            null
+        }
     }
 
-    private fun parseRps(j: JSONObject?): RpsPayload? = j
-        ?: return null
-    try {
+    private fun parseRps(j: JSONObject?): RpsPayload? {
+        if (j == null) return null
+        try {
         val top = j.optJSONArray("top")?.let { arr ->
             (0 until arr.length()).mapNotNull { i -> arr.optJSONObject(i)?.let { o ->
                 RpsTop(
@@ -300,13 +302,14 @@ object EngineFeed {
             top = top,
             note = j.optString("note", ""),
         )
-    } catch (_: Exception) {
-        null
+        } catch (_: Exception) {
+            null
+        }
     }
 
-    private fun parseStrategy(j: JSONObject?): StrategyCard? = j
-        ?: return null
-    try {
+    private fun parseStrategy(j: JSONObject?): StrategyCard? {
+        if (j == null) return null
+        try {
         val gate = j.optJSONObject("gate")
         val candidates = j.optJSONArray("candidates")?.let { arr ->
             (0 until arr.length()).mapNotNull { i -> arr.optJSONObject(i)?.let { o ->
@@ -326,13 +329,14 @@ object EngineFeed {
             candidates = candidates,
             note = j.optString("note", ""),
         )
-    } catch (_: Exception) {
-        null
+        } catch (_: Exception) {
+            null
+        }
     }
 
-    private fun parseMarketPhase(j: JSONObject?): MarketPhase? = j
-        ?: return null
-    try {
+    private fun parseMarketPhase(j: JSONObject?): MarketPhase? {
+        if (j == null) return null
+        try {
         val labels = j.optJSONObject("labels")?.let { lbl ->
             mapOf(
                 "ice" to lbl.optString("ice"),
@@ -360,13 +364,14 @@ object EngineFeed {
             daily = daily,
             labels = labels,
         )
-    } catch (_: Exception) {
-        null
+        } catch (_: Exception) {
+            null
+        }
     }
 
-    private fun parseGlobal(j: JSONObject?): GlobalMarkets? = j
-        ?: return null
-    try {
+    private fun parseGlobal(j: JSONObject?): GlobalMarkets? {
+        if (j == null) return null
+        try {
         val meta = j.optJSONObject("meta")
         GlobalMarkets(
             ts = j.optString("ts"),
@@ -374,25 +379,27 @@ object EngineFeed {
             nOk = j.optInt("n_ok", 0),
             sentiment = meta?.optDouble("sentiment"),
         )
-    } catch (_: Exception) {
-        null
+        } catch (_: Exception) {
+            null
+        }
     }
 
-    private fun parseAiPick(j: JSONObject?): AiPick? = j
-        ?: return null
-    try {
+    private fun parseAiPick(j: JSONObject?): AiPick? {
+        if (j == null) return null
+        try {
         AiPick(
             ts = j.optString("ts"),
             nScanned = j.optInt("n_scanned", 0),
             nCandidates = j.optInt("n_candidates", 0),
         )
-    } catch (_: Exception) {
-        null
+        } catch (_: Exception) {
+            null
+        }
     }
 
-    private fun parseDecision(j: JSONObject?): Decision? = j
-        ?: return null
-    try {
+    private fun parseDecision(j: JSONObject?): Decision? {
+        if (j == null) return null
+        try {
         val advice = j.optJSONObject("position_advice")
         val cards = j.optJSONArray("cards")?.let { arr ->
             (0 until arr.length()).mapNotNull { i -> arr.optJSONObject(i)?.let { o ->
@@ -426,8 +433,9 @@ object EngineFeed {
             cards = cards,
             avoid = avoid,
         )
-    } catch (_: Exception) {
-        null
+        } catch (_: Exception) {
+            null
+        }
     }
 
     private fun optNullableDouble(o: JSONObject, key: String): Double? =
