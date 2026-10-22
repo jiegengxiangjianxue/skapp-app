@@ -3,6 +3,8 @@ package com.skapp.app.ui
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.skapp.app.data.AllSourcesClient
+import com.skapp.app.data.BanProb
+import com.skapp.app.data.BanProbClient
 import com.skapp.app.data.MarketState
 import com.skapp.app.data.MarketStateEngine
 import com.skapp.app.data.aggregateKline
@@ -101,6 +103,9 @@ data class UiState(
     /** 云端 190 源合并产物摘要（兜底数据源） */
     val allSourcesSummary: String? = null,
     val allSourcesQuotes: Map<String, AllSourcesClient.Quote> = emptyMap(),
+    /** ban_prob 涨停次日表现概率（含样本均衡结果） */
+    val banProb: BanProb? = null,
+    val banProbLoading: Boolean = false,
     /** stocks-holo 全量 bundle */
     val holo: HoloBundle? = null,
     /** 本地实时选股结果 */
@@ -195,6 +200,7 @@ class SkappViewModel : ViewModel() {
                 symbols = symbols,
             )
             loadAllSources()
+            loadBanProb()
             refreshQuotes()
             refreshPickQuotes()   // 推股/决策列表补实时报价（覆盖快照价）
             loadIndices()
@@ -220,6 +226,31 @@ class SkappViewModel : ViewModel() {
     }
 
     private val allSources = AllSourcesClient()
+
+    /** 加载 ban_prob 涨停次日表现概率 */
+    fun loadBanProb() {
+        viewModelScope.launch {
+            _state.value = _state.value.copy(banProbLoading = true)
+            try {
+                val bp = BanProbClient.load()
+                _state.value = _state.value.copy(banProb = bp, banProbLoading = false)
+            } catch (e: Exception) {
+                _state.value = _state.value.copy(banProbLoading = false)
+            }
+        }
+    }
+
+    /** 获取平衡后的涨停概率 */
+    fun getBalancedZtRate(tier: String): Double? {
+        val bp = _state.value.banProb
+        return bp?.balanced?.byLianban?.get(tier)?.balZtNextRate
+    }
+
+    /** 判断连板层样本是否充足 */
+    fun isLiAnbanSufficient(tier: String): Boolean {
+        val bp = _state.value.banProb
+        return bp?.balanced?.byLianban?.get(tier)?.sufficient ?: false
+    }
 
     /** 拉云端 190 源合并产物：作行情兜底 + 数据源健康度展示 */
     fun loadAllSources() {
