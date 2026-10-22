@@ -10,16 +10,16 @@ object RemoteSources {
 
     const val RAW = "https://raw.githubusercontent.com"
 
-    /** A 仓：主供数 + API 树 + AI 问答 */
-    const val OWNER_A = "jiegengxiangjianxue"
-    const val REPO_A = "skapp-data"
+    /** A 仓：主供数 + API 树 + AI 问答（主力数据仓 qwerzxcva） */
+    const val OWNER_A = "qwerzxcva"
+    const val REPO_A = "stocks-ai-view"
 
     /** C 仓：镜像 */
-    const val OWNER_C = "jiegengxiangjianxue"
-    const val REPO_C = "stocks-ai-view-b"
+    const val OWNER_C = "qwerzxcva"
+    const val REPO_C = "stocks-ai-view"
 
-    /** skapp-data：全市场代码表 */
-    const val OWNER_SYMBOLS = "jiegengxiangjianxue"
+    /** 全市场代码表（qwerzxcva/skapp-data） */
+    const val OWNER_SYMBOLS = "qwerzxcva"
     const val REPO_SYMBOLS = "skapp-data"
 
     /** 个股分片仓（db-stocks-*）：stock.json 全史 K 线/技术面/财务 */
