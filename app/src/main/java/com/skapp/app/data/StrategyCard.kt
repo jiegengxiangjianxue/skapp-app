@@ -1,6 +1,7 @@
 package com.skapp.app.data
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 
@@ -113,38 +114,40 @@ object StrategyCard {
             true
         }
 
-        // 4. 逐只计算 pos240 和非妖股判断（并发）
+        // 4. 逐只计算 pos240 和非妖股判断（并发，限流 5 只一批）
         val cands = mutableListOf<Candidate>()
         preFiltered.chunked(5).forEach { batch ->
-            val results = batch.map { m ->
-                kotlinx.coroutines.async(Dispatchers.IO) {
-                    val code = m["code"]?.toString() ?: return@async null
-                    val name = m["name"]?.toString()
-                    val close = (m["price"] as? Number)?.toDouble() ?: return@async null
-                    val retPct = (m["pctChg"] as? Number)?.toDouble() ?: return@async null
-                    val volRatio = (m["volRatio"] as? Number)?.toDouble() ?: return@async null
-                    
-                    // 拉日 K 线（至少 240 天）
-                    val bars = KlineApi.fetchDayKline(code, count = 250)
-                    if (bars.size < 240) return@async null
-                    
-                    // 计算 pos240（240 日位置）
-                    val pos240 = ExtendedIndicators.position240d(bars) ?: return@async null
-                    
-                    // 非妖股判断：10 日内距高点<5%
-                    val isNotYaoGu = checkNotYaoGu(bars)
-                    if (!isNotYaoGu) return@async null
-                    
-                    Candidate(
-                        symbol = code,
-                        name = name,
-                        close = close,
-                        retPct = retPct,
-                        volRatio = volRatio,
-                        pos240 = pos240,
-                    )
-                }
-            }.mapNotNull { kotlin.runCatching { it.await() }.getOrNull() }
+            val results = kotlinx.coroutines.coroutineScope {
+                batch.map { m ->
+                    async(Dispatchers.IO) {
+                        val code = m["code"]?.toString() ?: return@async null
+                        val name = m["name"]?.toString()
+                        val close = (m["price"] as? Number)?.toDouble() ?: return@async null
+                        val retPct = (m["pctChg"] as? Number)?.toDouble() ?: return@async null
+                        val volRatio = (m["volRatio"] as? Number)?.toDouble() ?: return@async null
+                        
+                        // 拉日 K 线（至少 240 天）
+                        val bars = KlineApi.fetchDayKline(code, count = 250)
+                        if (bars.size < 240) return@async null
+                        
+                        // 计算 pos240（240 日位置）
+                        val pos240 = ExtendedIndicators.position240d(bars) ?: return@async null
+                        
+                        // 非妖股判断：10 日内距高点<5%
+                        val isNotYaoGu = checkNotYaoGu(bars)
+                        if (!isNotYaoGu) return@async null
+                        
+                        Candidate(
+                            symbol = code,
+                            name = name,
+                            close = close,
+                            retPct = retPct,
+                            volRatio = volRatio,
+                            pos240 = pos240,
+                        )
+                    }
+                }.mapNotNull { kotlin.runCatching { it.await() }.getOrNull() }
+            }
             cands.addAll(results)
         }
 
