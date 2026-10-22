@@ -69,6 +69,18 @@ fun BoardScreen(vm: SkappViewModel, state: UiState) {
             item { MarketStateCard(ms) }
         }
 
+        // 云端数据源健康度（190 源合并产物）
+        state.allSourcesSummary?.let { s ->
+            item {
+                Text(
+                    "数据源：$s",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color.Gray,
+                    modifier = Modifier.padding(horizontal = 4.dp),
+                )
+            }
+        }
+
         // 首屏加载中：骨架提示，避免白屏
         if (state.loading && state.quotes.isEmpty() && b.isEmpty()) {
             item {
