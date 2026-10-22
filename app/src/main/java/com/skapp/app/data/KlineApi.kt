@@ -22,7 +22,7 @@ data class KBar(
  */
 object KlineApi {
 
-    suspend fun fetchDayKline(code: String, count: Int = 120): List<KBar> = withContext(Dispatchers.IO) {
+    suspend fun fetchDayKline(code: String, count: Int = 320): List<KBar> = withContext(Dispatchers.IO) {
         val p = SkappApi.prefixed(code)
         val url = RemoteSources.tencentKline(p, count)
         var conn: HttpURLConnection? = null
