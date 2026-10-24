@@ -173,7 +173,8 @@ fun PicksScreen(vm: SkappViewModel, state: UiState) {
         }
 
         // ── 云端快照列表（非实时，标注数据来源与年龄）──
-        val current = tabs.getOrNull(tab)?.second ?: emptyList()
+        // 云端三 Tab 兜底主板红线过滤（上游若混入 300/301/688/北交所不渲染）
+        val current = (tabs.getOrNull(tab)?.second ?: emptyList()).filter { isMainBoardPick(it.code) }
         if (tab > 0) {
             Text(
                 "该页为云端 CI 快照（ts=${p.ts ?: "未知"}），盘中非实时；本地实时数据在「本地实时」页。",
@@ -386,3 +387,7 @@ private fun fmt(v: Any?): String = when (v) {
     is Number -> String.format("%.2f", v.toDouble())
     else -> v.toString()
 }
+
+/** 主板代码红线：600/601/603/605/000/001/002（兼容带 sh/sz 前缀的编码） */
+internal fun isMainBoardPick(code: String): Boolean =
+    code.takeLast(6).take(3) in setOf("600", "601", "603", "605", "000", "001", "002")

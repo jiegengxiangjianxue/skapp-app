@@ -69,7 +69,8 @@ fun DecisionScreen(vm: SkappViewModel, state: UiState) {
 
         if (d.cards.isNotEmpty()) {
             item { SectionHeader("决策卡") }
-            items(d.cards, key = { it.code }) { c -> DecisionCardView(c, vm) }
+            // 主板红线兜底：上游若混入 300/301/688/北交所不渲染
+            items(d.cards.filter { isMainBoardPick(it.code) }, key = { it.code }) { c -> DecisionCardView(c, vm) }
         } else {
             item {
                 Text("暂无数据：上游未产出或文件不可达。", color = Color.Gray)

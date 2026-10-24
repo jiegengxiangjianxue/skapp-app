@@ -20,6 +20,9 @@ import kotlinx.coroutines.withContext
  */
 object LocalScreener {
 
+    /** 主板代码前缀（推荐输出红线：600/601/603/605/000/001/002，排除 300/301/688/北交所） */
+    private val MAIN_BOARD_PREFIXES = setOf("600", "601", "603", "605", "000", "001", "002")
+
     /** 筛选条件 */
     data class Criteria(
         val minChgPct: Double = 1.0,
@@ -84,14 +87,16 @@ object LocalScreener {
         val snap = marketSnapshot()
         if (snap.isEmpty()) return@coroutineScope emptyList()
 
-        // 预筛
+        // 预筛（含主板前缀红线过滤，排除 300/301/688/北交所）
         val cands = snap.filter { m ->
+            val code = m["code"]?.toString() ?: return@filter false
             val chg = (m["pctChg"] as? Number)?.toDouble() ?: return@filter false
             val vr = (m["volRatio"] as? Number)?.toDouble()
             val name = m["name"]?.toString() ?: ""
             val st = c.excludeST && (name.contains("ST", ignoreCase = true) ||
                 name.contains("退", ignoreCase = true))
-            chg in c.minChgPct..c.maxChgPct && !st && (vr == null || vr >= c.minVolRatio)
+            code.take(3) in MAIN_BOARD_PREFIXES &&
+                chg in c.minChgPct..c.maxChgPct && !st && (vr == null || vr >= c.minVolRatio)
         }.sortedByDescending { (it["mainNet"] as? Number)?.toDouble() ?: 0.0 }
             .take(c.maxCandidates)
 
