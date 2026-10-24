@@ -323,9 +323,9 @@ object MarketDataClient {
             } ?: emptyList()
     }
 
-    /** 所属板块（东财行业/概念）—— 个股详情页用 */
+    /** 所属板块（东财行业/概念 + db-market 反向索引兑底）—— 个股详情页用 */
     suspend fun boardsOf(code: String): List<Map<String, Any?>> = withContext(Dispatchers.IO) {
-        getJson("https://push2.eastmoney.com/api/qt/stock/get?secid=${secid(code)}" +
+        val em = getJson("https://push2.eastmoney.com/api/qt/stock/get?secid=${secid(code)}" +
                 "&fields=f57,f58,f127,f128,f129,f130,f131,f132,f133,f134,f135,f136")
             ?.optJSONObject("data")
             ?.let { d ->
@@ -335,9 +335,49 @@ object MarketDataClient {
                     mapOf<String, Any?>("name" to v, "type" to "industry/concept")
                 }
             } ?: emptyList()
+        if (em.isNotEmpty()) return@withContext em
+        // 兑底：db-market 的 stock_to_board.json（board-constituents 管线产出， 2026-10-24 管线复活后每日更新）
+        val bare = code.removePrefix("sh").removePrefix("sz").removePrefix("hk")
+        getJson("https://raw.githubusercontent.com/jiegengxiangjianxue1/db-market/main/sector/stock_to_board.json")
+            ?.optJSONObject("stocks")?.optJSONObject(bare)
+            ?.let { s ->
+                val out = ArrayList<Map<String, Any?>>()
+                for ((kind, key) in listOf("industry" to "行业", "concept" to "概念")) {
+                    s.optJSONArray(key)?.let { arr ->
+                        for (i in 0 until arr.length()) {
+                            arr.optJSONObject(i)?.optString("name")?.takeIf { it.isNotEmpty() }
+                                ?.let { out += mapOf<String, Any?>("name" to it, "type" to kind) }
+                                ?: arr.optString(i).takeIf { it.isNotEmpty() }
+                                    ?.let { out += mapOf<String, Any?>("name" to it, "type" to kind) }
+                        }
+                    }
+                }
+                out
+            } ?: emptyList()
     }
 
     // ── 本地技术指标计算（不依赖任何远端）──────────────────
+
+    /** 实时 7x24 快讯（东财 np-listapi，设备直连，不受 CI 快照时效限制） */
+    suspend fun news724(limit: Int = 30): List<Map<String, Any?>> = withContext(Dispatchers.IO) {
+        val trace = java.util.UUID.randomUUID().toString().replace("-", "")
+        getJson("https://np-listapi.eastmoney.com/comm/web/getNewsByColumns" +
+                "?client=web&biz=web7_24&fastColumn=100&column=100&req_trace=$trace" +
+                "&pageSize=$limit&sortEnd=&sortType=0")
+            ?.optJSONObject("data")?.optJSONArray("list")?.let { arr ->
+                (0 until arr.length()).mapNotNull { i ->
+                    val it = arr.optJSONObject(i) ?: return@mapNotNull null
+                    val title = it.optString("title").takeIf { t -> t.isNotEmpty() } ?: return@mapNotNull null
+                    mapOf<String, Any?>(
+                        "title" to title,
+                        "content" to it.optString("digest").take(500),
+                        "source" to "eastmoney_724",
+                        "updated" to it.optString("showTime"),
+                        "url" to it.optString("url"),
+                    )
+                }
+            } ?: emptyList()
+    }
 
     /** MA(n) 收盘均值序列 */
     fun ma(bars: List<KBar>, n: Int): List<Double?> {

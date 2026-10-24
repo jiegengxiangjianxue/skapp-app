@@ -169,9 +169,10 @@ fun PicksScreen(vm: SkappViewModel, state: UiState) {
                     }
                 }
 
-                // ── engine_v5 引擎排行（云端每日产出；实测 T+1 胜率 52.1%、超额 +9.4pp）──
+                // ── 引擎产出面板（完整版，原独立「引擎」页合并进推股页）──
                 Spacer(Modifier.height(12.dp))
-                EngineTopSection(vm)
+                Text("引擎产出面板", fontWeight = FontWeight.SemiBold)
+                EnginesScreen(vm, state)
             }
             return@Column
         }
@@ -395,49 +396,3 @@ private fun fmt(v: Any?): String = when (v) {
 /** 主板代码红线：600/601/603/605/000/001/002（兼容带 sh/sz 前缀的编码） */
 internal fun isMainBoardPick(code: String): Boolean =
     code.takeLast(6).take(3) in setOf("600", "601", "603", "605", "000", "001", "002")
-
-/** 引擎产出区：engine_v5 排行（推股页默认页底部，与本地实时选股互补） */
-@Composable
-private fun EngineTopSection(vm: SkappViewModel) {
-    var feeds by remember { mutableStateOf<com.skapp.app.data.EngineFeed.EngineFeeds?>(null) }
-    var failed by remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) {
-        feeds = runCatching { vm.loadEngineFeeds() }.getOrNull().also { if (it == null) failed = true }
-    }
-    Text("引擎产出 · engine_v5 排行", fontWeight = FontWeight.SemiBold)
-    Text(
-        "云端每日盘前产出 · 实测 T+1 胜率 52.1%、超额 +9.4pp（tomorrow/morning 引擎实测不达标，不展示）",
-        style = MaterialTheme.typography.bodySmall, color = Color.Gray,
-    )
-    Spacer(Modifier.height(6.dp))
-    val top = feeds?.engineV5?.top.orEmpty().filter { isMainBoardPick(it.code) }
-    when {
-        top.isNotEmpty() -> top.take(8).forEach { row ->
-            Card(
-                modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp)
-                    .clickable { vm.openDetail(row.code) },
-                colors = CardDefaults.cardColors(),
-            ) {
-                Row(
-                    Modifier.fillMaxWidth().padding(12.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text("#${row.rank} ${row.code}", fontWeight = FontWeight.Medium)
-                    Column(horizontalAlignment = Alignment.End) {
-                        Text(
-                            "综合 ${String.format("%.1f", row.score)} 共振 ${String.format("%.2f", row.resonance)}",
-                            style = MaterialTheme.typography.bodySmall,
-                        )
-                        Text(
-                            "多 ${row.bull} / 空 ${row.bear} / 中 ${row.neutral}",
-                            style = MaterialTheme.typography.bodySmall, color = Color.Gray,
-                        )
-                    }
-                }
-            }
-        }
-        failed -> Text("引擎产出加载失败（网络或上游未产出）", color = Color.Gray, style = MaterialTheme.typography.bodySmall)
-        else -> Text("加载引擎产出…", color = Color.Gray, style = MaterialTheme.typography.bodySmall)
-    }
-}

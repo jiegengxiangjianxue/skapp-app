@@ -51,15 +51,14 @@ fun MainScreen(vm: SkappViewModel) {
     var tab by remember { mutableStateOf(0) }
 
     // 与网页版 tab 对齐：实时总结 / 推股 / 决策 / 看板 / 多池 / 消息 / 板块 / 提问
-    // 合并后 5 个：看板(自选行情+全球+指数+涨跌榜+实时总结+决策卡)
-    //           推股(多池+本地实时选股+云端推股)
+    // 合并后 4 个：看板(自选行情+全球+指数+涨跌榜+实时总结+决策卡)
+    //           推股(多池+本地实时选股+云端推股+引擎产出面板)
     //           消息(快讯/主线, 标题下实时算法)
     //           提问(本地规则引擎) / AI(GitCode 复盘+问答)
     val tabs = listOf(
         Tab("看板", Icons.Filled.Dashboard),
         Tab("推股", Icons.Filled.TrendingUp),
         Tab("消息", Icons.Filled.Article),
-        Tab("引擎", Icons.Filled.Science),
         Tab("问答", Icons.Filled.QuestionAnswer),
     )
 
@@ -82,8 +81,7 @@ fun MainScreen(vm: SkappViewModel) {
                 0 -> BoardScreen(vm, state)
                 1 -> PicksScreen(vm, state)
                 2 -> NewsScreen(vm, state)
-                3 -> EnginesScreen(vm, state)
-                4 -> UnifiedAskScreen(vm, state)
+                3 -> UnifiedAskScreen(vm, state)
             }
         }
 

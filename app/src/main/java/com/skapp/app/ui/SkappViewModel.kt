@@ -518,8 +518,11 @@ class SkappViewModel : ViewModel() {
         viewModelScope.launch {
             _state.value = _state.value.copy(newsCalcLoading = true)
             val symbols = _state.value.symbols
-            // 快讯：云端 news API 的 hot_news.items + extra.items
             val items = ArrayList<Map<String, Any?>>()
+            // 实时 7x24：设备直连东财（新闻不再等 CI 快照）
+            runCatching { MarketDataClient.news724() }.getOrElse { emptyList() }
+                .forEach { items.add(it) }
+            // 快照：云端 news API 的 hot_news.items + extra.items
             _state.value.news.items.forEach { items.add(it) }
             // 主线：hot_themes.themes 的 name + 关联个股
             val themes = _state.value.news.themes.mapNotNull { t ->

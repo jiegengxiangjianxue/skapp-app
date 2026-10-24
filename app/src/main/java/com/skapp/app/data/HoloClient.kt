@@ -42,27 +42,43 @@ object HoloClient {
     /** sh600519 / sz000001 / hk00700 —— holo 仓用带前缀代码做目录名 */
     fun dirName(code: String): String = SkappApi.prefixed(code)
 
-    /** 文件路径 → 文本。优先 contents API；raw 兜底（有 token 时也行）。 */
+    /** 文件路径 → 文本。raw 优先（公开仓免鉴权、CDN 不限制 60 次/时）；失败才走 contents API（有 token 时用）。
+     *  2026-10-24 修：原实现强制走 contents API，无 token 时 60 次/时限流导致详情页财务/资金流/新闻全空。 */
     private fun getText(url: String, charset: String = "utf-8"): String? {
-        // url 形如 raw 或 API; 统一走 API（更稳）
-        val apiUrl = when {
-            url.contains("raw.githubusercontent.com") -> {
-                // raw.githubusercontent.com/owner/repo/main/path → api.github.com/repos/owner/repo/contents/path
-                url.replace("https://raw.githubusercontent.com/", "$API/")
-                    .replace("/main/", "/contents/")
-                    .replace("/master/", "/contents/")
-            }
+        val rawUrl = when {
+            url.startsWith("$API/") ->
+                url.removePrefix("$API/").let { rest ->
+                    val i = rest.indexOf("/contents/")
+                    if (i < 0) url else "https://raw.githubusercontent.com/${rest.substring(0, i)}/main/${rest.substring(i + 10)}"
+                }
             else -> url
         }
+        val apiUrl = when {
+            rawUrl.contains("raw.githubusercontent.com") ->
+                rawUrl.replace("https://raw.githubusercontent.com/", "$API/")
+                    .replace("/main/", "/contents/")
+                    .replace("/master/", "/contents/")
+            else -> null
+        }
+        for (target in listOfNotNull(rawUrl, apiUrl)) {
+            val r = fetchOnce(target, charset, target.startsWith("$API"))
+            if (r != null) return r
+        }
+        return null
+    }
+
+    private fun fetch(url: String, charset: String, withAuth: Boolean): String? {
         var conn: HttpURLConnection? = null
         return try {
-            conn = (URL(apiUrl).openConnection() as HttpURLConnection).apply {
+            conn = (URL(url).openConnection() as HttpURLConnection).apply {
                 connectTimeout = 15000
                 readTimeout = 15000
                 requestMethod = "GET"
                 setRequestProperty("User-Agent", "skapp-android")
-                token?.let { setRequestProperty("Authorization", "Bearer $it") }
-                setRequestProperty("Accept", "application/vnd.github.raw")
+                if (withAuth) {
+                    token?.let { setRequestProperty("Authorization", "Bearer $it") }
+                    setRequestProperty("Accept", "application/vnd.github.raw")
+                }
             }
             if (conn.responseCode != HttpURLConnection.HTTP_OK) return null
             val cs = if (charset == "gbk") Charset.forName("GBK") else Charsets.UTF_8
@@ -83,8 +99,9 @@ object HoloClient {
     /** 该股在 holo 仓是否被覆盖 */
     suspend fun exists(code: String): Boolean = withContext(Dispatchers.IO) {
         val d = dirName(code)
+        // raw HEAD 免鉴权，token 缺失时也能判断
         val conn = runCatching {
-            (URL("$API/$REPO/contents/$d/meta.json").openConnection() as HttpURLConnection).apply {
+            (URL("https://raw.githubusercontent.com/$REPO/main/$d/meta.json").openConnection() as HttpURLConnection).apply {
                 requestMethod = "HEAD"
                 connectTimeout = 10000
                 readTimeout = 10000

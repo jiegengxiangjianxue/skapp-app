@@ -21,6 +21,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -43,6 +44,10 @@ private val DOWN = Color(0xFF3FB950)
 @Composable
 fun NewsScreen(vm: SkappViewModel, state: UiState) {
     var tab by remember { mutableStateOf(0) }   // 0 快讯 / 1 主线
+    // 进入页面自动拉一次（含设备直连的实时 7x24，不再是纯 CI 快照）
+    LaunchedEffect(Unit) {
+        if (state.newsCalcs.isEmpty() && !state.newsCalcLoading) vm.loadNewsCalcs()
+    }
     val calcs = state.newsCalcs
     val items = calcs.filter { n ->
         if (tab == 1) n.newsTitle.startsWith("【主线】") else !n.newsTitle.startsWith("【主线】")
