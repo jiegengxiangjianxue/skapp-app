@@ -91,7 +91,12 @@ object SkappApi {
     suspend fun fetchSymbols(): List<SymbolEntry> = withContext(Dispatchers.IO) {
         val url = RemoteSources.appFile(
             RemoteSources.OWNER_SYMBOLS, RemoteSources.REPO_SYMBOLS, "search/symbols.json")
-        val arr = fetchText(url)?.let { runCatching { JSONArray(it) }.getOrNull() }
+        val txt = fetchText(url) ?: return@withContext emptyList()
+        // 远端实际是 {"ts","n","symbols":[...]}，不是裸数组——按裸 JSONArray 解析会失败，
+        // 导致代码表全空（股票名称全显示代码、消息页匹配不到股票）。两种形态都兼容。
+        val arr = runCatching { JSONArray(txt) }.getOrNull()
+            ?: runCatching { JSONObject(txt).optJSONArray("symbols") }.getOrNull()
+            ?: runCatching { JSONObject(txt).optJSONArray("data") }.getOrNull()
             ?: return@withContext emptyList()
         (0 until arr.length()).mapNotNull { i ->
             val o = arr.optJSONObject(i) ?: return@mapNotNull null

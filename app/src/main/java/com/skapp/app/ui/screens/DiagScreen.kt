@@ -1,0 +1,148 @@
+package com.skapp.app.ui.screens
+
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import com.skapp.app.data.RemoteSources
+import com.skapp.app.data.SkappApi
+import com.skapp.app.ui.SkappViewModel
+import com.skapp.app.ui.UiState
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import org.json.JSONObject
+
+/**
+ * 数据源自检页 —— 一键跑通 app 依赖的每一个远端 URL 并报告状态。
+ *
+ * 建这个页的原因（2026-10-25）：用户反馈「什么都加载不出来」，排查发现是
+ * symbols.json 被当成裸数组解析（实际是 {ts,n,symbols:[...]}）导致代码表全空。
+ * 这类「URL 通但解析形态不匹配」的问题没有页面可见，只能盲猜；本页把每个数据源
+ * 的 HTTP 状态、解析结果条数、错误原因直接列出来，下次一眼定位。
+ */
+@Composable
+fun DiagScreen(vm: SkappViewModel, state: UiState) {
+    var rows by remember { mutableStateOf<List<Pair<String, String>>>(emptyList()) }
+    var running by remember { mutableStateOf(true) }
+
+    LaunchedEffect(Unit) {
+        rows = withContext(Dispatchers.IO) { probe() }
+        running = false
+    }
+
+    Column(
+        Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text("数据源自检", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        Text(
+            if (running) "正在逐个探测…" else "完成：${rows.size} 项",
+            style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+        )
+        rows.forEach { (name, result) ->
+            Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors()) {
+                Row(Modifier.fillMaxWidth().padding(10.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text(name, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        result,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (result.startsWith("OK")) Color(0xFF3FB950) else Color(0xFFF85149),
+                    )
+                }
+            }
+        }
+    }
+}
+
+private fun probe(): List<Pair<String, String>> {
+    fun http(url: String): String = try {
+        val conn = (java.net.URL(url).openConnection() as java.net.HttpURLConnection).apply {
+            connectTimeout = 15000; readTimeout = 15000
+            setRequestProperty("User-Agent", "Mozilla/5.0 (Android) skapp")
+        }
+        val code = conn.responseCode
+        val body = if (code == 200) {
+            val enc = conn.contentEncoding
+            val s = if (enc == "gzip" || enc == "x-gzip") java.util.zip.GZIPInputStream(conn.inputStream) else conn.inputStream
+            s.bufferedReader().use { it.readText() }
+        } else ""
+        conn.disconnect()
+        "$code|$body"
+    } catch (e: Exception) {
+        "ERR|${e.javaClass.simpleName}"
+    }
+
+    val out = ArrayList<Pair<String, String>>()
+    fun check(name: String, url: String, verify: (String) -> String) {
+        val r = http(url)
+        val code = r.substringBefore("|")
+        val body = r.substringAfter("|")
+        out += name to if (code == "200") "HTTP200 ${verify(body)}" else "$code ${if (code=="ERR") body else ""}"
+    }
+
+    // 代码表（本次故障点）
+    check("代码表 symbols.json", "https://raw.githubusercontent.com/${RemoteSources.OWNER_SYMBOLS}/${RemoteSources.REPO_SYMBOLS}/main/data/search/symbols.json") { b ->
+        val arr = runCatching { org.json.JSONArray(b) }.getOrNull()
+            ?: runCatching { JSONObject(b).optJSONArray("symbols") }.getOrNull()
+        if (arr != null) "解析${arr.length()}条" else "解析失败(形态不匹配)"
+    }
+    check("股票名称 stock_names", RemoteSources.appFile(RemoteSources.OWNER_A, RemoteSources.REPO_A, "stock_names.json")) { b ->
+        runCatching { JSONObject(b).length() }.getOrNull()?.let { "${it}条" } ?: "解析失败"
+    }
+    check("推股 today_picks", RemoteSources.appFile(RemoteSources.OWNER_A, RemoteSources.REPO_A, "today_picks.json")) { b ->
+        val p = runCatching { JSONObject(b).optJSONObject("picks") }.getOrNull()
+        if (p == null) "无 picks 字段"
+        else "信号${p.optJSONArray("signals")?.length() ?: 0}/评分${p.optJSONArray("values")?.length() ?: 0}/涨停${p.optJSONArray("limit_up")?.length() ?: 0}"
+    }
+    check("板块 api/sectors", RemoteSources.apiSectors()) { b ->
+        val o = runCatching { JSONObject(b) }.getOrNull()
+        "行业${o?.optJSONArray("industries")?.length() ?: 0}/概念${o?.optJSONArray("concepts")?.length() ?: 0}"
+    }
+    check("消息 api/news", RemoteSources.apiNews()) { b ->
+        val o = runCatching { JSONObject(b) }.getOrNull()
+        val hn = o?.optJSONObject("hot_news")?.optJSONArray("items")?.length() ?: 0
+        val ex = o?.optJSONObject("extra")?.optJSONArray("items")?.length() ?: 0
+        "热点$hn+附加$ex"
+    }
+    check("决策 decision", RemoteSources.appFile(RemoteSources.OWNER_A, RemoteSources.REPO_A, "decision.json")) { b ->
+        val o = runCatching { JSONObject(b) }.getOrNull()
+        "${o?.optJSONArray("cards")?.length() ?: 0}张卡"
+    }
+    check("市况 api/market", RemoteSources.apiMarket()) { b ->
+        val o = runCatching { JSONObject(b) }.getOrNull()
+        if (o?.optJSONObject("market") != null) "有市况" else "无 market 字段"
+    }
+    check("题材报告 theme_report", "https://raw.githubusercontent.com/${RemoteSources.OWNER_A}/${RemoteSources.REPO_A}/main/data/theme_report.json") { b ->
+        val o = runCatching { JSONObject(b) }.getOrNull()
+        "${o?.optJSONArray("themes")?.length() ?: 0}个题材"
+    }
+    check("自选实时行情(腾讯)", "https://qt.gtimg.cn/q=sh600519") { b ->
+        if (b.contains("~")) "OK 报价可解析" else "响应异常"
+    }
+    check("7x24快讯(东财)", "https://np-listapi.eastmoney.com/comm/web/getNewsByColumns?client=web&biz=web7_24&fastColumn=100&column=100&pageSize=5&sortEnd=&sortType=0") { b ->
+        val n = runCatching { JSONObject(b).optJSONObject("data")?.optJSONArray("list")?.length() }.getOrNull()
+        if (n != null) "${n}条实时" else "解析失败"
+    }
+    return out
+}

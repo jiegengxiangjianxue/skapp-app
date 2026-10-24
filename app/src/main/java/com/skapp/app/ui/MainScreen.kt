@@ -31,6 +31,7 @@ import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.skapp.app.ui.screens.UnifiedAskScreen
 import com.skapp.app.ui.screens.ThemeScreen
+import com.skapp.app.ui.screens.DiagScreen
 import com.skapp.app.ui.screens.BoardScreen
 import com.skapp.app.ui.screens.DecisionScreen
 import com.skapp.app.ui.screens.MarketScreen
@@ -62,6 +63,7 @@ fun MainScreen(vm: SkappViewModel) {
         Tab("题材", Icons.Filled.Category),
         Tab("消息", Icons.Filled.Article),
         Tab("问答", Icons.Filled.QuestionAnswer),
+        Tab("自检", Icons.Filled.Science),
     )
 
     Scaffold(
@@ -85,6 +87,7 @@ fun MainScreen(vm: SkappViewModel) {
                 2 -> ThemeScreen(vm, state)
                 3 -> NewsScreen(vm, state)
                 4 -> UnifiedAskScreen(vm, state)
+                5 -> DiagScreen(vm, state)
             }
         }
 
