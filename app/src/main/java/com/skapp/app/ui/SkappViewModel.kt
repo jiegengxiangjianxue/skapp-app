@@ -45,6 +45,7 @@ import com.skapp.app.data.SymbolEntry
 import com.skapp.app.data.TodayPicks
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
