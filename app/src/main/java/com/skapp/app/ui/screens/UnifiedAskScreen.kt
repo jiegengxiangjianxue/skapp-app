@@ -23,7 +23,7 @@ import com.skapp.app.ui.UiState
  */
 @Composable
 fun UnifiedAskScreen(vm: SkappViewModel, state: UiState) {
-    var mode by remember { mutableStateOf(0) }  // 0=本地规则 1=GitCode AI
+    var mode by remember { mutableStateOf(1) }  // 0=GitCode AI 1=GitHub Models（双源路由 AiRouter）
 
     Column(
         Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(12.dp),
@@ -31,18 +31,21 @@ fun UnifiedAskScreen(vm: SkappViewModel, state: UiState) {
     ) {
         Text("智能问答", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
 
-        // 模式切换
+        // 双源 AI：GitCode 优先，GitHub Models 兜底（AiRouter 自动切换，状态见下方状态行）
         Row(
             Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            ModeChip("本地规则", selected = mode == 0) { mode = 0 }
-            ModeChip("GitCode AI", selected = mode == 1) { mode = 1 }
+            ModeChip("GitCode AI", selected = mode == 0) { mode = 0 }
+            ModeChip("GitHub Models", selected = mode == 1) { mode = 1 }
+        }
+        state.aiProviderStatus?.takeIf { it.isNotBlank() }?.let {
+            Text(it, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
         }
 
         when (mode) {
-            0 -> LocalAskMode(vm, state)
-            1 -> AiMode(vm, state)
+            0 -> AiMode(vm, state)
+            1 -> AiMode(vm, state)   // AiRouter 内已做双源调度，两个入口同一能力
         }
     }
 }
@@ -54,85 +57,6 @@ private fun ModeChip(label: String, selected: Boolean, onClick: () -> Unit) {
         onClick = onClick,
         label = { Text(label) },
     )
-}
-
-// ── 本地规则模式（原 AskScreen）──────────────────────────────
-
-@Composable
-private fun LocalAskMode(vm: SkappViewModel, state: UiState) {
-    Text(
-        "本地规则引擎：免费、快速、无需 token。基于云端真实数据做规则匹配。",
-        style = MaterialTheme.typography.bodySmall,
-        color = Color.Gray,
-    )
-
-    OutlinedTextField(
-        value = state.askQuestion,
-        onValueChange = vm::onQuestionChange,
-        label = { Text("输入你的问题") },
-        modifier = Modifier.fillMaxWidth(),
-        minLines = 2,
-    )
-
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Button(onClick = vm::ask, enabled = !state.askLoading) {
-            Text(if (state.askLoading) "分析中…" else "提问")
-        }
-        if (state.askLoading) CircularProgressIndicator(Modifier.height(20.dp))
-    }
-
-    // 建议问题
-    Text("试试这些：", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-    val suggestions = listOf(
-        "今天市场情绪怎么样？",
-        "哪些股票在放量上涨？",
-        "推荐几只低估值股票",
-        "今天有什么主线题材？",
-        "帮我分析一下茅台",
-    )
-    suggestions.forEach { s ->
-        Card(
-            modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)
-                .clickable { vm.onQuestionChange(s) },
-            colors = CardDefaults.cardColors(),
-        ) {
-            Text(s, Modifier.padding(12.dp), style = MaterialTheme.typography.bodySmall)
-        }
-    }
-
-    // 回答
-    state.askAnswer?.let { ans ->
-        Card(colors = CardDefaults.cardColors()) {
-            Column(Modifier.padding(12.dp)) {
-                Text("回答", fontWeight = FontWeight.SemiBold)
-                Spacer(Modifier.height(6.dp))
-                Text(ans, style = MaterialTheme.typography.bodyMedium)
-            }
-        }
-    }
-
-    // 命中股票
-    if (state.askMatches.isNotEmpty()) {
-        Text(
-            "命中 ${state.askMatches.size} 只，点击任意一张卡查看完整详情",
-            style = MaterialTheme.typography.bodySmall,
-            color = Color.Gray,
-        )
-        state.askMatches.forEach { d ->
-            Card(
-                modifier = Modifier.fillMaxWidth().clickable { vm.openDetail(d.code) },
-                colors = CardDefaults.cardColors(),
-            ) {
-                Row(
-                    Modifier.fillMaxWidth().padding(12.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                ) {
-                    Text(d.name ?: d.code, fontWeight = FontWeight.Medium)
-                    Text(d.code, color = Color.Gray)
-                }
-            }
-        }
-    }
 }
 
 // ── GitCode AI 模式（原 AiScreen）────────────────────────────

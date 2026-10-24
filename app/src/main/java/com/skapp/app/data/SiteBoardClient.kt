@@ -22,15 +22,26 @@ object SiteBoardClient {
     fun setToken(t: String?) { token = t?.takeIf { it.isNotBlank() } }
 
     private fun getJson(url: String): JSONObject? {
-        val u = if (url.contains("raw.githubusercontent.com")) {
-            url.replace("https://raw.githubusercontent.com/", "$API/")
-                .replaceFirst("/main/", "/contents/")
-                .replaceFirst("/master/", "/contents/")
-        } else if (url.startsWith(API)) {
-            url
-        } else {
-            url
+        // raw 优先（免鉴权、不走 60 次/时 API 限流）；API 仅作兜底（有 token 时读私有仓）
+        val raw = when {
+            url.startsWith(API) -> url.replace("$API/", "https://raw.githubusercontent.com/qwerzxcva/stocks-ai-view/main/data/")
+            else -> url
         }
+        val api = when {
+            raw.contains("raw.githubusercontent.com") ->
+                raw.replace("https://raw.githubusercontent.com/", "$API/")
+                    .replaceFirst("/main/", "/contents/")
+                    .replaceFirst("/master/", "/contents/")
+            else -> null
+        }
+        for (u in listOfNotNull(raw, api)) {
+            val r = fetchOnce(u)
+            if (r != null) return r
+        }
+        return null
+    }
+
+    private fun fetchOnce(u: String): JSONObject? {
         var conn: HttpURLConnection? = null
         return try {
             conn = (URL(u).openConnection() as HttpURLConnection).apply {
@@ -38,11 +49,17 @@ object SiteBoardClient {
                 readTimeout = 15000
                 requestMethod = "GET"
                 setRequestProperty("User-Agent", "Mozilla/5.0 (Android) skapp")
-                token?.let { setRequestProperty("Authorization", "Bearer $it") }
-                if (u.startsWith(API)) setRequestProperty("Accept", "application/vnd.github.raw")
+                if (u.startsWith(API)) {
+                    token?.let { setRequestProperty("Authorization", "Bearer $it") }
+                    setRequestProperty("Accept", "application/vnd.github.raw")
+                }
             }
             if (conn.responseCode != HttpURLConnection.HTTP_OK) return null
-            BufferedReader(InputStreamReader(conn.inputStream, Charsets.UTF_8)).use { it.readText() }
+            val enc = conn.contentEncoding
+            val stream = if (enc == "gzip" || enc == "x-gzip")
+                java.util.zip.GZIPInputStream(conn.inputStream)
+            else conn.inputStream
+            BufferedReader(InputStreamReader(stream, Charsets.UTF_8)).use { it.readText() }
                 .let { runCatching { JSONObject(it) }.getOrNull() }
         } catch (e: Exception) {
             null

@@ -362,6 +362,24 @@ object MarketDataClient {
 
     // ── 本地技术指标计算（不依赖任何远端）──────────────────
 
+    /** 财务摘要（东财 quote 财务字段；holo 未覆盖个股的兜底，与 holo 字段名对齐） */
+    suspend fun financeQuote(code: String): Map<String, Any?> = withContext(Dispatchers.IO) {
+        getJson("https://push2.eastmoney.com/api/qt/stock/get?secid=${secid(code)}" +
+                "&fields=f57,f58,f84,f85,f116,f117,f162,f167,f55,f60")
+            ?.optJSONObject("data")?.let { d ->
+                buildMap<String, Any?> {
+                    d.opt("f116")?.let { put("总市值", it) }
+                    d.opt("f117")?.let { put("流通市值", it) }
+                    d.opt("f84")?.let { put("总股本", it) }
+                    d.opt("f85")?.let { put("流通股本", it) }
+                    d.opt("f162")?.let { put("PE_TTM", it) }
+                    d.opt("f167")?.let { put("PB", it) }
+                    d.opt("f55")?.let { put("每股收益", it) }
+                    d.opt("f60")?.let { put("每股净资产", it) }
+                }
+            } ?: emptyMap()
+    }
+
     /** 实时 7x24 快讯（东财 np-listapi，设备直连，不受 CI 快照时效限制） */
     suspend fun news724(limit: Int = 30): List<Map<String, Any?>> = withContext(Dispatchers.IO) {
         val trace = java.util.UUID.randomUUID().toString().replace("-", "")

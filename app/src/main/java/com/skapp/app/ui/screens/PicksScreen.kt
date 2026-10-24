@@ -55,16 +55,21 @@ fun PicksScreen(vm: SkappViewModel, state: UiState) {
         }
     }
     val tabs = listOf(
-        "本地实时" to emptyList<com.skapp.app.data.PickSignal>(),
-        "指标共振" to p.signals,
-        "多维评分" to p.values,
-        "涨停" to p.limitUp,
+        "实时选股" to emptyList<com.skapp.app.data.PickSignal>(),
+        "指标共振" to emptyList<com.skapp.app.data.PickSignal>(),
+        "多维评分" to emptyList<com.skapp.app.data.PickSignal>(),
+        "涨停" to emptyList<com.skapp.app.data.PickSignal>(),
         "多池" to poolSignals,
         "板块" to emptyList<com.skapp.app.data.PickSignal>(),
     )
-    // 进入「多池」「板块」页自动拉取
+    // 本地扫描四 tab 的扫描模式：score 达标池 / all 全分析池 / limitup 涨停扫描
+    val tabModes = listOf("score", "all", "all", "limitup")
+    // 进入对应 tab 自动拉取（本地 tab 直接扫描，多池拉网页版池）
     LaunchedEffect(tab) {
-        if (tab == 4 && state.pools.isEmpty() && !state.poolsLoading) vm.loadPools()
+        when (tab) {
+            in 0..3 -> vm.runScreen(tabModes[tab])
+            4 -> if (state.pools.isEmpty() && !state.poolsLoading) vm.loadPools()
+        }
     }
 
     Column(Modifier.fillMaxWidth()) {
@@ -92,14 +97,14 @@ fun PicksScreen(vm: SkappViewModel, state: UiState) {
 
         HorizontalDivider()
 
-        // ── 本地实时选股 Tab（默认，实时数据 + 本地算法引擎）──
-        // 首次进入自动跑（盘中才跑；休市时点按钮手动跑）
-        if (tab == 0) {
-            // 加 key 防止重组时重复触发；失败/无结果/休市都不再自动重试
-            val hasRun = state.screened.isNotEmpty() || state.screenMsg != null || state.screening
-            if (!hasRun) {
-                LaunchedEffect("runScreen_once") { vm.runScreen() }
+        // ── 本地扫描 Tab（0-3：设备直连行情 + 本地引擎，非 CI 快照）──
+        if (tab <= 3) {
+            val sorted = when (tab) {
+                1 -> state.screened.sortedByDescending { resonanceOf(it) }
+                3 -> state.screened.sortedByDescending { it.pctChg ?: 0.0 }
+                else -> state.screened
             }
+            val hasRun = state.screened.isNotEmpty() || state.screenMsg != null || state.screening
             Column(Modifier.fillMaxWidth().padding(12.dp)) {
                 Row(
                     Modifier.fillMaxWidth(),
@@ -107,7 +112,7 @@ fun PicksScreen(vm: SkappViewModel, state: UiState) {
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Column(Modifier.weight(1f)) {
-                        Text("本地实时选股", fontWeight = FontWeight.SemiBold)
+                        Text("${tabs[tab].first}（本地实时计算）", fontWeight = FontWeight.SemiBold)
                         Text(
                             "实时拉全市场行情 → 预筛 → 本地 12 引擎 + 29 因子现算（非云端快照）",
                             style = MaterialTheme.typography.bodySmall,
@@ -117,9 +122,9 @@ fun PicksScreen(vm: SkappViewModel, state: UiState) {
                     if (state.screening) {
                         CircularProgressIndicator()
                     } else {
-                        Card(modifier = Modifier.clickable { vm.runScreen() },
+                        Card(modifier = Modifier.clickable { vm.runScreen(tabModes[tab], force = true) },
                             colors = CardDefaults.cardColors()) {
-                            Text("开始实时选股", Modifier.padding(10.dp),
+                            Text("开始实时扫描", Modifier.padding(10.dp),
                                 color = MaterialTheme.colorScheme.primary,
                                 style = MaterialTheme.typography.bodySmall)
                         }
@@ -130,13 +135,13 @@ fun PicksScreen(vm: SkappViewModel, state: UiState) {
                     Text(it, style = MaterialTheme.typography.bodySmall, color = Color(0xFFD29922))
                 }
                 Spacer(Modifier.height(8.dp))
-                if (state.screened.isEmpty() && !state.screening) {
-                    Text("暂无结果：点击「开始实时选股」（约需 10-40 秒，视网络）", color = Color.Gray)
+                if (sorted.isEmpty() && !state.screening) {
+                    Text("暂无结果：点击「开始实时扫描」（约需 10-60 秒，视网络）", color = Color.Gray)
                 } else {
-                    Text("命中 ${state.screened.size} 只（按本地引擎综合分降序）",
+                    Text("命中 ${sorted.size} 只（${tabs[tab].first}排序 · 本地引擎现算）",
                         style = MaterialTheme.typography.bodySmall, color = Color.Gray)
                     Spacer(Modifier.height(6.dp))
-                    state.screened.forEach { sc ->
+                    sorted.forEach { sc ->
                         Card(
                             modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp)
                                 .clickable { vm.openDetail(sc.code) },
@@ -166,6 +171,7 @@ fun PicksScreen(vm: SkappViewModel, state: UiState) {
                                 Text(
                                     "本地引擎 ${sc.engine?.composite?.let { String.format("%.1f", it) } ?: "insufficient"}" +
                                         "（${sc.engine?.nValid ?: 0}/12 引擎）" +
+                                        "　共振 ${"%.0f".format(resonanceOf(sc) * 100)}%" +
                                         (sc.volRatio?.let { "　量比 ${String.format("%.2f", it)}" } ?: "") +
                                         (sc.mv?.let { "　市值 ${String.format("%.0f 亿", it / 1e8)}" } ?: ""),
                                     style = MaterialTheme.typography.bodySmall,
@@ -185,33 +191,26 @@ fun PicksScreen(vm: SkappViewModel, state: UiState) {
                         }
                     }
                 }
-
-                // ── 引擎产出面板（完整版，原独立「引擎」页合并进推股页）──
-                Spacer(Modifier.height(12.dp))
-                Text("引擎产出面板", fontWeight = FontWeight.SemiBold)
-                EnginesScreen(vm, state)
-            }
             return@Column
         }
 
-        // ── 云端快照列表（非实时，标注数据来源与年龄）──
-        // 云端三 Tab 兜底主板红线过滤（上游若混入 300/301/688/北交所不渲染）
-        // 推股不推涨停票：涨幅≥9.6%（主板涨停附近）的标的不进推荐（「涨停」信息页除外）
-        val current = (tabs.getOrNull(tab)?.second ?: emptyList()).filter { sig ->
-            isMainBoardPick(sig.code) && ((sig.pctChg ?: 0.0) < 9.6 || tab == 3)
-        }
-        if (tab == 5) {
-            // 「板块」页：渲染站点板块面板（行业/概念/成分股）
-            SectorsScreen(vm, state)
-            return@Column
-        }
-        if (tab > 0) {
+        // ── 网页版数据面板（多池/板块，CI 产出但与本地扫描互补）──
+        if (tab >= 4) {
             Text(
-                "该页为云端 CI 快照（ts=${p.ts ?: "未知"}），盘中非实时；本地实时数据在「本地实时」页。",
+                "该页为网页版 CI 产出（与本地实时扫描互补）；本地实时结果在「实时选股」等前四个页。",
                 Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
                 style = MaterialTheme.typography.bodySmall,
                 color = Color(0xFFD29922),
             )
+        }
+        if (tab == 5) {
+            SectorsScreen(vm, state)
+            return@Column
+        }
+        // 云端三 Tab 兜底主板红线过滤（上游若混入 300/301/688/北交所不渲染）
+        // 推股不推涨停票：涨幅≥9.6%（主板涨停附近）的标的不进推荐
+        val current = (tabs.getOrNull(tab)?.second ?: emptyList()).filter { sig ->
+            isMainBoardPick(sig.code) && ((sig.pctChg ?: 0.0) < 9.6)
         }
         if (current.isEmpty()) {
             Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
@@ -228,7 +227,7 @@ fun PicksScreen(vm: SkappViewModel, state: UiState) {
             ) {
                 item {
                     Text(
-                        "${tabs[tab].first} · ${current.size} 只　·　${listOfNotNull(p.date, p.session, p.ts).joinToString(" · ").ifEmpty { "时点暂无" }}",
+                        "${tabs[tab].first} · ${current.size} 只 · ${state.pools.firstOrNull()?.ts ?: "时点暂无"}",
                         style = MaterialTheme.typography.bodySmall,
                         color = Color.Gray,
                     )
@@ -239,6 +238,7 @@ fun PicksScreen(vm: SkappViewModel, state: UiState) {
             }
         }
     }
+}
 }
 
 @Composable
@@ -421,3 +421,11 @@ private fun fmt(v: Any?): String = when (v) {
 /** 主板代码红线：600/601/603/605/000/001/002（兼容带 sh/sz 前缀的编码） */
 internal fun isMainBoardPick(code: String): Boolean =
     code.takeLast(6).take(3) in setOf("600", "601", "603", "605", "000", "001", "002")
+
+/** 指标共振度：本地引擎 bullish 占比（0-1） */
+private fun resonanceOf(sc: com.skapp.app.data.LocalScreener.Screened): Double {
+    val es = sc.engine?.engines ?: return 0.0
+    val valid = es.count { it.score != null }
+    if (valid == 0) return 0.0
+    return es.count { it.signal == "bullish" } * 1.0 / valid
+}

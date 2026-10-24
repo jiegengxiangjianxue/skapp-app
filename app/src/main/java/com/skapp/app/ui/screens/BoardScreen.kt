@@ -19,6 +19,12 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -68,6 +74,9 @@ fun BoardScreen(vm: SkappViewModel, state: UiState) {
         state.marketState?.let { ms ->
             item { MarketStateCard(ms) }
         }
+
+        // 每日总结（网页版 daily_brief 盘后自动生成）
+        item { DailyBriefCard() }
 
         // 云端数据源健康度（190 源合并产物）
         state.allSourcesSummary?.let { s ->
@@ -404,4 +413,29 @@ private fun marketLabel(k: String): String = when (k) {
     "turnover_yi" -> "成交亿"
     "turnover" -> "成交"
     else -> k
+}
+
+/** 每日总结卡：网页版 daily_brief.json（盘后自动生成），取正文前 25 行展示 */
+@Composable
+private fun DailyBriefCard() {
+    var text by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(Unit) {
+        text = runCatching {
+            java.net.URL("https://raw.githubusercontent.com/qwerzxcva/stocks-ai-view/main/data/daily_brief.json")
+                .openStream().bufferedReader().use { it.readText() }
+        }.getOrNull()?.let { runCatching { org.json.JSONObject(it).optString("text") }.getOrNull() }
+    }
+    val t = text ?: return
+    Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors()) {
+        Column(Modifier.padding(12.dp)) {
+            Text("每日总结（盘后自动生成）", fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(4.dp))
+            t.split("\n").map { it.trim() }
+                .filter { it.isNotEmpty() && !it.startsWith(">") }
+                .take(25)
+                .forEach {
+                    Text(it.trimStart('#').trim(), style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                }
+        }
+    }
 }

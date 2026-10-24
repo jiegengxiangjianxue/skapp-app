@@ -150,6 +150,8 @@ data class UiState(
     val screened: List<LocalScreener.Screened> = emptyList(),
     val screening: Boolean = false,
     val screenMsg: String? = null,
+    /** 当前扫描模式：score 达标池 / all 全分析池 / limitup 涨停扫描（同模式结果缓存复用） */
+    val scanMode: String = "",
     /** 逐条快讯的实时算法计算（直接显示在标题下） */
     val newsCalcs: List<NewsCalc> = emptyList(),
     val newsCalcLoading: Boolean = false,
@@ -723,14 +725,16 @@ $ctx
         return sb.toString()
     }
 
-    /** 本地实时选股（不用云端旧快照） */
-    fun runScreen() {
+    /** 本地实时选股（设备直连行情 + 本地引擎，不用云端快照）。同模式结果缓存，切 tab 不重扫。 */
+    fun runScreen(mode: String = "score", force: Boolean = false) {
+        if (_state.value.screening) return
+        if (_state.value.scanMode == mode && _state.value.screened.isNotEmpty() && !force) return
         viewModelScope.launch {
             _state.value = _state.value.copy(screening = true, screenMsg = "正在实时拉取全市场行情…")
             val res = runCatching {
                 LocalScreener.screen(onProgress = { msg ->
                     _state.value = _state.value.copy(screenMsg = msg)
-                })
+                }, mode = mode)
             }.getOrElse {
                 _state.value = _state.value.copy(
                     screening = false,
@@ -741,6 +745,7 @@ $ctx
             _state.value = _state.value.copy(
                 screening = false,
                 screened = res,
+                scanMode = mode,
                 screenMsg = if (res.isEmpty()) "预筛后无满足条件的股票" else null,
             )
         }
@@ -767,7 +772,8 @@ $ctx
                 "atr14" to f?.atr14,
                 "boll_lower" to f?.bollLower, "boll_mid" to f?.bollMid, "boll_upper" to f?.bollUpper,
             ).filterValues { it != null },
-            financialLatest = holo?.finance ?: emptyMap(),
+            financialLatest = holo?.finance?.takeIf { it.isNotEmpty() }
+                ?: MarketDataClient.financeQuote(code),
         )
     }
 

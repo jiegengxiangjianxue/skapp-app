@@ -52,42 +52,56 @@ object LocalScreener {
     /** 全市场实时行情快照（东财 clist） */
     suspend fun marketSnapshot(pn: Int = 1, pz: Int = 3000): List<Map<String, Any?>> =
         withContext(Dispatchers.IO) {
-            val url = "https://push2.eastmoney.com/api/qt/clist/get?pn=$pn&pz=$pz&po=1&fid=f3" +
-                "&fs=m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81+s:2048" +
-                "&fields=f2,f3,f5,f6,f8,f9,f10,f12,f14,f20,f21,f62,f115,f124"
-            val txt = HttpURLConnectionBridge(url).readText() ?: return@withContext emptyList()
-            val obj = runCatching { org.json.JSONObject(txt) }.getOrNull() ?: return@withContext emptyList()
-            val arr = obj?.optJSONObject("data")?.optJSONArray("diff")
-                ?: return@withContext emptyList()
-            (0 until arr.length()).mapNotNull { i ->
-                val o = arr.optJSONObject(i) ?: return@mapNotNull null
-                val code = o.optString("f12").takeIf { it.isNotEmpty() } ?: return@mapNotNull null
-                mapOf<String, Any?>(
-                    "code" to code,
-                    "name" to o.optString("f14").takeIf { it.isNotEmpty() },
-                    "price" to o.opt("f2")?.toString()?.toDoubleOrNull(),
-                    "pctChg" to o.opt("f3")?.toString()?.toDoubleOrNull(),
-                    "volRatio" to o.opt("f10")?.toString()?.toDoubleOrNull(),
-                    "turnover" to o.opt("f5")?.toString()?.toDoubleOrNull(),
-                    "volume" to o.opt("f6")?.toString()?.toDoubleOrNull(),
-                    "amplitude" to o.opt("f7")?.toString()?.toDoubleOrNull(),
-                    "turnoverRate" to o.opt("f8")?.toString()?.toDoubleOrNull(),
-                    "pe" to o.opt("f9")?.toString()?.toDoubleOrNull(),
-                    "mv" to o.opt("f20")?.toString()?.toDoubleOrNull(),
-                    "mainNet" to o.opt("f62")?.toString()?.toDoubleOrNull(),
-                    "speed" to o.opt("f124")?.toString()?.toDoubleOrNull(),
-                )
+            fun fetchPage(p: Int, size: Int): List<Map<String, Any?>> {
+                val url = "https://push2.eastmoney.com/api/qt/clist/get?pn=$p&pz=$size&po=1&fid=f3" +
+                    "&fs=m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81+s:2048" +
+                    "&fields=f2,f3,f5,f6,f8,f9,f10,f12,f14,f20,f21,f62,f115,f124"
+                val txt = HttpURLConnectionBridge(url).readText() ?: return emptyList()
+                val obj = runCatching { org.json.JSONObject(txt) }.getOrNull() ?: return emptyList()
+                val arr = obj.optJSONObject("data")?.optJSONArray("diff") ?: return emptyList()
+                return (0 until arr.length()).mapNotNull { i ->
+                    val o = arr.optJSONObject(i) ?: return@mapNotNull null
+                    val code = o.optString("f12").takeIf { it.isNotEmpty() } ?: return@mapNotNull null
+                    mapOf<String, Any?>(
+                        "code" to code,
+                        "name" to o.optString("f14").takeIf { it.isNotEmpty() },
+                        "price" to o.opt("f2")?.toString()?.toDoubleOrNull(),
+                        "pctChg" to o.opt("f3")?.toString()?.toDoubleOrNull(),
+                        "volRatio" to o.opt("f10")?.toString()?.toDoubleOrNull(),
+                        "turnover" to o.opt("f5")?.toString()?.toDoubleOrNull(),
+                        "volume" to o.opt("f6")?.toString()?.toDoubleOrNull(),
+                        "amplitude" to o.opt("f7")?.toString()?.toDoubleOrNull(),
+                        "turnoverRate" to o.opt("f8")?.toString()?.toDoubleOrNull(),
+                        "pe" to o.opt("f9")?.toString()?.toDoubleOrNull(),
+                        "mv" to o.opt("f20")?.toString()?.toDoubleOrNull(),
+                        "mainNet" to o.opt("f62")?.toString()?.toDoubleOrNull(),
+                        "speed" to o.opt("f124")?.toString()?.toDoubleOrNull(),
+                    )
+                }
             }
+            val first = fetchPage(pn, pz)
+            if (first.isNotEmpty()) return@withContext first
+            // 大页被出口拒绝时降级：按 100 只分页拉全市场（遇空页即停）
+            val out = ArrayList<Map<String, Any?>>()
+            for (p in 1..40) {
+                val page = fetchPage(p, 100)
+                if (page.isEmpty()) break
+                out.addAll(page)
+            }
+            out
         }
 
     /**
      * 实时选股：市场快照 → 预筛 → 逐只本地引擎 → 排序。
+     * mode: "score" 常规（评分达标池） | "all" 全分析池（共振/评分页用） | "limitup" 涨停扫描
      */
-    suspend fun screen(c: Criteria = Criteria(), onProgress: (String) -> Unit = {}): List<Screened> = coroutineScope {
+    suspend fun screen(c: Criteria = Criteria(), onProgress: (String) -> Unit = {},
+                       mode: String = "score"): List<Screened> = coroutineScope {
         onProgress("正在实时拉取全市场行情…")
         val snap = marketSnapshot()
         if (snap.isEmpty()) return@coroutineScope emptyList()
-        onProgress("全市场快照 ${snap.size} 只，预筛中（涨幅/量比/非ST/主板）…")
+        val limitup = mode == "limitup"
+        onProgress("全市场快照 ${snap.size} 只，预筛中（${if (limitup) "涨停扫描" else "涨幅/量比/非ST/主板"}）…")
 
         // 预筛（含主板前缀红线过滤，排除 300/301/688/北交所）
         val cands = snap.filter { m ->
@@ -97,10 +111,13 @@ object LocalScreener {
             val name = m["name"]?.toString() ?: ""
             val st = c.excludeST && (name.contains("ST", ignoreCase = true) ||
                 name.contains("退", ignoreCase = true))
-            code.take(3) in MAIN_BOARD_PREFIXES &&
-                chg in c.minChgPct..c.maxChgPct && !st && (vr == null || vr >= c.minVolRatio)
+            val main = code.take(3) in MAIN_BOARD_PREFIXES && !st
+            when {
+                limitup -> main && chg >= 9.5
+                else -> main && chg in c.minChgPct..c.maxChgPct && (vr == null || vr >= c.minVolRatio)
+            }
         }.sortedByDescending { (it["mainNet"] as? Number)?.toDouble() ?: 0.0 }
-            .take(c.maxCandidates)
+            .take(if (limitup) 50 else c.maxCandidates)
 
         onProgress("预筛命中 ${cands.size} 只，逐只拉 K 线 + 本地引擎计算…")
 
@@ -131,6 +148,10 @@ object LocalScreener {
             onProgress("本地引擎已分析 ${out.size}/${cands.size} 只…")
         }
 
+        when (mode) {
+            // 共振/评分页：返回全部分析结果（含未达标），由 UI 自行排序
+            "all", "limitup" -> return@coroutineScope out.sortedByDescending { it.engine?.composite ?: (it.pctChg ?: 0.0) }
+        }
         val scored = out.filter { (it.engine?.composite ?: 0.0) >= c.minScore }
             .sortedByDescending { it.engine?.composite ?: 0.0 }
         if (scored.isNotEmpty()) return@coroutineScope scored
