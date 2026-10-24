@@ -61,7 +61,7 @@ object HoloClient {
             else -> null
         }
         for (target in listOfNotNull(rawUrl, apiUrl)) {
-            val r = fetchOnce(target, charset, target.startsWith("$API"))
+            val r = fetch(target, charset, target.startsWith("$API"))
             if (r != null) return r
         }
         return null
