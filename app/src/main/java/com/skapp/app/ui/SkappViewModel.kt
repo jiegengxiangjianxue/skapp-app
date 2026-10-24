@@ -565,19 +565,15 @@ class SkappViewModel : ViewModel() {
         }
     }
 
-    /** 推股页数据：拉取 today_picks + engine 产出 + 多池（此前缺失，首因） */
+    /** 推股页数据补齐：多池 + 引擎产出（load() 已覆盖 today_picks/decision/news/sectors/board） */
     fun loadPicks() {
         viewModelScope.launch {
-            kotlinx.coroutines.coroutineScope {
-                val todayD = kotlinx.coroutines.async { runCatching { SkappApi.fetchTodayPicks() }.getOrNull() }
-                val feedsD = kotlinx.coroutines.async { runCatching { loadEngineFeeds() }.getOrNull() }
-                val poolsD = kotlinx.coroutines.async { runCatching { SiteBoardClient.pools() }.getOrElse { emptyList() } }
-                _state.value = _state.value.copy(
-                    picks = todayD.await() ?: _state.value.picks,
-                    engineFeeds = feedsD.await(),
-                    pools = poolsD.await(),
-                )
-            }
+            val poolsD = async { runCatching { SiteBoardClient.pools() }.getOrElse { emptyList() } }
+            val feedsD = async { runCatching { loadEngineFeeds() }.getOrNull() }
+            _state.value = _state.value.copy(
+                pools = poolsD.await(),
+                engineFeeds = feedsD.await(),
+            )
         }
     }
 
@@ -746,12 +742,12 @@ $ctx
     /** 启动预热：并发拉取全部页面数据（看板/推股/消息/自选行情/板块），不等进页面才拉 */
     fun warmUpAll() {
         viewModelScope.launch {
-            kotlinx.coroutines.coroutineScope {
-                kotlinx.coroutines.async { loadBoard() }
-                kotlinx.coroutines.async { loadPicks() }
-                kotlinx.coroutines.async { loadNewsCalcs() }
-                kotlinx.coroutines.async { refreshQuotes() }
-                kotlinx.coroutines.async { loadIndices() }
+            coroutineScope {
+                async { loadBoard() }
+                async { loadPicks() }
+                async { loadNewsCalcs() }
+                async { refreshQuotes() }
+                async { loadIndices() }
             }
         }
     }
