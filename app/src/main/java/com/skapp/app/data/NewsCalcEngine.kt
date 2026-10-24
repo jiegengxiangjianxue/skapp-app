@@ -22,6 +22,8 @@ data class NewsCalc(
     /** 标题文本命中的情绪词（规则式，与站点 news_impact 同思路） */
     val sentiment: String = "neu",   // pos | neg | neu
     val sentimentHits: List<String> = emptyList(),
+    /** 利好质量判定：真利好 / 利好·防追高套人 / 利空 / 中性 */
+    val verdict: String = "",
     val status: String = "ok",       // ok | no_stock | insufficient
     val note: String? = null,
 )
@@ -49,7 +51,27 @@ private val NEG_WORDS = listOf(
     "miss", "downgrade",
 )
 
+private val TRUE_POS_WORDS = listOf(
+    "中标", "签约", "订单", "回购", "增持", "扭亏", "预增", "获批", "量产", "投产",
+)
+private val RISK_NEG_WORDS = listOf(
+    "减持", "解禁", "立案", "处罚", "退市", "造假", "爆雷", "问询", "风险警示", "破产", "停产", "终止",
+)
+
 object NewsCalcEngine {
+
+    /** 利好质量判定：带具体词与标的实时状态（真利好 vs 追高套人） */
+    fun verdictOf(senti: String, hits: List<String>, title: String,
+                  maxPct: Double?): String {
+        val t = title.lowercase()
+        val risk = hits.any { it.lowercase() in RISK_NEG_WORDS } ||
+            RISK_NEG_WORDS.any { t.contains(it.lowercase()) }
+        if (risk || senti == "neg") return "利空"
+        if (senti != "pos") return "中性"
+        if (maxPct != null && maxPct >= 8.0) return "利好·但标的已大涨${"%.1f".format(maxPct)}%，防追高套人"
+        val solid = TRUE_POS_WORDS.any { t.contains(it.lowercase()) }
+        return if (solid) "真利好" else "利好"
+    }
 
     fun sentimentOf(text: String): Pair<String, List<String>> {
         val t = text.lowercase()
@@ -100,6 +122,7 @@ object NewsCalcEngine {
                         ts = (item["updated"] ?: item["ctime"])?.toString(),
                         sentiment = senti,
                         sentimentHits = hits,
+                        verdict = verdictOf(senti, hits, title, null),
                         status = "no_stock",
                         note = "标题未提及具体股票，无个股计算",
                     )
@@ -140,6 +163,7 @@ object NewsCalcEngine {
                     stocks = stocks,
                     sentiment = senti,
                     sentimentHits = hits,
+                    verdict = verdictOf(senti, hits, title, stocks.mapNotNull { it.pctChg }.maxOrNull()),
                     status = "ok",
                 )
             }

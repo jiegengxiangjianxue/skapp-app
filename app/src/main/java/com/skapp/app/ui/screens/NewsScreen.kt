@@ -126,12 +126,21 @@ private fun NewsCardWithCalc(n: NewsCalc, vm: SkappViewModel) {
                 n.ts?.let {
                     Text(it, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
                 }
-                val (sentiText, sentiColor) = when (n.sentiment) {
-                    "pos" -> "利好" to UP
-                    "neg" -> "利空" to DOWN
+                val (sentiText, sentiColor) = when {
+                    n.verdict.startsWith("真利好") -> "真利好" to UP
+                    n.verdict.startsWith("利好·") -> n.verdict to Color(0xFFD29922)
+                    n.verdict == "利空" -> "利空" to DOWN
+                    n.sentiment == "pos" -> "利好" to UP
+                    n.sentiment == "neg" -> "利空" to DOWN
                     else -> "中性" to Color.Gray
                 }
                 Text(sentiText, style = MaterialTheme.typography.bodySmall, color = sentiColor)
+                if (n.sentimentHits.isNotEmpty()) {
+                    Text(
+                        "命中：${n.sentimentHits.take(4).joinToString(" ")}",
+                        style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+                    )
+                }
             }
 
             HorizontalDivider(Modifier.padding(vertical = 6.dp))

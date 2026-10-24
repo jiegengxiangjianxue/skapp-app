@@ -39,8 +39,12 @@ object MarketDataClient {
                 setRequestProperty("Referer", "https://gu.qq.com/")
             }
             if (conn.responseCode != HttpURLConnection.HTTP_OK) return null
+            val enc = conn.contentEncoding
+            val stream = if (enc == "gzip" || enc == "x-gzip")
+                java.util.zip.GZIPInputStream(conn.inputStream)
+            else conn.inputStream
             val cs = if (charset.equals("gbk", true)) Charset.forName("GBK") else Charsets.UTF_8
-            BufferedReader(InputStreamReader(conn.inputStream, cs)).use { it.readText() }
+            BufferedReader(InputStreamReader(stream, cs)).use { it.readText() }
         } catch (e: Exception) {
             null
         } finally {

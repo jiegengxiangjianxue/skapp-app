@@ -72,7 +72,7 @@ fun EnginesScreen(vm: SkappViewModel, state: UiState) {
                 LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     feeds?.let { f ->
                         item { FeedHeader(f) }
-                        item { EngineV5Section(f.engineV5) }
+                        item { EngineV5Section(f.engineV5, excludeCodes = state.screened.map { it.code.takeLast(6) }.toSet()) }
                         item { CycleSection(f.cyclePool) }
                         item { RpsSection(f.rpsRotation) }
                         item { StrategySection(f.strategyCard) }
@@ -108,18 +108,20 @@ private fun FeedHeader(f: EngineFeed.EngineFeeds) {
 // ── engine_v5 ───────────────────────────────────────────────
 
 @Composable
-private fun EngineV5Section(e: EngineFeed.EngineV5Payload?) {
+private fun EngineV5Section(e: EngineFeed.EngineV5Payload?, excludeCodes: Set<String> = emptySet()) {
     if (e == null) return
+    // 与本地实时选股结果去重：同代码只出现在本地选股列表
+    val top = e.top.filter { !excludeCodes.contains(it.code.takeLast(6)) }
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(12.dp)) {
             Text("① 综合引擎 v5", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(4.dp))
-            if (e.top.isEmpty()) {
+            if (top.isEmpty()) {
                 Text("本周期无入选标的", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
             } else {
-                Text("上榜 ${e.top.size} 只 ·  stale_top ${e.staleTop.size} 只", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                Text("上榜 ${top.size} 只${if (e.top.size > top.size) "（已剔除与本地选股重复 ${e.top.size - top.size} 只）" else ""} · stale_top ${e.staleTop.size} 只", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
                 Spacer(Modifier.height(6.dp))
-                e.top.take(15).forEach { t ->
+                top.take(15).forEach { t ->
                     EngineV5Row(t)
                     Spacer(Modifier.height(2.dp))
                 }

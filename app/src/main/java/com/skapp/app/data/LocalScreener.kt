@@ -26,7 +26,7 @@ object LocalScreener {
     /** 筛选条件 */
     data class Criteria(
         val minChgPct: Double = 1.0,
-        val maxChgPct: Double = 10.5,
+        val maxChgPct: Double = 9.6,   // 推股不追涨停：主板涨停附近(≥9.6%)不可买入
         val minVolRatio: Double = 1.2,
         val minScore: Double = 55.0,
         val excludeST: Boolean = true,
@@ -155,7 +155,14 @@ private class HttpURLConnectionBridge(url: String) {
     fun readText(): String? =
         try {
             if (conn.responseCode != java.net.HttpURLConnection.HTTP_OK) null
-            else conn.inputStream.bufferedReader().use { it.readText() }
+            else {
+                // HttpURLConnection 默认请求 gzip，东财按 gzip 返回——不解压就是乱码空数据
+                val enc = conn.contentEncoding
+                val stream = if (enc == "gzip" || enc == "x-gzip")
+                    java.util.zip.GZIPInputStream(conn.inputStream)
+                else conn.inputStream
+                stream.bufferedReader().use { it.readText() }
+            }
         } catch (e: Exception) {
             null
         } finally {

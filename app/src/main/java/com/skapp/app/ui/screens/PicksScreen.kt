@@ -43,12 +43,29 @@ fun PicksScreen(vm: SkappViewModel, state: UiState) {
     var tab by remember { mutableStateOf(0) }
 
     // 本地实时为默认（用户核心诉求：不用云端旧快照）；云端池做兜底
+    val poolSignals = remember(state.pools) {
+        state.pools.flatMap { pool ->
+            pool.items.map { it ->
+                com.skapp.app.data.PickSignal(
+                    code = it.code, name = it.name, price = it.price,
+                    pctChg = it.pctChg, score = it.score,
+                    why = listOf("【${pool.name}】"),
+                )
+            }
+        }
+    }
     val tabs = listOf(
         "本地实时" to emptyList<com.skapp.app.data.PickSignal>(),
         "指标共振" to p.signals,
         "多维评分" to p.values,
         "涨停" to p.limitUp,
+        "多池" to poolSignals,
+        "板块" to emptyList<com.skapp.app.data.PickSignal>(),
     )
+    // 进入「多池」「板块」页自动拉取
+    LaunchedEffect(tab) {
+        if (tab == 4 && state.pools.isEmpty() && !state.poolsLoading) vm.loadPools()
+    }
 
     Column(Modifier.fillMaxWidth()) {
         // ── 顶栏 ──
@@ -179,7 +196,15 @@ fun PicksScreen(vm: SkappViewModel, state: UiState) {
 
         // ── 云端快照列表（非实时，标注数据来源与年龄）──
         // 云端三 Tab 兜底主板红线过滤（上游若混入 300/301/688/北交所不渲染）
-        val current = (tabs.getOrNull(tab)?.second ?: emptyList()).filter { isMainBoardPick(it.code) }
+        // 推股不推涨停票：涨幅≥9.6%（主板涨停附近）的标的不进推荐（「涨停」信息页除外）
+        val current = (tabs.getOrNull(tab)?.second ?: emptyList()).filter { sig ->
+            isMainBoardPick(sig.code) && ((sig.pctChg ?: 0.0) < 9.6 || tab == 3)
+        }
+        if (tab == 5) {
+            // 「板块」页：渲染站点板块面板（行业/概念/成分股）
+            SectorsScreen(vm, state)
+            return@Column
+        }
         if (tab > 0) {
             Text(
                 "该页为云端 CI 快照（ts=${p.ts ?: "未知"}），盘中非实时；本地实时数据在「本地实时」页。",
