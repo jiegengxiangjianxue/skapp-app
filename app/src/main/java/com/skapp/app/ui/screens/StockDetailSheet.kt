@@ -28,7 +28,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.Text
 import androidx.compose.ui.platform.LocalContext
-import com.skapp.app.ui.Watchlistimport androidx.compose.runtime.Composable
+import com.skapp.app.ui.Watchlist
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember

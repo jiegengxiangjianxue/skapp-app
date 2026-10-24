@@ -142,9 +142,10 @@ fun MarketScreen(vm: SkappViewModel, state: UiState) {
                                     }
                                     Text(
                                         "实时分析 ›",
-                                    color = MaterialTheme.colorScheme.primary,
-                                    style = MaterialTheme.typography.bodySmall,
-                                )
+                                        color = MaterialTheme.colorScheme.primary,
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
+                                }
                             }
                             // 搜索即触发本地引擎分析（点开详情时算，这里给提示）
                             Text(
