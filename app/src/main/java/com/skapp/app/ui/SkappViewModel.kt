@@ -110,6 +110,8 @@ data class UiState(
     val market: MarketSnapshot = MarketSnapshot(),
     val news: NewsSnapshot = NewsSnapshot(),
     val sectors: SectorsSnapshot = SectorsSnapshot(),
+    /** 引擎产出聚合（engines_feed：regime/cycle/anomaly/price_level/orchestrator） */
+    val engineFeeds: com.skapp.app.data.EngineFeed.EngineFeeds? = null,
     val symbols: List<SymbolEntry> = emptyList(),
     val searchResults: List<SymbolEntry> = emptyList(),
     val detail: StockDetail? = null,
@@ -194,7 +196,7 @@ class SkappViewModel : ViewModel() {
     private var askEngine: AskEngine? = null
 
     init {
-        load()
+        // 不在 init 里 load()：token 要等 loadSavedToken 恢复；此时拉数据会因无鉴权全失败（app 打开全空的根因）
         startQuoteLoop()
     }
 
@@ -563,6 +565,22 @@ class SkappViewModel : ViewModel() {
         }
     }
 
+    /** 推股页数据：拉取 today_picks + engine 产出 + 多池（此前缺失，首因） */
+    fun loadPicks() {
+        viewModelScope.launch {
+            kotlinx.coroutines.coroutineScope {
+                val todayD = kotlinx.coroutines.async { runCatching { SkappApi.fetchTodayPicks() }.getOrNull() }
+                val feedsD = kotlinx.coroutines.async { runCatching { loadEngineFeeds() }.getOrNull() }
+                val poolsD = kotlinx.coroutines.async { runCatching { SiteBoardClient.pools() }.getOrElse { emptyList() } }
+                _state.value = _state.value.copy(
+                    picks = todayD.await() ?: _state.value.picks,
+                    engineFeeds = feedsD.await(),
+                    pools = poolsD.await(),
+                )
+            }
+        }
+    }
+
     /** 实时总结 */
     fun loadSummary() {
         viewModelScope.launch {
@@ -723,6 +741,19 @@ $ctx
             }
         }
         return sb.toString()
+    }
+
+    /** 启动预热：并发拉取全部页面数据（看板/推股/消息/自选行情/板块），不等进页面才拉 */
+    fun warmUpAll() {
+        viewModelScope.launch {
+            kotlinx.coroutines.coroutineScope {
+                kotlinx.coroutines.async { loadBoard() }
+                kotlinx.coroutines.async { loadPicks() }
+                kotlinx.coroutines.async { loadNewsCalcs() }
+                kotlinx.coroutines.async { refreshQuotes() }
+                kotlinx.coroutines.async { loadIndices() }
+            }
+        }
     }
 
     /** 本地实时选股（设备直连行情 + 本地引擎，不用云端快照）。同模式结果缓存，切 tab 不重扫。 */
