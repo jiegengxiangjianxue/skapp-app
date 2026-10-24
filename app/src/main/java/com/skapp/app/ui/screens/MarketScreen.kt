@@ -23,7 +23,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.setValue
+import androidx.compose.material3.TextButton
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -41,6 +44,8 @@ private val DOWN = Color(0xFF3FB950)
 @Composable
 fun MarketScreen(vm: SkappViewModel, state: UiState) {
     var query by remember { mutableStateOf("") }
+    val ctx = LocalContext.current
+    LaunchedEffect(Unit) { Watchlist.init(ctx) }
 
     Column(Modifier.fillMaxWidth().padding(12.dp)) {
         Text(
@@ -131,8 +136,12 @@ fun MarketScreen(vm: SkappViewModel, state: UiState) {
                                     Text(s.name ?: s.code, fontWeight = FontWeight.Medium)
                                     Text(s.code, color = Color.Gray, style = MaterialTheme.typography.bodySmall)
                                 }
-                                Text(
-                                    "实时分析 ›",
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    TextButton(onClick = { Watchlist.add(ctx, s.code) }) {
+                                        Text("+自选", style = MaterialTheme.typography.bodySmall)
+                                    }
+                                    Text(
+                                        "实时分析 ›",
                                     color = MaterialTheme.colorScheme.primary,
                                     style = MaterialTheme.typography.bodySmall,
                                 )
@@ -149,7 +158,8 @@ fun MarketScreen(vm: SkappViewModel, state: UiState) {
             } else {
                 items(Watchlist.codes, key = { it }) { code ->
                     val row = state.quotes.firstOrNull { it.code == code }
-                    QuoteCard(row = row, code = code, onClick = { vm.openDetail(code) })
+                    QuoteCard(row = row, code = code, onClick = { vm.openDetail(code) },
+                        onDelete = { Watchlist.remove(ctx, code) })
                 }
             }
         }
@@ -212,7 +222,8 @@ private fun fmtUntil(ms: Long): String {
 }
 
 @Composable
-private fun QuoteCard(row: com.skapp.app.ui.QuoteRow?, code: String, onClick: () -> Unit) {
+private fun QuoteCard(row: com.skapp.app.ui.QuoteRow?, code: String, onClick: () -> Unit,
+                      onDelete: (() -> Unit)? = null) {
     val pct = row?.pctChg
     val color = when {
         pct == null -> Color.Gray
@@ -244,6 +255,11 @@ private fun QuoteCard(row: com.skapp.app.ui.QuoteRow?, code: String, onClick: ()
                     color = color,
                     style = MaterialTheme.typography.bodySmall,
                 )
+                if (onDelete != null) {
+                    TextButton(onClick = onDelete) {
+                        Text("删除", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                    }
+                }
             }
         }
     }

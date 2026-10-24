@@ -29,6 +29,11 @@ object GitCodeAiClient {
     private const val FALLBACK_MODEL = "Qwen/Qwen3-30B-A3B-Instruct-2507"
     private const val TIMEOUT = 90000
 
+    /** 最近一次调用的 HTTP 状态码（0=未请求/网络异常），供 [AiRouter] 识别 429 */
+    @Volatile
+    var lastHttpCode: Int = 0
+        private set
+
     // token 由用户在 app 设置页填入（SharedPreferences）；本类不内置
     private var token: String? = null
 
@@ -38,8 +43,13 @@ object GitCodeAiClient {
 
     fun isConfigured(): Boolean = !token.isNullOrBlank()
 
-    private fun chat(messages: List<Pair<String, String>>, model: String): String? {
+    /**
+     * 单次 chat（指定模型）。返回 null 表示失败；429 时 [lastHttpCode]==429，
+     * 由 [AiRouter] 决定是否触发冷却。其余内部场景仍走私有 [chatOnce]。
+     */
+    fun rawChat(messages: List<Pair<String, String>>, model: String): String? {
         val tok = token ?: return null
+        lastHttpCode = 0
         var conn: HttpURLConnection? = null
         return try {
             conn = (URL(ENDPOINT).openConnection() as HttpURLConnection).apply {
@@ -63,7 +73,9 @@ object GitCodeAiClient {
                 })
             }
             OutputStreamWriter(conn.outputStream, Charsets.UTF_8).use { it.write(body.toString()) }
-            if (conn.responseCode != HttpURLConnection.HTTP_OK) return null
+            val code = conn.responseCode
+            lastHttpCode = code
+            if (code != HttpURLConnection.HTTP_OK) return null
             val resp = BufferedReader(InputStreamReader(conn.inputStream, Charsets.UTF_8)).use { it.readText() }
             JSONObject(resp).optJSONArray("choices")
                 ?.optJSONObject(0)?.optJSONObject("message")?.optString("content")
@@ -73,6 +85,9 @@ object GitCodeAiClient {
             conn?.disconnect()
         }
     }
+
+    private fun chat(messages: List<Pair<String, String>>, model: String): String? =
+        rawChat(messages, model)
 
     private fun chatOnce(prompt: String): String? =
         chat(listOf("user" to prompt), MODEL)

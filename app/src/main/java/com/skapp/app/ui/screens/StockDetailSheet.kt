@@ -25,8 +25,10 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
+import androidx.compose.ui.platform.LocalContext
+import com.skapp.app.ui.Watchlistimport androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -76,8 +78,20 @@ fun StockDetailSheet(vm: SkappViewModel, state: UiState) {
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold,
             )
-            IconButton(onClick = vm::closeDetail) {
-                Icon(Icons.Filled.Close, contentDescription = "关闭")
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                d?.code?.let { code ->
+                    val ctx = LocalContext.current
+                    val inWatch = Watchlist.contains(code)
+                    TextButton(onClick = {
+                        if (inWatch) Watchlist.remove(ctx, code) else Watchlist.add(ctx, code)
+                    }) {
+                        Text(if (inWatch) "移出自选" else "加自选",
+                            style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+                IconButton(onClick = vm::closeDetail) {
+                    Icon(Icons.Filled.Close, contentDescription = "关闭")
+                }
             }
         }
 

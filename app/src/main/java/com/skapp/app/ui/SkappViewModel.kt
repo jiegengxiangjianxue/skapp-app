@@ -1,6 +1,8 @@
 package com.skapp.app.ui
 
 import androidx.lifecycle.ViewModel
+import android.content.Context
+import androidx.compose.runtime.mutableStateListOf
 import androidx.lifecycle.viewModelScope
 import com.skapp.app.data.AllSourcesClient
 import com.skapp.app.data.BanProb
@@ -32,7 +34,9 @@ import com.skapp.app.data.NewsSnapshot
 import com.skapp.app.data.PickSignal
 import com.skapp.app.data.Quote
 import com.skapp.app.data.SiteBoardClient
+import com.skapp.app.data.AiRouter
 import com.skapp.app.data.GitCodeAiClient
+import com.skapp.app.data.GitHubModelsClient
 import com.skapp.app.data.SkappApi
 import com.skapp.app.data.StockDetail
 import com.skapp.app.data.TechnicalCalc
@@ -48,9 +52,43 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
-/** 自选股（与 app 默认一致；本地持久化可后续再接） */
+/** 自选股：SharedPreferences 持久化 + Compose 可观察，支持增删 */
 object Watchlist {
-    val codes = listOf("600519", "300750", "002594", "600941", "hk00700")
+    private const val PREF = "watchlist"
+    private const val KEY = "codes"
+    private val DEFAULT_CODES = listOf("600519", "002594", "600941", "600036", "hk00700")
+
+    val codes = mutableStateListOf<String>()
+
+    @Volatile
+    private var loaded = false
+
+    fun init(context: Context) {
+        if (loaded) return
+        loaded = true
+        val saved = context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+            .getString(KEY, null)
+        codes.clear()
+        codes.addAll(saved?.split(",")?.filter { it.isNotBlank() } ?: DEFAULT_CODES)
+    }
+
+    private fun persist(context: Context) {
+        context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+            .edit().putString(KEY, codes.joinToString(",")).apply()
+    }
+
+    fun add(context: Context, code: String) {
+        val c = code.trim()
+        if (c.isEmpty() || codes.contains(c)) return
+        codes.add(c)
+        persist(context)
+    }
+
+    fun remove(context: Context, code: String) {
+        if (codes.remove(code)) persist(context)
+    }
+
+    fun contains(code: String?): Boolean = code != null && codes.contains(code)
 }
 
 data class QuoteRow(
@@ -118,6 +156,13 @@ data class UiState(
     /** GitCode AI */
     val aiToken: String = "",
     val aiConfigured: Boolean = false,
+    /** GitHub Models（云端 AI 第二源，GitCode 的备份） */
+    val githubToken: String = "",
+    val githubConfigured: Boolean = false,
+    /** AiRouter 双源状态行（可用 provider + 调用/失败/冷却） */
+    val aiProviderStatus: String = "",
+    /** 最近一次 AI 调用实际走的 provider */
+    val aiLastProvider: String? = null,
     val aiReview: String? = null,
     val aiReviewLoading: Boolean = false,
     val aiAnswer: String? = null,
@@ -137,6 +182,7 @@ class SkappViewModel : ViewModel() {
     companion object {
         private const val PREFS = "skapp_prefs"
         private const val KEY_TOKEN = "gitcode_token"
+        private const val KEY_GITHUB_TOKEN = "github_token"
     }
 
     private val _state = MutableStateFlow(UiState())
@@ -150,12 +196,18 @@ class SkappViewModel : ViewModel() {
         startQuoteLoop()
     }
 
-    /** MainActivity 启动时调用：从 SharedPreferences 恢复 GitCode token */
+    /** MainActivity 启动时调用：从 SharedPreferences 恢复 GitCode + GitHub token，并初始化双源路由 */
     fun loadSavedToken(context: android.content.Context) {
-        val t = context.getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE)
-            .getString(KEY_TOKEN, "") ?: ""
-        GitCodeAiClient.setToken(t)
-        _state.value = _state.value.copy(aiToken = t, aiConfigured = t.isNotBlank())
+        val sp = context.getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE)
+        val t = sp.getString(KEY_TOKEN, "") ?: ""
+        val gh = sp.getString(KEY_GITHUB_TOKEN, "") ?: ""
+        _context = context.applicationContext
+        AiRouter.configure(context.applicationContext, t, gh)
+        _state.value = _state.value.copy(
+            aiToken = t, aiConfigured = t.isNotBlank(),
+            githubToken = gh, githubConfigured = gh.isNotBlank(),
+            aiProviderStatus = AiRouter.statusLine(),
+        )
     }
 
     /** 保存 token 到 SharedPreferences */
@@ -164,10 +216,34 @@ class SkappViewModel : ViewModel() {
             .edit().putString(KEY_TOKEN, _state.value.aiToken).apply()
     }
 
+    /** 保存 GitHub token 到 SharedPreferences */
+    fun saveGithubToken(context: android.content.Context) {
+        context.getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE)
+            .edit().putString(KEY_GITHUB_TOKEN, _state.value.githubToken).apply()
+    }
+
+    /** 设置页「保存 GitHub token」按钮 */
+    fun saveGithubTokenNow() {
+        _context?.let { ctx ->
+            saveGithubToken(ctx)
+            GitHubModelsClient.setToken(_state.value.githubToken)
+            refreshAiProviderStatus()
+        }
+    }
+
+    /** 刷新双源状态行（设置页显示用） */
+    fun refreshAiProviderStatus() {
+        _state.value = _state.value.copy(aiProviderStatus = AiRouter.statusLine())
+    }
+
     /** AiScreen 的「保存并启用」按钮调它（需要 context，由 MainActivity 提供） */
     var _context: android.content.Context? = null
     fun saveTokenNow() {
-        _context?.let { saveToken(it) }
+        _context?.let { ctx ->
+            saveToken(ctx)
+            GitCodeAiClient.setToken(_state.value.aiToken)
+            refreshAiProviderStatus()
+        }
     }
 
     fun load() {
@@ -500,6 +576,17 @@ class SkappViewModel : ViewModel() {
             aiToken = t,
             aiConfigured = t.isNotBlank(),
         )
+        refreshAiProviderStatus()
+    }
+
+    /** 设置页 GitHub token 输入框 onValueChange */
+    fun setGithubToken(t: String) {
+        GitHubModelsClient.setToken(t)
+        _state.value = _state.value.copy(
+            githubToken = t,
+            githubConfigured = t.isNotBlank(),
+        )
+        refreshAiProviderStatus()
     }
 
     /** AI 复盘当前详情页的股票（全部真实数据喂给 AI） */
@@ -507,17 +594,65 @@ class SkappViewModel : ViewModel() {
         val d = _state.value.detail ?: return
         viewModelScope.launch {
             _state.value = _state.value.copy(aiReviewLoading = true, aiReview = null)
-            val out = GitCodeAiClient.reviewStock(
-                code = d.code,
-                name = d.name,
-                quote = _state.value.liveQuote,
-                engine = _state.value.localEngine,
-                factors = ExtendedIndicators.allFactors(_state.value.kline),
-                holo = _state.value.holo,
-                news = _state.value.holo?.news ?: emptyList(),
-                boards = _state.value.boardsOf,
+            val data = buildStockReviewData(d)
+            val prompt = """你是 A 股复盘分析师。以下是该股 ${d.code} ${d.name} 的**真实实时数据**，你只允许基于这些数据回答，禁止编造任何数字或事实。数据里没有的就说「数据不足」。
+
+$data
+
+请输出 3 部分（每部分 1-2 句，总 300 字内）：
+1. 【当前状态】技术面+资金面+消息面综合评价
+2. 【风险】主要风险点
+3. 【观察点】后续该盯什么
+直接输出文本，不要 markdown 代码块。"""
+            val r = AiRouter.askDeep(listOf("user" to prompt))
+            val out = if (r.text == null) r.text else "[via ${r.provider ?: "?"}${r.model?.let { " · $it" } ?: ""}]\n\n${r.text}"
+            _state.value = _state.value.copy(
+                aiReviewLoading = false,
+                aiReview = out,
+                aiLastProvider = r.provider,
+                aiProviderStatus = AiRouter.statusLine(),
             )
-            _state.value = _state.value.copy(aiReviewLoading = false, aiReview = out)
+        }
+    }
+
+    /** 拼复盘用的真实数据底稿（原 GitCodeAiClient.reviewStock 的数据段，现归 ViewModel） */
+    private fun buildStockReviewData(d: StockDetail): String {
+        return buildString {
+            append("【基础】代码=${d.code} 名称=${d.name}")
+            _state.value.liveQuote?.let { q ->
+                append(" 现价=${q.price ?: "暂无"} 涨跌=${q.pctChg?.let { "%.2f%%".format(it) } ?: "暂无"}")
+            }
+            appendLine()
+            _state.value.localEngine?.let { e ->
+                appendLine("【本地引擎】综合=${e.composite?.let { "%.1f".format(it) } ?: "insufficient"}（${e.nValid}/${e.engines.size} 有效）")
+                e.engines.forEach { en ->
+                    if (en.score != null) {
+                        appendLine("  · ${en.engine}=${"%.1f".format(en.score)} ${en.signal}（${en.reasons.take(2).joinToString("，")}）")
+                    }
+                }
+            }
+            val factors = ExtendedIndicators.allFactors(_state.value.kline)
+            val validFactors = factors.entries.filter { it.value != null }.take(15)
+            if (validFactors.isNotEmpty()) {
+                appendLine("【因子】" + validFactors.joinToString(" ") { "${it.key}=${"%.4f".format(it.value!!)}" })
+            }
+            _state.value.holo?.technical?.entries?.filter { it.value != null }?.take(10)?.let { t ->
+                appendLine("【holo 技术】" + t.joinToString(" ") { "${it.key}=${"%.2f".format(it.value!!)}" })
+            }
+            _state.value.holo?.finance?.entries?.take(8)?.let { f ->
+                appendLine("【财务】" + f.joinToString(" ") { "${it.key}=${it.value ?: "暂无"}" })
+            }
+            val news = _state.value.holo?.news ?: emptyList()
+            if (news.isNotEmpty()) {
+                appendLine("【该股新闻】")
+                news.take(6).forEach { n ->
+                    appendLine("  · ${n["title"] ?: "无标题"}")
+                }
+            }
+            val boards = _state.value.boardsOf
+            if (boards.isNotEmpty()) {
+                appendLine("【板块】" + boards.mapNotNull { it["name"]?.toString() }.joinToString("、"))
+            }
         }
     }
 
@@ -528,8 +663,24 @@ class SkappViewModel : ViewModel() {
         viewModelScope.launch {
             _state.value = _state.value.copy(aiAnswerLoading = true, aiAnswer = null)
             val ctx = buildAiContext()
-            val out = GitCodeAiClient.askFree(q, ctx)
-            _state.value = _state.value.copy(aiAnswerLoading = false, aiAnswer = out)
+            val prompt = """你是 A 股数据分析助手。用户提问：$q
+
+以下是你可调用的**实时数据底稿**（app 刚从数据源拉到的真实值）：
+
+$ctx
+
+规则：
+- 只允许基于上面这些数据回答；数据里没有的就明说「未拉取到相关数据」
+- 结论要有依据，引用具体数字（如「量比 2.3」「本地引擎 71.2」）
+- 300 字内，直接回答，不要寒暄、不要免责声明"""
+            val r = AiRouter.askDeep(listOf("user" to prompt))
+            val out = if (r.text == null) r.text else "[via ${r.provider ?: "?"}${r.model?.let { " · $it" } ?: ""}]\n\n${r.text}"
+            _state.value = _state.value.copy(
+                aiAnswerLoading = false,
+                aiAnswer = out,
+                aiLastProvider = r.provider,
+                aiProviderStatus = AiRouter.statusLine(),
+            )
         }
     }
 
@@ -573,7 +724,11 @@ class SkappViewModel : ViewModel() {
     fun runScreen() {
         viewModelScope.launch {
             _state.value = _state.value.copy(screening = true, screenMsg = "正在实时拉取全市场行情…")
-            val res = runCatching { LocalScreener.screen() }.getOrElse {
+            val res = runCatching {
+                LocalScreener.screen(onProgress = { msg ->
+                    _state.value = _state.value.copy(screenMsg = msg)
+                })
+            }.getOrElse {
                 _state.value = _state.value.copy(
                     screening = false,
                     screenMsg = "实时选股失败：${it.message ?: "行情接口不可达"}",

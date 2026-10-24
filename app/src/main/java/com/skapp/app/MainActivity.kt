@@ -31,6 +31,10 @@ class MainActivity : ComponentActivity() {
             ) {
                 Surface(modifier = Modifier.fillMaxSize()) {
                     val vm: SkappViewModel = viewModel()
+                    // 恢复 GitCode / GitHub token 并初始化双源路由（AiRouter），只跑一次
+                    androidx.compose.runtime.LaunchedEffect(Unit) {
+                        vm.loadSavedToken(applicationContext)
+                    }
                     MainScreen(vm)
                 }
             }

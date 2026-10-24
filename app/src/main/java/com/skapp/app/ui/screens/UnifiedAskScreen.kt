@@ -170,6 +170,39 @@ private fun AiMode(vm: SkappViewModel, state: UiState) {
                 style = MaterialTheme.typography.bodySmall,
                 color = if (state.aiConfigured) Color(0xFF3FB950) else Color(0xFFD29922),
             )
+            Spacer(Modifier.height(10.dp))
+            HorizontalDivider()
+            Spacer(Modifier.height(6.dp))
+            Text("GitHub Models（备份源，GitCode 额度满/失败时自动接管）", fontWeight = FontWeight.SemiBold)
+            OutlinedTextField(
+                value = state.githubToken,
+                onValueChange = vm::setGithubToken,
+                label = { Text("GitHub token") },
+                placeholder = { Text("github.com → Settings → Personal access token") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+            )
+            Spacer(Modifier.height(4.dp))
+            Button(
+                onClick = { vm.saveGithubTokenNow() },
+                enabled = state.githubToken.isNotBlank(),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("保存 GitHub token")
+            }
+            Text(
+                if (state.githubConfigured) "已配置，可用" else "未配置",
+                style = MaterialTheme.typography.bodySmall,
+                color = if (state.githubConfigured) Color(0xFF3FB950) else Color(0xFFD29922),
+            )
+            if (state.aiProviderStatus.isNotBlank()) {
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    state.aiProviderStatus,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.Gray,
+                )
+            }
         }
     }
 
@@ -244,10 +277,10 @@ private fun AiMode(vm: SkappViewModel, state: UiState) {
         AiOutputBlock("AI 回答", it)
     }
 
-    if (!state.aiConfigured) {
+    if (!state.aiConfigured && !state.githubConfigured) {
         Card(colors = CardDefaults.cardColors()) {
             Text(
-                "提示：token 是一次性配置，app 会记住；拉取逻辑与站点 CI 的 ai_review / bull_bear_debate 同一套端点。",
+                "请在上方填 GitCode 或 GitHub token（至少一个）。GitCode 优先，额度满/失败自动切 GitHub Models。",
                 Modifier.padding(12.dp),
                 style = MaterialTheme.typography.bodySmall,
                 color = Color.Gray,

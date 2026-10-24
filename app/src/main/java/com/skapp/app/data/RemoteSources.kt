@@ -14,32 +14,22 @@ object RemoteSources {
     const val OWNER_A = "qwerzxcva"
     const val REPO_A = "stocks-ai-view"
 
-    /** C 仓：镜像 */
-    const val OWNER_C = "qwerzxcva"
-    const val REPO_C = "stocks-ai-view"
+    /** C 仓：真镜像（与 A 同内容，独立账号/独立 CI 2 分钟调度） */
+    const val OWNER_C = "jiegengxiangjianxue"
+    const val REPO_C = "stocks-ai-view-b"
 
-    /** 全市场代码表（qwerzxcva/skapp-data） */
-    const val OWNER_SYMBOLS = "qwerzxcva"
+    /** 全市场代码表（jiegengxiangjianxue/skapp-data，qwerzxcva 侧已并入删除） */
+    const val OWNER_SYMBOLS = "jiegengxiangjianxue"
     const val REPO_SYMBOLS = "skapp-data"
 
-    /** 个股分片仓（db-stocks-*）：stock.json 全史 K 线/技术面/财务 */
+    /** 个股分片仓（db-stocks-*）：stock.json 全史 K 线/技术面/财务
+     *  只留真实存在的分片仓；15/51/50/52/56/58（基金/可转债）与 81/83/89/90/92 远端无仓。 */
     val SHARD_REPOS = mapOf(
         "00" to "jiegengxiangjianxue1/db-stocks-a",
         "30" to "jiegengxiangjianxue2/db-stocks-b",
         "60" to "jiegengxiangjianxue2/db-stocks-c",
         "68" to "jiegengxiangjianxue3/db-stocks-d",
-        "15" to "jiegengxiangjianxue3/db-stocks-d",
-        "51" to "jiegengxiangjianxue3/db-stocks-d",
-        "50" to "jiegengxiangjianxue3/db-stocks-d",
-        "52" to "jiegengxiangjianxue3/db-stocks-d",
-        "56" to "jiegengxiangjianxue3/db-stocks-d",
-        "58" to "jiegengxiangjianxue3/db-stocks-d",
         "20" to "jiegengxiangjianxue3/db-stocks-d",
-        "81" to "jiegengxiangjianxue3/db-stocks-e",
-        "83" to "jiegengxiangjianxue3/db-stocks-e",
-        "89" to "jiegengxiangjianxue3/db-stocks-e",
-        "90" to "jiegengxiangjianxue3/db-stocks-e",
-        "92" to "jiegengxiangjianxue3/db-stocks-e",
     )
 
     /** 腾讯实时行情（app 自选股 30s 刷新用，与站点直连兜底同源） */

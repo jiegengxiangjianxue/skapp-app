@@ -83,9 +83,11 @@ object LocalScreener {
     /**
      * 实时选股：市场快照 → 预筛 → 逐只本地引擎 → 排序。
      */
-    suspend fun screen(c: Criteria = Criteria()): List<Screened> = coroutineScope {
+    suspend fun screen(c: Criteria = Criteria(), onProgress: (String) -> Unit = {}): List<Screened> = coroutineScope {
+        onProgress("正在实时拉取全市场行情…")
         val snap = marketSnapshot()
         if (snap.isEmpty()) return@coroutineScope emptyList()
+        onProgress("全市场快照 ${snap.size} 只，预筛中（涨幅/量比/非ST/主板）…")
 
         // 预筛（含主板前缀红线过滤，排除 300/301/688/北交所）
         val cands = snap.filter { m ->
@@ -99,6 +101,8 @@ object LocalScreener {
                 chg in c.minChgPct..c.maxChgPct && !st && (vr == null || vr >= c.minVolRatio)
         }.sortedByDescending { (it["mainNet"] as? Number)?.toDouble() ?: 0.0 }
             .take(c.maxCandidates)
+
+        onProgress("预筛命中 ${cands.size} 只，逐只拉 K 线 + 本地引擎计算…")
 
         // 逐只拉 K 线 + 本地引擎（并发 4，避免打满）
         val out = ArrayList<Screened>()
@@ -124,10 +128,15 @@ object LocalScreener {
                 }
             }.mapNotNull { runCatching { it.await() }.getOrNull() }
             out.addAll(results)
+            onProgress("本地引擎已分析 ${out.size}/${cands.size} 只…")
         }
 
-        out.filter { (it.engine?.composite ?: 0.0) >= c.minScore }
+        val scored = out.filter { (it.engine?.composite ?: 0.0) >= c.minScore }
             .sortedByDescending { it.engine?.composite ?: 0.0 }
+        if (scored.isNotEmpty()) return@coroutineScope scored
+        // 降级：评分达标的为 0 时不空屏，展示预筛池前 10 只（含 detailStatus/原因标注）
+        onProgress("评分达标 0 只，降级展示预筛池")
+        out.sortedByDescending { it.pctChg ?: 0.0 }.take(10)
     }
 }
 
