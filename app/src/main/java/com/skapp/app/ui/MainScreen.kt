@@ -30,6 +30,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.skapp.app.ui.screens.UnifiedAskScreen
+import com.skapp.app.ui.screens.ThemeScreen
 import com.skapp.app.ui.screens.BoardScreen
 import com.skapp.app.ui.screens.DecisionScreen
 import com.skapp.app.ui.screens.MarketScreen
@@ -58,6 +59,7 @@ fun MainScreen(vm: SkappViewModel) {
     val tabs = listOf(
         Tab("看板", Icons.Filled.Dashboard),
         Tab("推股", Icons.Filled.TrendingUp),
+        Tab("题材", Icons.Filled.Category),
         Tab("消息", Icons.Filled.Article),
         Tab("问答", Icons.Filled.QuestionAnswer),
     )
@@ -80,8 +82,9 @@ fun MainScreen(vm: SkappViewModel) {
             when (tab) {
                 0 -> BoardScreen(vm, state)
                 1 -> PicksScreen(vm, state)
-                2 -> NewsScreen(vm, state)
-                3 -> UnifiedAskScreen(vm, state)
+                2 -> ThemeScreen(vm, state)
+                3 -> NewsScreen(vm, state)
+                4 -> UnifiedAskScreen(vm, state)
             }
         }
 

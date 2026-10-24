@@ -144,6 +144,34 @@ fun BoardScreen(vm: SkappViewModel, state: UiState) {
             }
         }
 
+        // A 股指数（上证/深证/创业板/科创 50 等）
+        if (state.aShareIndices.isNotEmpty()) {
+            item { SectionTitle("A 股指数") }
+            items(state.aShareIndices, key = { "ash_" + it.hashCode() }) { g ->
+                val pct = (g["pctChg"] as? Number)?.toDouble()
+                val price = (g["price"] as? Number)?.toDouble()
+                Card(colors = CardDefaults.cardColors()) {
+                    Row(
+                        Modifier.fillMaxWidth().padding(12.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Text((g["name"] ?: g["code"] ?: "未知").toString(), fontWeight = FontWeight.Medium)
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Text(
+                                price?.let { String.format("%.2f", it) } ?: "—",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                            Text(
+                                pct?.let { String.format("%+.2f%%", it) } ?: "—",
+                                color = pctColor(pct),
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
         // 全球股市
         if (state.globalIndices.isNotEmpty()) {
             item { SectionTitle("全球股市") }
