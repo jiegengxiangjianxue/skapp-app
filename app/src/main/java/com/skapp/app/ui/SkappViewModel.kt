@@ -490,7 +490,7 @@ class SkappViewModel : ViewModel() {
             val merged = (cloud ?: StockDetail(code = code)).copy(
                 name = q?.name?.takeIf { it.isNotBlank() } ?: holo.holo?.get("name")?.toString()
                     ?: cloud?.name,
-                detail = cloud?.detail ?: bundleFromLocal(bars, q, holo),
+                detail = cloud?.detail ?: bundleFromLocal(code, bars, q, holo),
                 aiQa = qa ?: cloud?.aiQa,
             )
             _state.value = _state.value.copy(
@@ -752,7 +752,7 @@ $ctx
     }
 
     /** 用本地 K 线造一个 bundle 形状，供 UI 复用同一套渲染 */
-    private fun bundleFromLocal(bars: List<KBar>, q: Quote?, holo: HoloBundle? = null): BundleDetail? {
+    private suspend fun bundleFromLocal(code: String, bars: List<KBar>, q: Quote?, holo: HoloBundle? = null): BundleDetail? {
         if (bars.isEmpty() && holo == null) return null
         val f = TechnicalCalc.compute(bars)
         return BundleDetail(
