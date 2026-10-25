@@ -83,6 +83,8 @@ data class PickSignal(
     val price: Double? = null,
     val pctChg: Double? = null,
     val score: Double? = null,
+    val buyable: Boolean? = null,
+    val snapshotStatus: String? = null,
     val engine: String? = null,
     val why: List<String> = emptyList(),
     val detail: BundleDetail? = null,
@@ -113,9 +115,12 @@ data class MarketSnapshot(
 
 /** 消息面：移植站点 news_* 四个引擎产出 */
 data class NewsSnapshot(
+    val schemaVersion: String? = null,
+    val date: String? = null,
+    val n: Int? = null,
     val ts: String? = null,
     val digest: Map<String, Any?> = emptyMap(),
-    /** 统一新闻 schema：id/title/source/time/verdict/reason/stocks/status */
+    /** 统一新闻 schema：id/title/source/time/verdict/direction/reason/stocks/status/image */
     val items: List<Map<String, Any?>> = emptyList(),
     val themes: List<Map<String, Any?>> = emptyList(),
     val impacts: List<Map<String, Any?>> = emptyList(),

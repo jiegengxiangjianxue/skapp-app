@@ -120,7 +120,7 @@ fun DashboardScreen(vm: SkappViewModel, state: UiState) {
         }
 
         // ── 盘面解读（commentary）：每日总结正文 ──
-        item { CommentaryCard() }
+        item { CommentaryCard(state.summary) }
 
         // ── 主线（mainlines）：当前主线题材 ──
         item {
@@ -242,21 +242,6 @@ private fun numOf(v: Any?): Double? = when (v) {
     else -> null
 }
 
-/** 读远端文本（含 gzip 解压；raw 会按 gzip 返回，直接读流是乱码） */
-private fun readRemoteText(url: String): String? = try {
-    val conn = (java.net.URL(url).openConnection() as java.net.HttpURLConnection).apply {
-        connectTimeout = 20000; readTimeout = 20000
-        setRequestProperty("User-Agent", "Mozilla/5.0 (Android) skapp")
-    }
-    if (conn.responseCode != java.net.HttpURLConnection.HTTP_OK) { conn.disconnect(); null }
-    else {
-        val enc = conn.contentEncoding
-        val st = if (enc == "gzip" || enc == "x-gzip") java.util.zip.GZIPInputStream(conn.inputStream)
-                 else conn.inputStream
-        st.bufferedReader().use { it.readText() }.also { conn.disconnect() }
-    }
-} catch (e: Exception) { null }
-
 @Composable
 private fun KpiCard(label: String, value: String?, color: Color, modifier: Modifier = Modifier) {
     Card(modifier = modifier, colors = CardDefaults.cardColors()) {
@@ -269,13 +254,8 @@ private fun KpiCard(label: String, value: String?, color: Color, modifier: Modif
 }
 
 @Composable
-private fun CommentaryCard() {
-    var text by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(Unit) {
-        text = readRemoteText(com.skapp.app.data.RemoteSources.dailyBrief())
-            ?.let { runCatching { org.json.JSONObject(it).optString("text") }.getOrNull() }
-    }
-    val t = text ?: return
+private fun CommentaryCard(summary: Map<String, Any?>) {
+    val t = summary["text"]?.toString()?.takeIf { it.isNotBlank() } ?: return
     Card(colors = CardDefaults.cardColors()) {
         Column(Modifier.padding(12.dp)) {
             Text("盘面解读（盘后日报）", fontWeight = FontWeight.SemiBold,

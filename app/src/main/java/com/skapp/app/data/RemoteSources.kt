@@ -43,9 +43,9 @@ object RemoteSources {
     fun base(owner: String, repo: String, branch: String = "main"): String =
         "$RAW/$owner/$repo/$branch/data"
 
-    /** app 读取的四个文件（双 data 路径） */
+    /** app 读取 data 目录下的文件。base 已包含一个 data 段，不能重复追加。 */
     fun appFile(owner: String, repo: String, name: String): String =
-        "${base(owner, repo)}/data/$name"
+        "${base(owner, repo)}/$name"
 
     /** 静态 API */
     fun apiIndex(owner: String = OWNER_A, repo: String = REPO_A): String =

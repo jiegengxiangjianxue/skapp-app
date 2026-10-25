@@ -39,40 +39,11 @@ import org.json.JSONObject
  * 展示不编造：所有数值来自引擎实测（连板高度/20日涨幅/60日位置/板块时序）。
  */
 
-/** 读远端文本（含 gzip 解压）。raw.githubusercontent.com 会按 gzip 返回，
- *  HttpURLConnection 默认请求 gzip 但不自动解压，直接读流是乱码 → JSON 解析失败 → 页面空白。 */
-private fun readRemoteText(url: String): String? = try {
-    val conn = (java.net.URL(url).openConnection() as java.net.HttpURLConnection).apply {
-        connectTimeout = 20000; readTimeout = 20000
-        setRequestProperty("User-Agent", "Mozilla/5.0 (Android) skapp")
-    }
-    val code = conn.responseCode
-    if (code != java.net.HttpURLConnection.HTTP_OK) { conn.disconnect(); null }
-    else {
-        val enc = conn.contentEncoding
-        val stream = if (enc == "gzip" || enc == "x-gzip")
-            java.util.zip.GZIPInputStream(conn.inputStream) else conn.inputStream
-        val txt = stream.bufferedReader().use { it.readText() }
-        conn.disconnect()
-        txt
-    }
-} catch (e: Exception) { null }
-
-
 @Composable
 fun ThemeScreen(vm: SkappViewModel, state: UiState) {
-    var json by remember { mutableStateOf<JSONObject?>(null) }
-    var loading by remember { mutableStateOf(true) }
-    var failed by remember { mutableStateOf(false) }
-
-    LaunchedEffect(Unit) {
-        val txt = withContext(Dispatchers.IO) {
-            readRemoteText(com.skapp.app.data.RemoteSources.themeReport())
-        }
-        json = txt?.let { runCatching { JSONObject(it) }.getOrNull() }
-        if (json == null) failed = true
-        loading = false
-    }
+    val json = state.themeReport
+    val loading = state.loading && json == null
+    val failed = !loading && json == null
 
     Column(
         Modifier.fillMaxWidth()

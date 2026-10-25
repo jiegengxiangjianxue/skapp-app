@@ -195,8 +195,14 @@ object SkappApi {
                 "source" to (item["source"] ?: item["source_name"] ?: ""),
                 "time" to time,
                 "verdict" to (item["verdict"] ?: "insufficient"),
+                "direction" to (item["direction"] ?: item["sentiment"] ?: "insufficient"),
+                "positive_reason" to (item["positive_reason"] ?: item["reason_positive"] ?: item["positive"] ?: "insufficient"),
+                "negative_reason" to (item["negative_reason"] ?: item["reason_negative"] ?: item["negative"] ?: "insufficient"),
                 "reason" to (item["reason"] ?: item["analysis"] ?: "insufficient"),
                 "stocks" to stocks,
+                "codes" to (item["codes"] ?: stocks),
+                "image" to listOf("image", "img", "cover", "image_url", "images")
+                    .firstNotNullOfOrNull { key -> item[key] ?: item[key]?.let { listOf(it) } },
                 "status" to (item["status"] ?: "insufficient"),
             )
         }.filter { (it["title"] as? String)?.isNotBlank() == true }
@@ -205,6 +211,9 @@ object SkappApi {
                 if (id.isNotBlank()) id else "${item["title"]}|${item["time"] ?: ""}"
             }.take(50)
         NewsSnapshot(
+            schemaVersion = (o.opt("schema_version") ?: o.opt("schemaVersion"))?.toString(),
+            date = o.optString("date").takeIf { it.isNotEmpty() },
+            n = o.optIntOrNull("n") ?: items.size,
             ts = o.optString("ts").takeIf { it.isNotEmpty() },
             digest = o.optJSONObject("digest")?.toMap() ?: emptyMap(),
             items = items,
@@ -335,11 +344,22 @@ object SkappApi {
                 PickSignal(
                     code = code,
                     name = e.optString("name").takeIf { it.isNotEmpty() },
-                    imageUrl = listOf("img", "image", "imageUrl", "image_url", "cover")
-                        .firstNotNullOfOrNull { key -> e.optString(key).takeIf { it.startsWith("https://") || it.startsWith("http://") } },
+                    imageUrl = listOf("img", "image", "imageUrl", "image_url", "cover", "images")
+                        .asSequence().flatMap { key ->
+                            when (val v = e.opt(key)) {
+                                is JSONArray -> (0 until v.length()).asSequence().mapNotNull { v.optString(it).takeIf { s -> s.isNotBlank() } }
+                                else -> sequenceOf(e.optString(key))
+                            }
+                        }.firstOrNull { it.startsWith("https://") || it.startsWith("http://") },
                     price = e.optDoubleOrNull("price"),
                     pctChg = e.pctChg(),
                     score = e.optDoubleOrNull("score"),
+                    buyable = when {
+                        e.has("buyable") && !e.isNull("buyable") -> e.optBoolean("buyable")
+                        e.has("can_buy") && !e.isNull("can_buy") -> e.optBoolean("can_buy")
+                        else -> null
+                    },
+                    snapshotStatus = e.optString("status").takeIf { it.isNotBlank() },
                     engine = e.optString("engine").takeIf { it.isNotEmpty() },
                     why = e.optJSONArray("why")?.toStringList() ?: emptyList(),
                     detail = e.optJSONObject("detail")?.let { parseBundle(it) },

@@ -11,6 +11,15 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.layout.size
+import androidx.compose.ui.graphics.asImageBitmap
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import java.net.HttpURLConnection
+import java.net.URL
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Card
@@ -112,7 +121,12 @@ fun NewsScreen(vm: SkappViewModel, state: UiState) {
 private fun NewsCardWithCalc(n: NewsCalc, vm: SkappViewModel) {
     Card(colors = CardDefaults.cardColors()) {
         Column(Modifier.padding(12.dp)) {
-            // 标题
+            // 标题与远端图片；仅允许 HTTP(S)，失败显示占位。
+            n.imageUrl?.let { url ->
+                val image = rememberNewsImage(url)
+                if (image != null) Image(image.asImageBitmap(), n.newsTitle, Modifier.fillMaxWidth().height(120.dp))
+                else Text("图片不可用", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+            }
             Text(n.newsTitle, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
 
             // 来源 + 时间 + 情绪
@@ -138,6 +152,10 @@ private fun NewsCardWithCalc(n: NewsCalc, vm: SkappViewModel) {
                 Text(
                     if (n.verdict.isBlank() || n.verdict == "insufficient") "分析：insufficient" else n.verdict,
                     style = MaterialTheme.typography.bodySmall, color = sentiColor,
+                )
+                Text(
+                    "方向：${n.direction.ifBlank { "insufficient" }} · 正面：${n.positiveReason?.takeIf { it.isNotBlank() } ?: "insufficient"} · 负面：${n.negativeReason?.takeIf { it.isNotBlank() } ?: "insufficient"}",
+                    style = MaterialTheme.typography.bodySmall, color = Color.Gray,
                 )
                 Text(
                     "理由：${n.note?.takeIf { it.isNotBlank() } ?: "insufficient"}",
@@ -267,4 +285,22 @@ private fun signalColor(s: String?): Color = when (s) {
     "bullish" -> UP
     "bearish" -> DOWN
     else -> Color.Gray
+}
+
+@Composable
+private fun rememberNewsImage(url: String): Bitmap? {
+    if (!(url.startsWith("https://") || url.startsWith("http://"))) return null
+    var bitmap by remember(url) { mutableStateOf<Bitmap?>(null) }
+    LaunchedEffect(url) {
+        bitmap = withContext(Dispatchers.IO) {
+            runCatching {
+                val c = URL(url).openConnection() as HttpURLConnection
+                c.connectTimeout = 10000
+                c.readTimeout = 10000
+                if (c.responseCode != HttpURLConnection.HTTP_OK) null
+                else c.inputStream.use { BitmapFactory.decodeStream(it) }.also { c.disconnect() }
+            }.getOrNull()
+        }
+    }
+    return bitmap
 }

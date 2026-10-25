@@ -26,6 +26,10 @@ data class NewsCalc(
     val impactCodes: List<String> = emptyList(),
     /** 利好质量判定：真利好 / 利好·防追高套人 / 利空 / 中性 */
     val verdict: String = "",
+    val direction: String = "insufficient",
+    val positiveReason: String? = null,
+    val negativeReason: String? = null,
+    val imageUrl: String? = null,
     val status: String = "ok",       // ok | no_stock | insufficient
     val note: String? = null,
 )
@@ -128,6 +132,10 @@ object NewsCalcEngine {
                         sentimentHits = hits,
                         impactCodes = storedCodes,
                         verdict = storedVerdict ?: verdictOf(senti, hits, title, null),
+                        direction = item["direction"]?.toString()?.takeIf { it.isNotBlank() } ?: senti,
+                        positiveReason = item["positive_reason"]?.toString(),
+                        negativeReason = item["negative_reason"]?.toString(),
+                        imageUrl = imageUrlOf(item),
                         status = "no_stock",
                         note = "标题未提及具体股票，无个股计算",
                     )
@@ -170,9 +178,25 @@ object NewsCalcEngine {
                     sentimentHits = hits,
                     impactCodes = storedCodes,
                     verdict = storedVerdict ?: verdictOf(senti, hits, title, stocks.mapNotNull { it.pctChg }.maxOrNull()),
+                    direction = item["direction"]?.toString()?.takeIf { it.isNotBlank() } ?: senti,
+                    positiveReason = item["positive_reason"]?.toString(),
+                    negativeReason = item["negative_reason"]?.toString(),
+                    imageUrl = imageUrlOf(item),
                     status = "ok",
                 )
             }
         }.mapNotNull { runCatching { it.await() }.getOrNull() }
+    }
+
+    private fun imageUrlOf(item: Map<String, Any?>): String? {
+        val candidates = listOf("image", "img", "cover", "image_url", "images")
+        return candidates.asSequence().flatMap { key ->
+            val value = item[key]
+            when (value) {
+                is String -> sequenceOf(value)
+                is List<*> -> value.asSequence().mapNotNull { it?.toString() }
+                else -> emptySequence()
+            }
+        }.firstOrNull { it.startsWith("https://") || it.startsWith("http://") }
     }
 }

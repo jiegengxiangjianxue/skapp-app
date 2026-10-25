@@ -244,6 +244,11 @@ object SiteBoardClient {
         out
     }
 
+    suspend fun themeReport(): JSONObject? = withContext(Dispatchers.IO) {
+        getJson("${RemoteSources.base(RemoteSources.OWNER_A, RemoteSources.REPO_A)}/theme_report.json")
+            ?: getJson("${RemoteSources.base(RemoteSources.OWNER_C, RemoteSources.REPO_C)}/theme_report.json")
+    }
+
     suspend fun summary(): Map<String, Any?> = withContext(Dispatchers.IO) {
         val out = LinkedHashMap<String, Any?>()
         val brief = getJson("$API/daily_brief.json")

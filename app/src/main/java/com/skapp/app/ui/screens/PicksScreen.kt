@@ -108,10 +108,19 @@ fun PicksScreen(vm: SkappViewModel, state: UiState) {
 
         // ── 本地扫描 Tab（0-3：设备直连行情 + 本地引擎，非 CI 快照）──
         if (tab <= 3) {
+            val eligible = state.screened.filter { sc ->
+                tab == 3 || (
+                    sc.detailStatus == "ok" &&
+                        sc.buyable == true &&
+                        isMainBoardPick(sc.code) &&
+                        (sc.pctChg ?: Double.POSITIVE_INFINITY) < 9.6
+                    )
+            }
             val sorted = when (tab) {
-                1 -> state.screened.sortedByDescending { resonanceOf(it) }
-                3 -> state.screened.sortedByDescending { it.pctChg ?: 0.0 }
-                else -> state.screened
+                1 -> eligible.sortedByDescending { resonanceOf(it) }
+                3 -> state.screened.filter { isMainBoardPick(it.code) }
+                    .sortedByDescending { it.pctChg ?: 0.0 }
+                else -> eligible
             }
             val hasRun = state.screened.isNotEmpty() || state.screenMsg != null || state.screening
             Column(Modifier.fillMaxWidth().padding(12.dp)) {

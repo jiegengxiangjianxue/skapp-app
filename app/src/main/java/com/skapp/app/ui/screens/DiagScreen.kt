@@ -45,6 +45,7 @@ fun DiagScreen(vm: SkappViewModel, state: UiState) {
     var running by remember { mutableStateOf(true) }
 
     LaunchedEffect(Unit) {
+        if (state.registryStats.isEmpty()) vm.loadAllSources()
         rows = withContext(Dispatchers.IO) { probe() }
         running = false
     }
@@ -54,9 +55,10 @@ fun DiagScreen(vm: SkappViewModel, state: UiState) {
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Text("数据源自检", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        val stats = state.registryStats
         val registry = rows.firstOrNull { it.first == "源注册表" }?.second
         Text(
-            if (running) "正在逐个探测…" else "已检查 ${rows.count { it.second.startsWith("OK") }} 成功 / ${rows.count { it.second.startsWith("FAIL") }} 失败 / ${rows.count { it.second.startsWith("UNKNOWN") }} unknown · ${registry ?: "源总数未知"}",
+            if (running) "正在逐个探测…" else "端点检查：${rows.count { it.second.startsWith("OK") }} 成功 / ${rows.count { it.second.startsWith("FAIL") }} 失败 · registry total ${stats["total"] ?: "unknown"} / tested ${stats["tested"] ?: "unknown"} / success ${stats["success"] ?: "unknown"} / failure ${stats["failure"] ?: "unknown"} / stale ${stats["stale"] ?: "unknown"} / unknown ${stats["unknown"] ?: "unknown"} · ${registry ?: "registry unknown"}",
             style = MaterialTheme.typography.bodySmall, color = Color.Gray,
         )
         rows.forEach { (name, result) ->
@@ -108,7 +110,28 @@ private fun probe(): List<Pair<String, String>> {
     out += "源注册表" to if (registryCode == "200") {
         val root = runCatching { JSONObject(registryBody) }.getOrNull()
         val sources = root?.optJSONArray("sources") ?: root?.optJSONArray("registry")
-        if (sources == null) "UNKNOWN：注册表未提供" else "已知${sources.length()}源"
+        if (sources == null) "UNKNOWN：注册表未提供" else {
+            var tested = 0
+            var success = 0
+            var failure = 0
+            var stale = 0
+            var unknown = 0
+            for (i in 0 until sources.length()) {
+                val source = sources.optJSONObject(i) ?: run { unknown++; continue }
+                val status = (source.optString("status") + " " + source.optString("result")).lowercase()
+                when {
+                    status.contains("success") || status.contains("ok") || status.contains("healthy") -> { tested++; success++ }
+                    status.contains("failure") || status.contains("failed") || status.contains("error") -> { tested++; failure++ }
+                    status.contains("stale") -> { tested++; stale++ }
+                    else -> unknown++
+                }
+                val endpoint = source.optString("endpoint").ifBlank {
+                    source.optString("url").ifBlank { source.optString("source_url") }
+                }
+                if (endpoint.isNotBlank()) out += "registry endpoint" to "UNKNOWN $endpoint"
+            }
+            "total=${sources.length()} tested=$tested success=$success failure=$failure stale=$stale unknown=$unknown"
+        }
     } else "UNKNOWN：注册表不可达"
 
     // 代码表（本次故障点）

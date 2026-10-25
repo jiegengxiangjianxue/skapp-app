@@ -47,6 +47,8 @@ object LocalScreener {
         val engine: LocalEngineResult?,
         val detailStatus: String,     // ok | insufficient
         val reason: String? = null,
+        val buyable: Boolean? = null,
+        val snapshotStatus: String = "live",
     )
 
     /** 全市场实时行情快照（东财 clist） */
@@ -146,6 +148,9 @@ object LocalScreener {
                         engine = eng,
                         detailStatus = if (eng != null) "ok" else "insufficient",
                         reason = if (eng == null) "K线不足，无法本地计算" else null,
+                        buyable = ((m["price"] as? Number)?.toDouble()?.let { it > 0.0 } == true) &&
+                            ((m["pctChg"] as? Number)?.toDouble() ?: Double.POSITIVE_INFINITY) < c.maxChgPct,
+                        snapshotStatus = "live",
                     )
                 }
             }.mapNotNull { runCatching { it.await() }.getOrNull() }
@@ -160,12 +165,15 @@ object LocalScreener {
             // 共振页返回全部分析结果（含未达标），由 UI 自行排序。
             "all" -> return@coroutineScope out.sortedByDescending { it.engine?.composite ?: (it.pctChg ?: 0.0) }
         }
-        val scored = out.filter { (it.engine?.composite ?: 0.0) >= c.minScore }
-            .sortedByDescending { it.engine?.composite ?: 0.0 }
+        val scored = out.filter {
+            it.detailStatus == "ok" && it.engine?.composite != null &&
+                it.engine.composite >= c.minScore && it.buyable == true &&
+                (it.pctChg ?: Double.POSITIVE_INFINITY) < c.maxChgPct
+        }.sortedByDescending { it.engine?.composite ?: 0.0 }
         if (scored.isNotEmpty()) return@coroutineScope scored
-        // 降级：评分达标的为 0 时不空屏，展示预筛池前 10 只（含 detailStatus/原因标注）
-        onProgress("评分达标 0 只，降级展示预筛池")
-        out.sortedByDescending { it.pctChg ?: 0.0 }.take(10)
+        // 评分不足时只展示可买且有可用本地引擎的实时结果，不把 insufficient 伪装成推荐。
+        onProgress("评分达标 0 只，暂无可买推荐（数据不足或过滤涨停）")
+        emptyList()
     }
 }
 

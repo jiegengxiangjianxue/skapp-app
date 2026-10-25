@@ -52,6 +52,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import org.json.JSONObject
 
 /** 自选股：SharedPreferences 持久化 + Compose 可观察，支持增删 */
 object Watchlist {
@@ -180,6 +181,10 @@ data class UiState(
     val board: Map<String, Any?> = emptyMap(),
     /** 实时总结 */
     val summary: Map<String, Any?> = emptyMap(),
+    /** 题材报告，优先 theme_report，旧热点只作页面显式 fallback。 */
+    val themeReport: JSONObject? = null,
+    /** registry 健康度；远端不可达时字段为空，页面显示 unknown。 */
+    val registryStats: Map<String, Any?> = emptyMap(),
 )
 
 class SkappViewModel : ViewModel() {
@@ -264,6 +269,7 @@ class SkappViewModel : ViewModel() {
             val poolsD = async { SiteBoardClient.pools() }
             val boardD = async { SiteBoardClient.board() }
             val summaryD = async { SiteBoardClient.summary() }
+            val themeD = async { SiteBoardClient.themeReport() }
 
             val symbols = symbolsD.await()
             val names = namesD.await()
@@ -278,6 +284,7 @@ class SkappViewModel : ViewModel() {
                 pools = poolsD.await(),
                 board = boardD.await(),
                 summary = summaryD.await(),
+                themeReport = themeD.await(),
                 symbols = symbols,
             )
             loadAllSources()
@@ -337,14 +344,43 @@ class SkappViewModel : ViewModel() {
     fun loadAllSources() {
         viewModelScope.launch {
             try {
-                val j = allSources.fetch() ?: return@launch
+                val j = allSources.fetch() ?: run {
+                    _state.value = _state.value.copy(registryStats = mapOf("status" to "unknown"))
+                    return@launch
+                }
                 _state.value = _state.value.copy(
                     allSourcesSummary = allSources.summaryLine(j),
                     allSourcesQuotes = allSources.parseQuotes(j),
+                    registryStats = registryStats(j),
                 )
             } catch (_: Exception) {
+                _state.value = _state.value.copy(registryStats = mapOf("status" to "unknown"))
             }
         }
+    }
+
+    private fun registryStats(root: JSONObject): Map<String, Any?> {
+        val registry = root.optJSONArray("sources") ?: root.optJSONArray("registry")
+            ?: return mapOf("status" to "unknown")
+        var tested = 0
+        var success = 0
+        var failure = 0
+        var stale = 0
+        var unknown = 0
+        for (i in 0 until registry.length()) {
+            val item = registry.optJSONObject(i) ?: run { unknown++; continue }
+            val status = item.optString("status").lowercase()
+            val result = item.optString("result").lowercase()
+            tested += if (status.isNotBlank() || result.isNotBlank()) 1 else 0
+            when {
+                status in setOf("success", "ok", "healthy") || result in setOf("success", "ok", "healthy") -> success++
+                status in setOf("failure", "failed", "error") || result in setOf("failure", "failed", "error") -> failure++
+                status == "stale" || result == "stale" -> stale++
+                else -> unknown++
+            }
+        }
+        return mapOf("status" to "ok", "total" to registry.length(), "tested" to tested,
+            "success" to success, "failure" to failure, "stale" to stale, "unknown" to unknown)
     }
 
     /** 行情刷新：只在 A 股交易时段（含竞价）自动刷新，休市时停表 */
@@ -583,6 +619,10 @@ class SkappViewModel : ViewModel() {
                     source = calc.source ?: source?.get("source")?.toString()?.takeIf { it.isNotBlank() },
                     ts = calc.ts ?: source?.get("time")?.toString(),
                     verdict = source?.get("verdict")?.toString()?.takeIf { it.isNotBlank() && it != "insufficient" } ?: calc.verdict,
+                    direction = source?.get("direction")?.toString()?.takeIf { it.isNotBlank() && it != "insufficient" } ?: calc.direction,
+                    positiveReason = source?.get("positive_reason")?.toString()?.takeIf { it.isNotBlank() && it != "insufficient" } ?: calc.positiveReason,
+                    negativeReason = source?.get("negative_reason")?.toString()?.takeIf { it.isNotBlank() && it != "insufficient" } ?: calc.negativeReason,
+                    imageUrl = source?.get("image")?.toString()?.takeIf { it.startsWith("https://") || it.startsWith("http://") } ?: calc.imageUrl,
                     note = source?.get("reason")?.toString()?.takeIf { it.isNotBlank() && it != "insufficient" } ?: calc.note,
                 )
             }
