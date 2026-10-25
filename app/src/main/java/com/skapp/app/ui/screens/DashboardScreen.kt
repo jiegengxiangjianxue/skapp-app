@@ -340,7 +340,7 @@ private fun MarketStateCard(ms: com.skapp.app.data.MarketState) {
         Column(Modifier.padding(12.dp)) {
             Text("市场状态机", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
             Text(
-                "${ms.mode} · ${ms.note}",
+                "${ms.state} · E=${String.format("%.1f", ms.E)} · agreement=${String.format("%.0f", ms.agreement * 100)}%",
                 style = MaterialTheme.typography.bodySmall, color = Color.Gray,
             )
         }
