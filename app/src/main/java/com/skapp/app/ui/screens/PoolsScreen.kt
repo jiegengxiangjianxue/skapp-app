@@ -37,7 +37,24 @@ import com.skapp.app.ui.UiState
 @Composable
 fun PoolsScreen(vm: SkappViewModel, state: UiState) {
     var tab by remember { mutableStateOf(0) }
-    val pools = state.pools
+    val pools = remember(state.pools) {
+        val merged = state.pools
+            .filterNot { it.id in setOf("composite", "moneyflow") }
+            .map { pool ->
+                when (pool.id) {
+                    "ai" -> pool.copy(id = "recommend", name = "推荐池", subtitle = "推荐池 · AI 合并")
+                    "ban" -> pool.copy(id = "limitup", name = "涨停池", subtitle = "涨停池 · 打板合并")
+                    else -> pool
+                }
+            }
+        merged.groupBy { it.id }.values.map { group ->
+            val first = group.first()
+            if (group.size == 1) first else first.copy(
+                items = group.flatMap { it.items }.distinctBy { normalizedPoolKey(it) },
+                subtitle = listOfNotNull(first.subtitle, "合并 ${group.size} 个来源").joinToString(" · ")
+            )
+        }
+    }
     val current = pools.getOrNull(tab.coerceAtMost((pools.size - 1).coerceAtLeast(0)))
 
     LazyColumn(
@@ -131,10 +148,16 @@ fun PoolsScreen(vm: SkappViewModel, state: UiState) {
         }
 
         val visibleItems = when (pool.id) {
-            "good", "ai", "cycle", "low", "composite" -> pool.items.filter(::isMainBoardCandidate)
+            "good", "recommend", "cycle", "low" -> pool.items.filter(::isMainBoardCandidate)
             else -> pool.items
+        }.distinctBy { normalizedPoolKey(it) }
+        if (visibleItems.isEmpty()) {
+            item {
+                Text("暂无数据：该池没有符合条件的条目。", Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+            }
         }
-        items(visibleItems, key = { pool.id + "_" + it.code }) { item ->
+        items(visibleItems, key = { pool.id + "_" + normalizedPoolKey(it) }) { item ->
             PoolRow(item) { if (isStockCode(item.code)) vm.openDetail(item.code) }
         }
     }
@@ -195,6 +218,13 @@ private fun PoolRow(item: SiteBoardClient.PoolItem, onClick: () -> Unit) {
 
 private val HIDDEN_FIELDS = setOf("code", "name", "symbol", "s", "n", "stock_name", "board_name", "sector_code",
     "title", "score", "composite", "strength", "total_score", "price", "close", "p", "pctChg", "chg_pct", "pct", "chg", "ret_pct")
+
+private fun normalizedPoolKey(item: SiteBoardClient.PoolItem): String {
+    val code = item.code.trim().lowercase(java.util.Locale.ROOT)
+        .removePrefix("sh").removePrefix("sz").removePrefix("bj")
+    return if (code.matches(Regex("\\d{6}"))) "code:$code"
+    else "name:${item.name.orEmpty().trim().lowercase(java.util.Locale.ROOT)}"
+}
 
 private fun isStockCode(code: String): Boolean = code.matches(Regex("(?i)^(sh|sz|bj)?\\d{6}$"))
 

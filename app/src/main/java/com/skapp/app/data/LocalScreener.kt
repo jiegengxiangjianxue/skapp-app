@@ -45,6 +45,9 @@ object LocalScreener {
         val pe: Double?,
         val mv: Double?,
         val engine: LocalEngineResult?,
+        val centralScore: Double? = engine?.centralScore ?: engine?.composite,
+        val resonanceRatio: Double? = engine?.resonanceRatio,
+        val centralSummary: String? = engine?.summary,
         val detailStatus: String,     // ok | insufficient
         val reason: String? = null,
         val buyable: Boolean? = null,
@@ -163,13 +166,15 @@ object LocalScreener {
             "limitup" -> return@coroutineScope out.filter { (it.pctChg ?: 0.0) >= 9.5 }
                 .sortedByDescending { it.pctChg ?: 0.0 }
             // 共振页返回全部分析结果（含未达标），由 UI 自行排序。
-            "all" -> return@coroutineScope out.sortedByDescending { it.engine?.composite ?: (it.pctChg ?: 0.0) }
+            "all" -> return@coroutineScope out.sortedByDescending { it.centralScore ?: (it.pctChg ?: 0.0) }
         }
         val scored = out.filter {
-            it.detailStatus == "ok" && it.engine?.composite != null &&
-                it.engine.composite >= c.minScore && it.buyable == true &&
-                (it.pctChg ?: Double.POSITIVE_INFINITY) < c.maxChgPct
-        }.sortedByDescending { it.engine?.composite ?: 0.0 }
+            it.detailStatus == "ok" && it.centralScore != null &&
+                it.centralScore >= c.minScore && it.buyable == true &&
+                (it.pctChg ?: Double.POSITIVE_INFINITY) < c.maxChgPct &&
+                // 普通推荐不接受涨停扫描结果，即使上游误标了可买。
+                (it.pctChg ?: Double.POSITIVE_INFINITY) < 9.5
+        }.sortedByDescending { it.centralScore ?: 0.0 }
         if (scored.isNotEmpty()) return@coroutineScope scored
         // 评分不足时只展示可买且有可用本地引擎的实时结果，不把 insufficient 伪装成推荐。
         onProgress("评分达标 0 只，暂无可买推荐（数据不足或过滤涨停）")

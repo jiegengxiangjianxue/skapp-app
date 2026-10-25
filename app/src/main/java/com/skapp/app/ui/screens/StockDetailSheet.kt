@@ -256,31 +256,36 @@ fun StockDetailSheet(vm: SkappViewModel, state: UiState) {
             }
         }
 
-        // ── 本地多引擎评分 ──
+        // ── 中枢引擎总结与多引擎明细 ──
         val eng = state.localEngine
         Card(colors = CardDefaults.cardColors()) {
-            Column(Modifier.padding(12.dp)) {
+            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
                 Row(
                     Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
-                    Text("本地引擎评分（12 引擎）", fontWeight = FontWeight.SemiBold)
-                    eng?.composite?.let {
-                        Text(
-                            "综合 ${String.format("%.1f", it)}",
-                            fontWeight = FontWeight.Bold,
-                            color = scoreColor(it),
-                        )
-                    }
+                    Text("中枢引擎", fontWeight = FontWeight.SemiBold)
+                    Text(
+                        state.centralEngineScore?.let { "中枢综合 ${String.format("%.1f", it)}" }
+                            ?: eng?.centralScore?.let { "中枢综合 ${String.format("%.1f", it)}" }
+                            ?: eng?.weightedComposite?.let { "中枢综合 ${String.format("%.1f", it)}" }
+                            ?: eng?.composite?.let { "中枢综合 ${String.format("%.1f", it)}" }
+                            ?: "insufficient",
+                        fontWeight = FontWeight.Bold,
+                        color = state.centralEngineScore?.let(::scoreColor)
+                            ?: (eng?.centralScore ?: eng?.weightedComposite ?: eng?.composite)?.let(::scoreColor) ?: Color.Gray,
+                    )
                 }
+                Text("中枢总结：${state.centralEngineSummary?.takeIf { it.isNotBlank() } ?: "暂无数据：中枢总结未返回。"}",
+                    style = MaterialTheme.typography.bodySmall)
+                Text("共振：${state.centralEngineResonance?.let { String.format("%.0f%%", it * 100) } ?: "insufficient"} · 状态：${state.centralEngineStatus}",
+                    style = MaterialTheme.typography.bodySmall, color = Color.Gray)
                 Text(
-                    "在设备上直接计算，不依赖服务端；基于 ${eng?.barsUsed ?: 0} 根日 K，" +
-                        "有效引擎 ${eng?.nValid ?: 0}/12",
+                    "基于 ${eng?.barsUsed ?: 0} 根日 K，有效引擎 ${eng?.nValid ?: 0}/12",
                     style = MaterialTheme.typography.bodySmall,
                     color = Color.Gray,
                 )
                 HorizontalDivider()
-                Spacer(Modifier.height(6.dp))
                 if (eng == null || eng.engines.isEmpty()) {
                     Text("暂无数据：K 线不足，无法计算指标。", color = Color.Gray)
                 } else {
@@ -301,14 +306,15 @@ fun StockDetailSheet(vm: SkappViewModel, state: UiState) {
         // ── AI 复盘按钮 ──
         Card(colors = CardDefaults.cardColors()) {
             Column(Modifier.padding(12.dp)) {
-                Text("GitCode AI 复盘", fontWeight = FontWeight.SemiBold)
+                val aiAvailable = state.aiConfigured || state.githubConfigured
+                Text("AI 二次总结", fontWeight = FontWeight.SemiBold)
                 Text(
-                    "把本页全部真实数据（行情/12引擎/29因子/holo/财务/新闻/板块）给 AI 做综合复盘。",
+                    "中枢引擎先生成底稿；配置 AI 凭据后再基于本页真实数据进行二次总结。",
                     style = MaterialTheme.typography.bodySmall,
                     color = Color.Gray,
                 )
                 Spacer(Modifier.height(6.dp))
-                if (state.aiConfigured) {
+                if (aiAvailable) {
                     Button(
                         onClick = { vm.aiReviewCurrent() },
                         enabled = !state.aiReviewLoading,
@@ -326,8 +332,8 @@ fun StockDetailSheet(vm: SkappViewModel, state: UiState) {
                     }
                 } else {
                     Text(
-                        "未配置 GitCode token（在「AI」Tab 填入即可用）",
-                        color = Color(0xFFD29922),
+                        state.centralEngineSummary ?: "中枢引擎：暂无有效数据。",
+                        color = Color.Gray,
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }

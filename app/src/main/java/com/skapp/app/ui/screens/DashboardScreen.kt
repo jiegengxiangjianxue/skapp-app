@@ -118,6 +118,10 @@ fun DashboardScreen(vm: SkappViewModel, state: UiState) {
         // 盘面解读只保留看板这一处；实时总结复用同一份 summary，不再重复展示正文。
         item { CommentaryCard(state.summary) }
 
+        item {
+            DashboardNewsSection(state, vm)
+        }
+
         // ── 个股查（panel-stock）：搜索入口 ──
         item { StockSearchCard(vm, state) }
 
@@ -184,10 +188,10 @@ private fun KpiCard(label: String, value: String?, color: Color, modifier: Modif
 
 @Composable
 private fun CommentaryCard(summary: Map<String, Any?>) {
-    val t = summary["text"]?.toString()?.takeIf { it.isNotBlank() } ?: return
+    val t = (summary["premarket"] ?: summary["text"])?.toString()?.takeIf { it.isNotBlank() } ?: return
     Card(colors = CardDefaults.cardColors()) {
         Column(Modifier.padding(12.dp)) {
-            Text("盘面解读（盘后日报）", fontWeight = FontWeight.SemiBold,
+            Text("盘前分析", fontWeight = FontWeight.SemiBold,
                 style = MaterialTheme.typography.bodySmall)
             Spacer(Modifier.height(4.dp))
             t.split("\n").map { it.trim() }
@@ -199,6 +203,50 @@ private fun CommentaryCard(summary: Map<String, Any?>) {
                 }
         }
     }
+}
+
+@Composable
+private fun DashboardNewsSection(state: UiState, vm: SkappViewModel) {
+    val rows = state.news.items.take(8)
+    Card(colors = CardDefaults.cardColors()) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+            Text("实时异动", fontWeight = FontWeight.SemiBold)
+            Text("盘前分析后的实时消息异动；板块和涨停数据在多池选股查看。",
+                style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+            if (rows.isEmpty() && state.newsCalcs.isEmpty()) {
+                Text("暂无数据：实时消息异动尚未返回。", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+            } else if (rows.isNotEmpty()) {
+                rows.forEach { row ->
+                    val title = (row["title"] ?: row["newsTitle"] ?: row["content"] ?: "暂无标题").toString()
+                    val meta = listOfNotNull(row["source"]?.toString(), row["time"]?.toString(), row["verdict"]?.toString())
+                        .filter { it.isNotBlank() }.joinToString(" · ")
+                    Text(title, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                    if (meta.isNotBlank()) Text(meta, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                    extractNewsCodes(row).take(5).forEach { code ->
+                        Text("影响个股：$code", style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.clickable { vm.openDetail(code) }.padding(vertical = 2.dp))
+                    }
+                }
+            } else {
+                Text("${state.newsCalcs.size} 条实时异动已计算，原始消息正文暂无。",
+                    style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+            }
+        }
+    }
+}
+
+private fun extractNewsCodes(row: Map<String, Any?>): List<String> {
+    val raw = row["codes"] ?: row["impactCodes"] ?: row["affected_stocks"] ?: row["stocks"] ?: return emptyList()
+    return when (raw) {
+        is List<*> -> raw.mapNotNull { value ->
+            when (value) {
+                is Map<*, *> -> (value["code"] ?: value["symbol"] ?: value["stock_code"])?.toString()
+                else -> value?.toString()
+            }
+        }
+        else -> listOf(raw.toString())
+    }.map { it.trim() }.filter { it.isNotBlank() }.distinct()
 }
 
 @Composable

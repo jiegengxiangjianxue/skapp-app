@@ -93,6 +93,15 @@ object RemoteSources {
     fun latest(owner: String = OWNER_A, repo: String = REPO_A): String =
         appFile(owner, repo, "latest.json")
 
+    fun trendStrength(owner: String = OWNER_A, repo: String = REPO_A): String =
+        appFile(owner, repo, "trend_strength.json")
+
+    fun enrich(owner: String = OWNER_A, repo: String = REPO_A): String =
+        appFile(owner, repo, "enrich.json")
+
+    fun bullBearDebate(owner: String = OWNER_A, repo: String = REPO_A): String =
+        appFile(owner, repo, "bull_bear_debate.json")
+
     /** 板块: 行业/概念/板块池/成分股(移植站点 sector 面板) */
     fun apiSectors(owner: String = OWNER_A, repo: String = REPO_A): String =
         "${base(owner, repo)}/api/sectors.json"

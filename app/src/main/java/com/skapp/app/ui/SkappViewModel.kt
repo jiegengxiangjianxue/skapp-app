@@ -47,7 +47,6 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.delay
@@ -136,6 +135,11 @@ data class UiState(
     val aShareIndices: List<Map<String, Any?>> = emptyList(),
     val globalIndices: List<Map<String, Any?>> = emptyList(),
     val localEngine: LocalEngineResult? = null,
+    /** 当前详情的中枢引擎总结；无凭据时直接展示此结果。 */
+    val centralEngineSummary: String? = null,
+    val centralEngineScore: Double? = null,
+    val centralEngineResonance: Double? = null,
+    val centralEngineStatus: String = "insufficient",
     val detailAdjust: String = "qfq",
     val fundFlow: List<Map<String, Any?>> = emptyList(),
     val boardsOf: List<Map<String, Any?>> = emptyList(),
@@ -281,25 +285,25 @@ class SkappViewModel : ViewModel() {
         viewModelScope.launch {
             _state.value = _state.value.copy(loading = true, error = null)
             val namesD = async {
-                SkappApi.fetchStockNames().also { names ->
+                requestResult { SkappApi.fetchStockNames() }.getOrDefault(emptyMap()).also { names ->
                     stockNames = names
                     search(searchQuery)
                 }
             }
             val symbolsD = async {
-                SkappApi.fetchSymbols().also { symbols ->
+                requestResult { SkappApi.fetchSymbols() }.getOrDefault(emptyList()).also { symbols ->
                     _state.value = _state.value.copy(symbols = symbols)
                     search(searchQuery)
                 }
             }
-            val picksD = async { SkappApi.fetchTodayPicks() }
-            val decisionD = async { SkappApi.fetchDecision() }
-            val marketD = async { SkappApi.fetchMarket() }
-            val newsD = async { SkappApi.fetchNews() }
-            val sectorsD = async { SkappApi.fetchSectors() }
-            val poolsD = async { SiteBoardClient.pools() }
-            val boardD = async { SiteBoardClient.board() }
-            val themeD = async { SiteBoardClient.themeReport() }
+            val picksD = async { requestResult { SkappApi.fetchTodayPicks() }.getOrDefault(TodayPicks()) }
+            val decisionD = async { requestResult { SkappApi.fetchDecision() }.getOrDefault(Decision()) }
+            val marketD = async { requestResult { SkappApi.fetchMarket() }.getOrDefault(MarketSnapshot()) }
+            val newsD = async { requestResult { SkappApi.fetchNews() }.getOrDefault(NewsSnapshot()) }
+            val sectorsD = async { requestResult { SkappApi.fetchSectors() }.getOrDefault(SectorsSnapshot()) }
+            val poolsD = async { requestResult { SiteBoardClient.pools() }.getOrDefault(emptyList()) }
+            val boardD = async { requestResult { SiteBoardClient.board() }.getOrDefault(emptyMap()) }
+            val themeD = async { requestResult { SiteBoardClient.themeReport() }.getOrNull() }
 
             val symbols = symbolsD.await()
             val names = namesD.await()
@@ -316,6 +320,9 @@ class SkappViewModel : ViewModel() {
                 themeReport = themeD.await(),
                 symbols = symbols,
             )
+            // 首屏预热消息计算与实时总结，失败时保留已有快照并写入明确状态。
+            loadNewsCalcs()
+            loadSummary()
             loadAllSources()
             loadBanProb()
             refreshQuotes()
@@ -536,7 +543,7 @@ class SkappViewModel : ViewModel() {
     }
 
     /**
-     * 打开个股详情：stocks-holo 全量 + 实时行情 + 本地引擎（引擎吃 holo/kline/technical）。
+     * 打开个股详情：stocks-holo 全量 + 实时行情 + 中枢引擎（引擎吃 holo/kline/technical）。
      * 缓存优先：重复点同一只股票且复权/周期未变则不重新拉。
      */
     /** 切换复权方式：已选中则忽略 */
@@ -563,6 +570,10 @@ class SkappViewModel : ViewModel() {
                 kPeriod = KPeriod.DAY,
                 holo = null,
                 localEngine = null,
+                centralEngineSummary = null,
+                centralEngineScore = null,
+                centralEngineResonance = null,
+                centralEngineStatus = "insufficient",
                 liveQuote = null,
                 fundFlow = emptyList(),
                 boardsOf = emptyList(),
@@ -615,7 +626,15 @@ class SkappViewModel : ViewModel() {
                         val engine = requestResult {
                             withContext(Dispatchers.Default) { DataCache.engine(code, adjust, bars) }
                         }.getOrNull()
-                        _state.value = _state.value.copy(localEngine = engine)
+                        val central = engine?.let { centralEngine(it) }
+                            ?: CentralEngine("中枢引擎：数据不足，无法形成有效总结。", null, null, "insufficient")
+                        _state.value = _state.value.copy(
+                            localEngine = engine,
+                            centralEngineSummary = central.summary,
+                            centralEngineScore = central.score,
+                            centralEngineResonance = central.resonance,
+                            centralEngineStatus = central.status,
+                        )
                         val local = requestResult {
                             bundleFromLocal(code, bars, _state.value.liveQuote, holo)
                         }.getOrNull()
@@ -651,7 +670,25 @@ class SkappViewModel : ViewModel() {
         _state.value = _state.value.copy(kPeriod = p, kline = aggregateKline(daily, p))
     }
 
-    /** 快讯 + 主线：逐条标题下实时算（标题命中的股票 → 实时行情 + 本地引擎） */
+    private data class CentralEngine(
+        val summary: String,
+        val score: Double?,
+        val resonance: Double?,
+        val status: String,
+    )
+
+    private fun centralEngine(engine: LocalEngineResult): CentralEngine {
+        val valid = engine.engines.filter { it.score != null }
+        val score = engine.centralScore ?: engine.weightedComposite ?: engine.composite
+        if (valid.isEmpty() || score == null) {
+            return CentralEngine(engine.summary ?: "中枢引擎：数据不足，无法形成有效总结。", null, null, "insufficient")
+        }
+        val resonance = engine.resonanceRatio
+        val summary = engine.summary ?: "中枢引擎：综合 ${"%.1f".format(score)}，共振 ${"%.0f%%".format((resonance ?: 0.0) * 100)}，有效 ${valid.size}/${engine.engines.size}。"
+        return CentralEngine(summary, score, resonance, engine.status)
+    }
+
+    /** 快讯 + 主线：逐条标题下实时算（标题命中的股票 → 实时行情 + 中枢引擎） */
     fun loadNewsCalcs(): Job = viewModelScope.launch {
         requestResult { refreshNewsCalcs() }
     }
@@ -668,6 +705,7 @@ class SkappViewModel : ViewModel() {
             val stored = requestResult { SkappApi.fetchNewsImpact() }.getOrDefault(emptyList())
             items.addAll(stored)
             // 云端新闻快照兜底/补充
+            // state.news.items 是消息页统一数据源；实时/持久化数据只补充，不清空已有快照。
             items.addAll(_state.value.news.items)
             val unique = items.map { item ->
                 val title = (item["title"] ?: item["newsTitle"] ?: item["digest"] ?: item["content"])?.toString()?.trim().orEmpty()
@@ -715,6 +753,7 @@ class SkappViewModel : ViewModel() {
                 if (id.isNotBlank()) id else "${item["title"]}|${item["time"] ?: ""}"
             }.take(50)
             if (merged.isEmpty()) throw IllegalStateException("暂无消息数据")
+            _state.value = _state.value.copy(news = _state.value.news.copy(items = merged))
             val calcs = NewsCalcEngine.compute(merged, symbols).map { calc ->
                 val source = merged.firstOrNull { it["title"] == calc.newsTitle }
                 calc.copy(
@@ -801,7 +840,7 @@ class SkappViewModel : ViewModel() {
         }
     }
 
-    /** 实时总结正文只在用户刷新时加载。 */
+    /** 实时总结正文：加载失败时保留明确的 insufficient 状态。 */
     fun loadSummary(): Job = viewModelScope.launch {
         requestResult { refreshSummary() }
     }
@@ -809,7 +848,7 @@ class SkappViewModel : ViewModel() {
     private suspend fun refreshSummary() {
         val result = requestResult { SiteBoardClient.summary() }
         val summary = result.getOrElse {
-            mapOf<String, Any?>("status" to "insufficient", "reason" to it.message)
+            mapOf<String, Any?>("status" to "insufficient", "reason" to (it.message ?: "数据源不可达"))
         }
         _state.value = _state.value.copy(summary = summary)
         result.getOrThrow()
@@ -839,13 +878,28 @@ class SkappViewModel : ViewModel() {
         refreshAiProviderStatus()
     }
 
-    /** AI 复盘当前详情页的股票（全部真实数据喂给 AI） */
+    /** AI 复盘当前详情页的股票：先生成中枢引擎总结，有凭据才请求云端二次总结。 */
     fun aiReviewCurrent() {
         val d = _state.value.detail ?: return
+        if (_state.value.aiReviewLoading) return
         viewModelScope.launch {
-            _state.value = _state.value.copy(aiReviewLoading = true, aiReview = null)
+            val central = _state.value.centralEngineSummary
+                ?: "中枢引擎：数据不足，无法形成有效总结。"
+            _state.value = _state.value.copy(aiReviewLoading = true, aiReview = central)
+            if (AiRouter.availableProviders().isEmpty()) {
+                _state.value = _state.value.copy(
+                    aiReviewLoading = false,
+                    aiReview = central,
+                    aiLastProvider = null,
+                    aiProviderStatus = AiRouter.statusLine(),
+                )
+                return@launch
+            }
             val data = buildStockReviewData(d)
             val prompt = """你是 A 股复盘分析师。以下是该股 ${d.code} ${d.name} 的**真实实时数据**，你只允许基于这些数据回答，禁止编造任何数字或事实。数据里没有的就说「数据不足」。
+
+中枢引擎原始总结：
+$central
 
 $data
 
@@ -854,12 +908,20 @@ $data
 2. 【风险】主要风险点
 3. 【观察点】后续该盯什么
 直接输出文本，不要 markdown 代码块。"""
-            val r = AiRouter.askDeep(listOf("user" to prompt))
-            val out = if (r.text == null) r.text else "[via ${r.provider ?: "?"}${r.model?.let { " · $it" } ?: ""}]\n\n${r.text}"
+            val r = try {
+                AiRouter.askDeep(listOf("user" to prompt))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                null
+            }
+            val out = r?.takeIf { !it.failed && !it.text.isNullOrBlank() }?.let {
+                "[via ${it.provider ?: "?"}${it.model?.let { model -> " · $model" } ?: ""}]\n\n${it.text}"
+            }
             _state.value = _state.value.copy(
                 aiReviewLoading = false,
-                aiReview = out,
-                aiLastProvider = r.provider,
+                aiReview = out ?: central,
+                aiLastProvider = r?.provider,
                 aiProviderStatus = AiRouter.statusLine(),
             )
         }
@@ -874,7 +936,7 @@ $data
             }
             appendLine()
             _state.value.localEngine?.let { e ->
-                appendLine("【本地引擎】综合=${e.composite?.let { "%.1f".format(it) } ?: "insufficient"}（${e.nValid}/${e.engines.size} 有效）")
+                appendLine("【中枢引擎】综合=${(e.centralScore ?: e.weightedComposite ?: e.composite)?.let { "%.1f".format(it) } ?: "insufficient"} 共振=${e.resonanceRatio?.let { "%.0f%%".format(it * 100) } ?: "insufficient"}（${e.nValid}/${e.engines.size} 有效）")
                 e.engines.forEach { en ->
                     if (en.score != null) {
                         appendLine("  · ${en.engine}=${"%.1f".format(en.score)} ${en.signal}（${en.reasons.take(2).joinToString("，")}）")
@@ -911,6 +973,16 @@ $data
         val q = _state.value.aiQuestion.trim()
         if (q.isEmpty()) return
         viewModelScope.launch {
+            if (AiRouter.availableProviders().isEmpty()) {
+                _state.value = _state.value.copy(
+                    aiAnswerLoading = false,
+                    aiAnswer = _state.value.centralEngineSummary
+                        ?: "中枢引擎：暂无可用于回答的数据。",
+                    aiLastProvider = null,
+                    aiProviderStatus = AiRouter.statusLine(),
+                )
+                return@launch
+            }
             _state.value = _state.value.copy(aiAnswerLoading = true, aiAnswer = null)
             val ctx = buildAiContext()
             val prompt = """你是 A 股数据分析助手。用户提问：$q
@@ -921,14 +993,22 @@ $ctx
 
 规则：
 - 只允许基于上面这些数据回答；数据里没有的就明说「未拉取到相关数据」
-- 结论要有依据，引用具体数字（如「量比 2.3」「本地引擎 71.2」）
+- 结论要有依据，引用具体数字（如「量比 2.3」「中枢引擎 71.2」）
 - 300 字内，直接回答，不要寒暄、不要免责声明"""
-            val r = AiRouter.askDeep(listOf("user" to prompt))
-            val out = if (r.text == null) r.text else "[via ${r.provider ?: "?"}${r.model?.let { " · $it" } ?: ""}]\n\n${r.text}"
+            val r = try {
+                AiRouter.askDeep(listOf("user" to prompt))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                null
+            }
+            val out = r?.takeIf { !it.failed && !it.text.isNullOrBlank() }?.let {
+                "[via ${it.provider ?: "?"}${it.model?.let { model -> " · $model" } ?: ""}]\n\n${it.text}"
+            }
             _state.value = _state.value.copy(
                 aiAnswerLoading = false,
-                aiAnswer = out,
-                aiLastProvider = r.provider,
+                aiAnswer = out ?: _state.value.centralEngineSummary ?: "中枢引擎：暂无可用于回答的数据。",
+                aiLastProvider = r?.provider,
                 aiProviderStatus = AiRouter.statusLine(),
             )
         }
@@ -943,6 +1023,7 @@ $ctx
         val s = _state.value
         val sb = StringBuilder()
         sb.appendLine("【市场时段】${s.marketPhase}")
+        s.centralEngineSummary?.let { sb.appendLine("【中枢引擎原始总结】$it") }
         sb.appendLine("【行情】${s.quotes.joinToString("；") { "${it.name} ${it.price} ${it.pctChg?.let { "%.2f%%".format(it) } ?: ""}" }}")
         val p = s.picks
         sb.appendLine("【推股】signals=${p.signals.size} values=${p.values.size} 涨停=${p.limitUp.size}")
@@ -961,7 +1042,7 @@ $ctx
         s.detail?.let { dd ->
             sb.appendLine("【当前详情】${dd.name ?: dd.code}（${dd.code}）")
             s.localEngine?.let { e ->
-                sb.appendLine("  本地引擎综合=${e.composite?.let { "%.1f".format(it) } ?: "insufficient"}（${e.nValid}/${e.engines.size}）")
+                sb.appendLine("  中枢引擎综合=${e.composite?.let { "%.1f".format(it) } ?: "insufficient"}（${e.nValid}/${e.engines.size}）")
                 e.engines.filter { it.score != null }.forEach {
                     sb.appendLine("    · ${it.engine}=${"%.1f".format(it.score!!)} ${it.signal}")
                 }
@@ -970,19 +1051,21 @@ $ctx
         return sb.toString()
     }
 
-    /** 启动预热：并发拉取全部页面数据（看板/推股/消息/自选行情/板块），不等进页面才拉 */
+    /** 启动预热：并发拉取全部页面数据，消息与实时总结在进入页面前就可用。 */
     fun warmUpAll() {
         viewModelScope.launch {
-            coroutineScope {
-                async { loadBoard() }
-                async { loadPicks() }
-                async { refreshQuotes() }
-                async { loadIndices() }
+            supervisorScope {
+                launch { runCatching { loadBoard() } }
+                launch { runCatching { loadPicks() } }
+                launch { runCatching { refreshQuotes() } }
+                launch { runCatching { loadIndices() } }
+                launch { runCatching { refreshNewsCalcs() } }
+                launch { runCatching { refreshSummary() } }
             }
         }
     }
 
-    /** 本地实时选股（设备直连行情 + 本地引擎，不用云端快照）。同模式结果缓存，切 tab 不重扫。 */
+    /** 实时选股（设备直连行情 + 中枢引擎，不用云端快照）。同模式结果缓存，切 tab 不重扫。 */
     fun runScreen(mode: String = "score", force: Boolean = false): Job? {
         if (_state.value.screening) return null
         if (_state.value.scanMode == mode && _state.value.screened.isNotEmpty() && !force) return null

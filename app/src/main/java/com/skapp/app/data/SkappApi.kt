@@ -239,6 +239,13 @@ object SkappApi {
         api?.optJSONObject("hot_news")?.optJSONArray("items")?.let { rawItems.addAll(it.toMapList()) }
         api?.optJSONObject("extra")?.optJSONArray("items")?.let { rawItems.addAll(it.toMapList()) }
         api?.optJSONArray("items")?.let { rawItems.addAll(it.toMapList()) }
+        api?.optJSONObject("digest")?.optJSONObject("categories")?.let { categories ->
+            categories.keys().forEach { category ->
+                categories.optJSONArray(category)?.toMapList()?.forEach { rawItems.add(it + mapOf("cat" to category)) }
+            }
+        }
+        api?.optJSONObject("themes")?.optJSONArray("themes")?.let { rawItems.addAll(it.toMapList()) }
+        api?.optJSONArray("hot_reports")?.let { rawItems.addAll(it.toMapList()) }
         extra?.optJSONArray("items")?.let { rawItems.addAll(it.toMapList()) }
         extra?.optJSONArray("news")?.let { rawItems.addAll(it.toMapList()) }
         impact?.optJSONArray("items")?.let { rawItems.addAll(it.toMapList()) }
@@ -247,7 +254,8 @@ object SkappApi {
         fun canonical(item: Map<String, Any?>): Map<String, Any?> {
             val title = (item["title"] ?: item["newsTitle"] ?: item["digest"] ?: item["content"])?.toString()?.trim().orEmpty()
             val time = (item["time"] ?: item["updated"] ?: item["ctime"] ?: item["ts"])?.toString()
-            val stocks = (item["stocks"] as? List<*>) ?: (item["codes"] as? List<*>) ?: emptyList<Any?>()
+            val stocks = (item["stocks"] as? List<*>) ?: (item["affected_stocks"] as? List<*>)
+                ?: (item["codes"] as? List<*>) ?: emptyList<Any?>()
             val themes = when (val raw = item["themes"] ?: item["theme"] ?: item["affected_sectors"] ?: item["sectors"]) {
                 is List<*> -> raw
                 null -> emptyList<Any?>()

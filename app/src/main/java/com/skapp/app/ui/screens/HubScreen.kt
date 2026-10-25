@@ -51,10 +51,10 @@ fun HubScreen(vm: SkappViewModel, state: UiState, onNavigate: (Int) -> Unit) {
         ),
         ModuleGroup(
             title = "决策",
-            subtitle = "实时结果与多池数据",
+            subtitle = "中枢刷新与多池数据",
             modules = listOf(
-                ModuleSpec("实时总结", "本地扫描、综合评分、指标共振与涨停观察", "实时总结", 1, Icons.Filled.AutoGraph),
-                ModuleSpec("多池选股", "好股票与策略池", "多池", 7, Icons.Filled.Layers),
+                ModuleSpec("实时总结", "刷新反馈、中枢引擎说明与 AI 二次总结", "实时总结", 1, Icons.Filled.AutoGraph),
+                ModuleSpec("多池选股", "推荐、风险、周期及策略池", "多池", 7, Icons.Filled.Layers),
             ),
         ),
         ModuleGroup(

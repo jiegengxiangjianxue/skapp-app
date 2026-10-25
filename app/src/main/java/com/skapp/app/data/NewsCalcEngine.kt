@@ -40,7 +40,9 @@ data class NewsStockCalc(
     val price: Double?,
     val pctChg: Double?,
     val volRatio: Double?,
-    val localScore: Double?,        // 本地引擎综合分（实时算）
+    val localScore: Double?,        // 中枢引擎综合分（实时算）
+    val resonanceRatio: Double? = null,
+    val centralSummary: String? = null,
     val signal: String?,            // bullish | bearish | neutral | insufficient
     val topReasons: List<String> = emptyList(),
 )
@@ -153,12 +155,14 @@ object NewsCalcEngine {
                         price = q?.price ?: bars.lastOrNull()?.close,
                         pctChg = q?.pctChg,
                         volRatio = (eng?.factors?.volRatio),
-                        localScore = eng?.composite,
+                        localScore = eng?.centralScore ?: eng?.weightedComposite ?: eng?.composite,
+                        resonanceRatio = eng?.resonanceRatio,
+                        centralSummary = eng?.summary,
                         signal = when {
                             eng == null -> "insufficient"
-                            eng.composite == null -> "insufficient"
-                            eng.composite >= 65 -> "bullish"
-                            eng.composite <= 35 -> "bearish"
+                            (eng.centralScore ?: eng.weightedComposite ?: eng.composite) == null -> "insufficient"
+                            (eng.centralScore ?: eng.weightedComposite ?: eng.composite)!! >= 65 -> "bullish"
+                            (eng.centralScore ?: eng.weightedComposite ?: eng.composite)!! <= 35 -> "bearish"
                             else -> "neutral"
                         },
                         topReasons = eng?.engines

@@ -4,9 +4,9 @@ import kotlin.math.abs
 import kotlin.math.max
 
 /**
- * 本地引擎 —— 在手机上直接算指标与多引擎评分。
+ * 中枢引擎 —— 在手机上直接算指标与多引擎评分。
  *
- * 这就是「本地软件运行引擎和算法」：不依赖站点 CI，也不等服务端。
+ * 这就是「中枢软件运行引擎和算法」：不依赖站点 CI，也不等服务端。
  * 输入是设备自己拉到的日 K（腾讯/东财），输出与站点 engine_v5 /
  * multidim_engine 同构的评分，但**算法在设备上执行**。
  *
@@ -85,17 +85,26 @@ data class EngineScore(
     val reasons: List<String> = emptyList(),
 )
 
-/** 多引擎综合结果 */
+/** 多引擎中枢结果；旧 composite 字段保留为兼容别名。 */
 data class LocalEngineResult(
     val factors: TechnicalFactors?,
     val engines: List<EngineScore>,
     val composite: Double?,
     val nValid: Int,
     val barsUsed: Int,
+    val weightedComposite: Double? = composite,
+    val centralScore: Double? = weightedComposite,
+    val resonanceRatio: Double? = null,
+    val summary: String? = null,
+    val engineName: String = "中枢引擎",
+    val bullCount: Int = 0,
+    val bearCount: Int = 0,
+    val neutralCount: Int = 0,
+    val status: String = "insufficient",
 )
 
 /**
- * 本地多引擎：把站点 engine_v5（指标共振）+ multidim（多维评分）+
+ * 中枢多引擎：把站点 engine_v5（指标共振）+ multidim（多维评分）+
  * factor_lib（29 因子）的核心逻辑在设备上复现。
  *
  * 引擎清单（12 个，与站点算法同构）：
@@ -122,13 +131,47 @@ object LocalEngine {
             f?.let { positionEngine(bars) },
         )
         val valid = engines.filter { it.score != null }
+        val weights = mapOf(
+            "trend" to 1.2, "momentum" to 1.1, "macd" to 1.1, "supertrend" to 1.1,
+            "volume" to 1.0, "boll" to 1.0, "keltner" to 1.0, "choppiness" to 0.9,
+            "mfi" to 1.0, "vortex" to 1.0, "obv" to 1.0, "position" to 0.9,
+        )
+        val weighted = valid.mapNotNull { score ->
+            score.score?.let { value -> value to (weights[score.engine] ?: 1.0) }
+        }
+        val weightedComposite = weighted.takeIf { it.isNotEmpty() }?.let { values ->
+            val weightTotal = values.sumOf { it.second }
+            values.sumOf { it.first * it.second } / weightTotal
+        }
+        val bullCount = valid.count { it.signal == "bullish" }
+        val bearCount = valid.count { it.signal == "bearish" }
+        val neutralCount = valid.count { it.signal == "neutral" }
+        val resonanceRatio = weighted.takeIf { it.isNotEmpty() }?.let {
+            maxOf(bullCount, bearCount, neutralCount).toDouble() / valid.size
+        }
+        val direction = when {
+            valid.isEmpty() -> "insufficient"
+            bullCount > bearCount && bullCount > neutralCount -> "偏多"
+            bearCount > bullCount && bearCount > neutralCount -> "偏空"
+            else -> "中性"
+        }
+        val summary = weightedComposite?.let { score ->
+            "中枢引擎：综合 ${"%.1f".format(score)}，共振 ${"%.0f%%".format((resonanceRatio ?: 0.0) * 100)}，有效 ${valid.size}/${engines.size}；$direction（偏多 $bullCount，偏空 $bearCount，中性 $neutralCount）"
+        }
         return LocalEngineResult(
             factors = f,
             engines = engines,
-            composite = if (valid.isEmpty()) null
-            else valid.mapNotNull { it.score }.average(),
+            composite = weightedComposite,
             nValid = valid.size,
             barsUsed = bars.size,
+            weightedComposite = weightedComposite,
+            centralScore = weightedComposite,
+            resonanceRatio = resonanceRatio,
+            summary = summary,
+            bullCount = bullCount,
+            bearCount = bearCount,
+            neutralCount = neutralCount,
+            status = if (weightedComposite == null) "insufficient" else "ok",
         )
     }
 
