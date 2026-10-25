@@ -148,11 +148,22 @@ fun RealtimeSummaryScreen(vm: SkappViewModel, state: UiState) {
             Text("多池时点：$poolStamp；云端结果仅为来源参考，不加入本地推荐列表。",
                 style = MaterialTheme.typography.bodySmall, color = Color.Gray)
         }
-        val poolRows = remember(state.pools) {
-            state.pools.flatMap { pool -> pool.items.map { pool.name to it } }
+        item {
+            val poolRows = state.pools.flatMap { pool -> pool.items.map { pool.name to it } }
                 .distinctBy { normalizeScreenCode(it.second.code) }
+            poolRows.take(20).forEach { (poolName, item) ->
+                Card(colors = CardDefaults.cardColors()) {
+                    Row(Modifier.fillMaxWidth().padding(10.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("${item.name ?: item.code} · $poolName",
+                            style = MaterialTheme.typography.bodySmall)
+                        Text(item.score?.let { String.format("%.1f", it) } ?: "暂无评分",
+                            style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                    }
+                }
+            }
         }
-        items(poolRows.take(20), key = { "pool:${normalizeScreenCode(it.second.code)}" }) { (poolName, item) ->
+items(poolRows.take(20), key = { "pool:${normalizeScreenCode(it.second.code)}" }) { (poolName, item) ->
             Text("${item.name} ${item.code} · $poolName · ${item.score?.let { "%.1f".format(it) } ?: "暂无评分"}",
                 style = MaterialTheme.typography.bodySmall, color = Color.Gray)
         }
