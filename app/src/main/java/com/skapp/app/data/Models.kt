@@ -79,6 +79,7 @@ data class Decision(
 data class PickSignal(
     val code: String,
     val name: String? = null,
+    val imageUrl: String? = null,
     val price: Double? = null,
     val pctChg: Double? = null,
     val score: Double? = null,
@@ -114,6 +115,7 @@ data class MarketSnapshot(
 data class NewsSnapshot(
     val ts: String? = null,
     val digest: Map<String, Any?> = emptyMap(),
+    /** 统一新闻 schema：id/title/source/time/verdict/reason/stocks/status */
     val items: List<Map<String, Any?>> = emptyList(),
     val themes: List<Map<String, Any?>> = emptyList(),
     val impacts: List<Map<String, Any?>> = emptyList(),

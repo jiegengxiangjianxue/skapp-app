@@ -1,5 +1,6 @@
 package com.skapp.app.ui.screens
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -9,6 +10,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -27,9 +29,16 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import com.skapp.app.data.PickSignal
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import java.net.HttpURLConnection
+import java.net.URL
 import com.skapp.app.ui.SkappViewModel
 import com.skapp.app.ui.UiState
 
@@ -138,7 +147,9 @@ fun PicksScreen(vm: SkappViewModel, state: UiState) {
                 if (sorted.isEmpty() && !state.screening) {
                     // 本地扫描失败/无结果时降级：直接展示云端今日推股（真实数据，30信号/20评分/8涨停）
                     val fb = when (tab) { 1 -> p.signals; 2 -> p.values; 3 -> p.limitUp; else -> p.signals }
-                        .filter { isMainBoardPick(it.code) && ((it.pctChg ?: 0.0) < 9.6 || tab == 3) }
+                        .filter { sig ->
+                            isMainBoardPick(sig.code) && (tab == 3 || (sig.pctChg != null && sig.pctChg < 9.6))
+                        }
                     if (fb.isNotEmpty()) {
                         Text(
                             "本地实时扫描暂不可用（${state.screenMsg ?: "网络受限"}），以下为云端今日推股（真实数据）",
@@ -222,7 +233,7 @@ fun PicksScreen(vm: SkappViewModel, state: UiState) {
         // 云端三 Tab 兜底主板红线过滤（上游若混入 300/301/688/北交所不渲染）
         // 推股不推涨停票：涨幅≥9.6%（主板涨停附近）的标的不进推荐
         val current = (tabs.getOrNull(tab)?.second ?: emptyList()).filter { sig ->
-            isMainBoardPick(sig.code) && ((sig.pctChg ?: 0.0) < 9.6)
+            isMainBoardPick(sig.code) && sig.pctChg != null && sig.pctChg < 9.6
         }
         if (current.isEmpty()) {
             Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
@@ -321,6 +332,7 @@ private fun MarketOverview(state: UiState) {
 
 @Composable
 private fun PickCard(s: PickSignal, group: String, vm: SkappViewModel, state: UiState) {
+    val image = rememberRemoteImage(s.imageUrl)
     // 实时报价优先；休市时回落到云端快照价（快照即收盘价）
     val live = state.pickQuotes[s.code]
     val price = live?.price ?: s.price
@@ -338,7 +350,13 @@ private fun PickCard(s: PickSignal, group: String, vm: SkappViewModel, state: Ui
     ) {
         Column(Modifier.padding(12.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Column {
+                if (image != null) {
+                    Image(image.asImageBitmap(), contentDescription = s.name ?: s.code,
+                        modifier = Modifier.size(48.dp))
+                } else if (s.imageUrl != null) {
+                    Text("图片不可用", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                }
+                Column(Modifier.weight(1f).padding(start = if (s.imageUrl != null) 8.dp else 0.dp)) {
                     Text(s.name ?: s.code, fontWeight = FontWeight.Medium)
                     Text(s.code, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
                 }
@@ -390,6 +408,25 @@ private fun PickCard(s: PickSignal, group: String, vm: SkappViewModel, state: Ui
             }
         }
     }
+}
+
+@Composable
+private fun rememberRemoteImage(url: String?): Bitmap? {
+    if (url.isNullOrBlank() || !(url.startsWith("https://") || url.startsWith("http://"))) return null
+    var bitmap by remember(url) { mutableStateOf<Bitmap?>(null) }
+    LaunchedEffect(url) {
+        bitmap = withContext(Dispatchers.IO) {
+            runCatching {
+                val connection = URL(url).openConnection() as HttpURLConnection
+                connection.connectTimeout = 10000
+                connection.readTimeout = 10000
+                connection.setRequestProperty("User-Agent", "Mozilla/5.0 (Android) skapp")
+                if (connection.responseCode != HttpURLConnection.HTTP_OK) null
+                else connection.inputStream.use { BitmapFactory.decodeStream(it) }.also { connection.disconnect() }
+            }.getOrNull()
+        }
+    }
+    return bitmap
 }
 
 private fun marketLabel(k: String): String = when (k) {

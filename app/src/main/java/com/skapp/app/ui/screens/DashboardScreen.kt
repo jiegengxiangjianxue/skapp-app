@@ -272,8 +272,7 @@ private fun KpiCard(label: String, value: String?, color: Color, modifier: Modif
 private fun CommentaryCard() {
     var text by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(Unit) {
-        text = readRemoteText(
-            "https://raw.githubusercontent.com/qwerzxcva/stocks-ai-view/main/data/daily_brief.json")
+        text = readRemoteText(com.skapp.app.data.RemoteSources.dailyBrief())
             ?.let { runCatching { org.json.JSONObject(it).optString("text") }.getOrNull() }
     }
     val t = text ?: return

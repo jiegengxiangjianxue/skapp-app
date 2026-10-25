@@ -22,6 +22,8 @@ data class NewsCalc(
     /** 标题文本命中的情绪词（规则式，与站点 news_impact 同思路） */
     val sentiment: String = "neu",   // pos | neg | neu
     val sentimentHits: List<String> = emptyList(),
+    /** 已写入 GitHub 新闻库的分析影响个股（当前条目无本地实时匹配时展示） */
+    val impactCodes: List<String> = emptyList(),
     /** 利好质量判定：真利好 / 利好·防追高套人 / 利空 / 中性 */
     val verdict: String = "",
     val status: String = "ok",       // ok | no_stock | insufficient
@@ -114,6 +116,8 @@ object NewsCalcEngine {
             async(Dispatchers.IO) {
                 val title = (item["title"] ?: item["digest"])?.toString() ?: ""
                 val (senti, hits) = sentimentOf(title)
+                val storedVerdict = item["verdict"]?.toString()?.takeIf { it.isNotBlank() }
+                val storedCodes = (item["codes"] as? List<*>)?.mapNotNull { it?.toString() } ?: emptyList()
                 val codes = resolveStocks(title, symbols)
                 if (codes.isEmpty()) {
                     return@async NewsCalc(
@@ -122,7 +126,8 @@ object NewsCalcEngine {
                         ts = (item["updated"] ?: item["ctime"])?.toString(),
                         sentiment = senti,
                         sentimentHits = hits,
-                        verdict = verdictOf(senti, hits, title, null),
+                        impactCodes = storedCodes,
+                        verdict = storedVerdict ?: verdictOf(senti, hits, title, null),
                         status = "no_stock",
                         note = "标题未提及具体股票，无个股计算",
                     )
@@ -163,7 +168,8 @@ object NewsCalcEngine {
                     stocks = stocks,
                     sentiment = senti,
                     sentimentHits = hits,
-                    verdict = verdictOf(senti, hits, title, stocks.mapNotNull { it.pctChg }.maxOrNull()),
+                    impactCodes = storedCodes,
+                    verdict = storedVerdict ?: verdictOf(senti, hits, title, stocks.mapNotNull { it.pctChg }.maxOrNull()),
                     status = "ok",
                 )
             }

@@ -54,8 +54,9 @@ fun DiagScreen(vm: SkappViewModel, state: UiState) {
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Text("数据源自检", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        val registry = rows.firstOrNull { it.first == "源注册表" }?.second
         Text(
-            if (running) "正在逐个探测…" else "完成：${rows.size} 项",
+            if (running) "正在逐个探测…" else "已检查 ${rows.count { it.second.startsWith("OK") }} 成功 / ${rows.count { it.second.startsWith("FAIL") }} 失败 / ${rows.count { it.second.startsWith("UNKNOWN") }} unknown · ${registry ?: "源总数未知"}",
             style = MaterialTheme.typography.bodySmall, color = Color.Gray,
         )
         rows.forEach { (name, result) ->
@@ -98,11 +99,20 @@ private fun probe(): List<Pair<String, String>> {
         val r = http(url)
         val code = r.substringBefore("|")
         val body = r.substringAfter("|")
-        out += name to if (code == "200") "HTTP200 ${verify(body)}" else "$code ${if (code=="ERR") body else ""}"
+        out += name to if (code == "200") "OK HTTP200 ${verify(body)}" else "FAIL $code ${if (code=="ERR") body else ""}"
     }
 
+    val registryResult = http(RemoteSources.allSources())
+    val registryCode = registryResult.substringBefore("|")
+    val registryBody = registryResult.substringAfter("|")
+    out += "源注册表" to if (registryCode == "200") {
+        val root = runCatching { JSONObject(registryBody) }.getOrNull()
+        val sources = root?.optJSONArray("sources") ?: root?.optJSONArray("registry")
+        if (sources == null) "UNKNOWN：注册表未提供" else "已知${sources.length()}源"
+    } else "UNKNOWN：注册表不可达"
+
     // 代码表（本次故障点）
-    check("代码表 symbols.json", "https://raw.githubusercontent.com/${RemoteSources.OWNER_SYMBOLS}/${RemoteSources.REPO_SYMBOLS}/main/data/search/symbols.json") { b ->
+    check("代码表 symbols.json", RemoteSources.appFile(RemoteSources.OWNER_SYMBOLS, RemoteSources.REPO_SYMBOLS, "search/symbols.json")) { b ->
         val arr = runCatching { org.json.JSONArray(b) }.getOrNull()
             ?: runCatching { JSONObject(b).optJSONArray("symbols") }.getOrNull()
         if (arr != null) "解析${arr.length()}条" else "解析失败(形态不匹配)"
@@ -133,7 +143,7 @@ private fun probe(): List<Pair<String, String>> {
         val o = runCatching { JSONObject(b) }.getOrNull()
         if (o?.optJSONObject("market") != null) "有市况" else "无 market 字段"
     }
-    check("题材报告 theme_report", "https://raw.githubusercontent.com/${RemoteSources.OWNER_A}/${RemoteSources.REPO_A}/main/data/theme_report.json") { b ->
+    check("题材报告 theme_report", RemoteSources.themeReport()) { b ->
         val o = runCatching { JSONObject(b) }.getOrNull()
         "${o?.optJSONArray("themes")?.length() ?: 0}个题材"
     }

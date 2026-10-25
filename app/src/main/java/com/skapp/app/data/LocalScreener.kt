@@ -79,9 +79,20 @@ object LocalScreener {
                     )
                 }
             }
-            val first = fetchPage(pn, pz)
-            if (first.isNotEmpty()) return@withContext first
-            // 手机网络或东财出口失败时只重试一个小页，禁止 40 页长轮询把 UI 卡死
+            val pages = ArrayList<Map<String, Any?>>()
+            // 东财 clist 默认只返回一页；逐页读取直到空页，避免全市场扫描只覆盖前 100 条。
+            // pz=500 控制请求数，distinctBy 处理分页边界重复。
+            for (page in pn..(pn + 39)) {
+                val batch = fetchPage(page, maxOf(pz, 500))
+                if (batch.isEmpty()) break
+                pages.addAll(batch)
+                if (batch.size < maxOf(pz, 500)) break
+            }
+            val all = pages.distinctBy {
+                it["code"]?.toString()?.filter(Char::isDigit)?.takeLast(6)?.padStart(6, '0')
+            }
+            if (all.isNotEmpty()) return@withContext all
+            // 手机网络或东财出口失败时仅重试一页，仍保持真实空结果语义。
             fetchPage(1, 100)
         }
 
@@ -108,7 +119,7 @@ object LocalScreener {
             val main = code.take(3) in MAIN_BOARD_PREFIXES && !st
             when {
                 limitup -> main && chg >= 9.5
-                else -> main && chg in c.minChgPct..c.maxChgPct && (vr == null || vr >= c.minVolRatio)
+                else -> main && chg >= c.minChgPct && chg < c.maxChgPct && (vr == null || vr >= c.minVolRatio)
             }
         }.sortedByDescending { (it["mainNet"] as? Number)?.toDouble() ?: 0.0 }
             .take(if (limitup) 50 else c.maxCandidates)
@@ -143,8 +154,11 @@ object LocalScreener {
         }
 
         when (mode) {
-            // 共振/评分页：返回全部分析结果（含未达标），由 UI 自行排序
-            "all", "limitup" -> return@coroutineScope out.sortedByDescending { it.engine?.composite ?: (it.pctChg ?: 0.0) }
+            // 涨停仅观察/归因，不进入普通推荐出口。
+            "limitup" -> return@coroutineScope out.filter { (it.pctChg ?: 0.0) >= 9.5 }
+                .sortedByDescending { it.pctChg ?: 0.0 }
+            // 共振页返回全部分析结果（含未达标），由 UI 自行排序。
+            "all" -> return@coroutineScope out.sortedByDescending { it.engine?.composite ?: (it.pctChg ?: 0.0) }
         }
         val scored = out.filter { (it.engine?.composite ?: 0.0) >= c.minScore }
             .sortedByDescending { it.engine?.composite ?: 0.0 }

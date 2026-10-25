@@ -22,18 +22,22 @@ class AllSourcesClient {
         }
 
         return try {
-            // 优先尝试 GitHub raw
-            val rawUrl = "https://raw.githubusercontent.com/jiegengxiangjianxue/stocks-ai-view-b/main/data/all_sources.json"
+            // 主仓使用统一数据源配置，镜像仅作真实 fallback。
+            val rawUrl = RemoteSources.appFile(RemoteSources.OWNER_A, RemoteSources.REPO_A, "all_sources.json")
             val jsonObject = fetchFromUrl(rawUrl)
+                ?: fetchFromUrl(RemoteSources.appFile(RemoteSources.OWNER_C, RemoteSources.REPO_C, "all_sources.json"))
             if (jsonObject != null) {
                 cachedData = jsonObject
                 lastFetchTime = now
                 return jsonObject
             }
 
-            // 如果 raw 失败，退回 GitHub API
-            val apiUrl = "https://api.github.com/repos/jiegengxiangjianxue/stocks-ai-view-b/contents/data/all_sources.json"
-            fetchFromGitHubApi(apiUrl)
+            // raw 文件未提供时只尝试主仓 Contents API，不虚构源数量。
+            val apiUrl = "https://api.github.com/repos/${RemoteSources.OWNER_A}/${RemoteSources.REPO_A}/contents/data/all_sources.json"
+            fetchFromGitHubApi(apiUrl)?.also {
+                cachedData = it
+                lastFetchTime = now
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Fetch all_sources failed", e)
             null
@@ -121,8 +125,11 @@ class AllSourcesClient {
         val sectorCount = groups?.optJSONObject("sector")?.optInt("merged", 0) ?: 0
         val newsCount = groups?.optJSONObject("news")?.optInt("merged", 0) ?: 0
         val totalMerged = summary?.optInt("total_merged", 0) ?: 0
+        val registry = j.optJSONArray("sources") ?: j.optJSONArray("registry")
+        val known = registry?.length()
+        val sourceCount = known?.let { "已知${it}源" } ?: "源总数未知"
 
-        return "190源 ${quoteCount}行情 ${sectorCount}板块 ${newsCount}新闻 / 合并${totalMerged}条"
+        return "$sourceCount ${quoteCount}行情 ${sectorCount}板块 ${newsCount}新闻 / 合并${totalMerged}条"
     }
 
     // Quote 数据类

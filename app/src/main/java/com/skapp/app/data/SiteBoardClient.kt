@@ -16,24 +16,19 @@ import java.net.URL
  */
 object SiteBoardClient {
 
-    // raw.githubusercontent.com 在部分网络不稳，改用 Contents API + token（支持私有仓）
-    private const val API = "https://api.github.com/repos/qwerzxcva/stocks-ai-view/contents/data"
+    // 统一使用 RemoteSources 的主仓，Contents API 仅作为真实 fallback。
+    private val API = RemoteSources.base(RemoteSources.OWNER_A, RemoteSources.REPO_A)
     private var token: String? = null
     fun setToken(t: String?) { token = t?.takeIf { it.isNotBlank() } }
 
     private fun getJson(url: String): JSONObject? {
         // raw 优先（免鉴权、不走 60 次/时 API 限流）；API 仅作兜底（有 token 时读私有仓）
-        val raw = when {
-            url.startsWith(API) -> url.replace("$API/", "https://raw.githubusercontent.com/qwerzxcva/stocks-ai-view/main/data/")
-            else -> url
-        }
-        val api = when {
-            raw.contains("raw.githubusercontent.com") ->
-                raw.replace("https://raw.githubusercontent.com/", "$API/")
-                    .replaceFirst("/main/", "/contents/")
-                    .replaceFirst("/master/", "/contents/")
-            else -> null
-        }
+        val raw = url
+        val api = if (raw.startsWith(RemoteSources.RAW)) {
+            raw.replace(RemoteSources.RAW, "https://api.github.com/repos")
+                .replaceFirst("/main/", "/contents/")
+                .replaceFirst("/master/", "/contents/")
+        } else null
         for (u in listOfNotNull(raw, api)) {
             val r = fetchOnce(u)
             if (r != null) return r
@@ -49,7 +44,7 @@ object SiteBoardClient {
                 readTimeout = 15000
                 requestMethod = "GET"
                 setRequestProperty("User-Agent", "Mozilla/5.0 (Android) skapp")
-                if (u.startsWith(API)) {
+                if (u.startsWith("https://api.github.com/repos/")) {
                     token?.let { setRequestProperty("Authorization", "Bearer $it") }
                     setRequestProperty("Accept", "application/vnd.github.raw")
                 }

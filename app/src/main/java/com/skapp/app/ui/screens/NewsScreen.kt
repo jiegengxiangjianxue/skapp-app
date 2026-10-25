@@ -135,10 +135,24 @@ private fun NewsCardWithCalc(n: NewsCalc, vm: SkappViewModel) {
                     else -> "中性" to Color.Gray
                 }
                 Text(sentiText, style = MaterialTheme.typography.bodySmall, color = sentiColor)
+                Text(
+                    if (n.verdict.isBlank() || n.verdict == "insufficient") "分析：insufficient" else n.verdict,
+                    style = MaterialTheme.typography.bodySmall, color = sentiColor,
+                )
+                Text(
+                    "理由：${n.note?.takeIf { it.isNotBlank() } ?: "insufficient"}",
+                    style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+                )
                 if (n.sentimentHits.isNotEmpty()) {
                     Text(
                         "命中：${n.sentimentHits.take(4).joinToString(" ")}",
                         style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+                    )
+                }
+                if (n.impactCodes.isNotEmpty()) {
+                    Text(
+                        "影响个股：${n.impactCodes.take(6).joinToString("、")}",
+                        style = MaterialTheme.typography.bodySmall, color = Color(0xFF58A6FF),
                     )
                 }
             }

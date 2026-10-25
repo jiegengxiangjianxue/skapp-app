@@ -524,11 +524,31 @@ class SkappViewModel : ViewModel() {
             _state.value = _state.value.copy(newsCalcLoading = true)
             val symbols = _state.value.symbols
             val items = ArrayList<Map<String, Any?>>()
-            // 实时 7x24：设备直连东财（新闻不再等 CI 快照）
-            runCatching { MarketDataClient.news724() }.getOrElse { emptyList() }
-                .forEach { items.add(it) }
-            // 快照：云端 news API 的 hot_news.items + extra.items
-            _state.value.news.items.forEach { items.add(it) }
+            // 实时 7x24：设备直连东财
+            val liveItems = runCatching { MarketDataClient.news724() }.getOrElse { emptyList() }
+            items.addAll(liveItems)
+            // GitHub 新闻数据库：已分析记录带 verdict/codes，作为持久化结果合并回来
+            val stored = runCatching { SkappApi.fetchNewsImpact() }.getOrElse { emptyList() }
+            items.addAll(stored)
+            // 云端新闻快照兜底/补充
+            items.addAll(_state.value.news.items)
+            val unique = items.map { item ->
+                val title = (item["title"] ?: item["newsTitle"] ?: item["digest"] ?: item["content"])?.toString()?.trim().orEmpty()
+                val time = (item["time"] ?: item["updated"] ?: item["ctime"] ?: item["ts"])?.toString()
+                item + mapOf(
+                    "title" to title,
+                    "source" to (item["source"] ?: item["source_name"] ?: ""),
+                    "time" to time,
+                    "verdict" to (item["verdict"] ?: "insufficient"),
+                    "reason" to (item["reason"] ?: item["analysis"] ?: "insufficient"),
+                    "stocks" to (item["stocks"] ?: item["codes"] ?: emptyList<Any>()),
+                    "id" to (item["id"] ?: item["news_id"] ?: ""),
+                )
+            }.filter { (it["title"] as? String)?.isNotBlank() == true }
+                .distinctBy { item ->
+                    val id = item["id"]?.toString().orEmpty()
+                    if (id.isNotBlank()) id else "${item["title"]}|${item["time"] ?: ""}"
+                }
             // 主线：hot_themes.themes 的 name + 关联个股
             val themes = _state.value.news.themes.mapNotNull { t ->
                 val name = (t["name"] ?: t["theme"])?.toString() ?: return@mapNotNull null
@@ -542,7 +562,30 @@ class SkappViewModel : ViewModel() {
                 )
             }
             items.addAll(themes)
-            val calcs = NewsCalcEngine.compute(items, symbols)
+            val merged = (unique + themes).map { item ->
+                val title = item["title"]?.toString().orEmpty()
+                item + mapOf(
+                    "id" to (item["id"] ?: ""),
+                    "title" to title,
+                    "source" to (item["source"] ?: item["source_name"] ?: ""),
+                    "time" to (item["time"] ?: item["updated"] ?: item["ctime"] ?: item["ts"]),
+                    "verdict" to (item["verdict"] ?: "insufficient"),
+                    "reason" to (item["reason"] ?: item["analysis"] ?: "insufficient"),
+                    "stocks" to (item["stocks"] ?: item["codes"] ?: emptyList<Any>()),
+                )
+            }.distinctBy { item ->
+                val id = item["id"]?.toString().orEmpty()
+                if (id.isNotBlank()) id else "${item["title"]}|${item["time"] ?: ""}"
+            }.take(50)
+            val calcs = NewsCalcEngine.compute(merged, symbols).map { calc ->
+                val source = merged.firstOrNull { it["title"] == calc.newsTitle }
+                calc.copy(
+                    source = calc.source ?: source?.get("source")?.toString()?.takeIf { it.isNotBlank() },
+                    ts = calc.ts ?: source?.get("time")?.toString(),
+                    verdict = source?.get("verdict")?.toString()?.takeIf { it.isNotBlank() && it != "insufficient" } ?: calc.verdict,
+                    note = source?.get("reason")?.toString()?.takeIf { it.isNotBlank() && it != "insufficient" } ?: calc.note,
+                )
+            }
             _state.value = _state.value.copy(newsCalcLoading = false, newsCalcs = calcs)
         }
     }

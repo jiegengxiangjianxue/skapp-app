@@ -67,8 +67,7 @@ fun ThemeScreen(vm: SkappViewModel, state: UiState) {
 
     LaunchedEffect(Unit) {
         val txt = withContext(Dispatchers.IO) {
-            readRemoteText(
-                "https://raw.githubusercontent.com/qwerzxcva/stocks-ai-view/main/data/theme_report.json")
+            readRemoteText(com.skapp.app.data.RemoteSources.themeReport())
         }
         json = txt?.let { runCatching { JSONObject(it) }.getOrNull() }
         if (json == null) failed = true

@@ -108,6 +108,12 @@ object SkappApi {
         }
     }
 
+    /** 新闻逐条分析持久化索引（云端 news_impact_analyze 回写） */
+    suspend fun fetchNewsImpact(): List<Map<String, Any?>> = withContext(Dispatchers.IO) {
+        fetchJson(RemoteSources.appFile(RemoteSources.OWNER_A, RemoteSources.REPO_A, "news_impact.json"))
+            ?.optJSONArray("items")?.toMapList() ?: emptyList()
+    }
+
     /** app 主文件：A 仓优先，失败退 C 仓 */
     suspend fun fetchDecision(): Decision = withContext(Dispatchers.IO) {
         parseDecision(fetchJson(RemoteSources.appFile(RemoteSources.OWNER_A, RemoteSources.REPO_A, "decision.json")))
@@ -175,9 +181,29 @@ object SkappApi {
         val o = fetchJson(RemoteSources.apiNews())
             ?: fetchJson(RemoteSources.apiNews(RemoteSources.OWNER_C, RemoteSources.REPO_C))
             ?: return@withContext NewsSnapshot()
-        val items = ArrayList<Map<String, Any?>>()
-        o.optJSONObject("hot_news")?.optJSONArray("items")?.let { items.addAll(it.toMapList()) }
-        o.optJSONObject("extra")?.optJSONArray("items")?.let { items.addAll(it.toMapList()) }
+        val rawItems = ArrayList<Map<String, Any?>>()
+        o.optJSONObject("hot_news")?.optJSONArray("items")?.let { rawItems.addAll(it.toMapList()) }
+        o.optJSONObject("extra")?.optJSONArray("items")?.let { rawItems.addAll(it.toMapList()) }
+        o.optJSONArray("items")?.let { rawItems.addAll(it.toMapList()) }
+        val items = rawItems.map { item ->
+            val title = (item["title"] ?: item["digest"] ?: item["content"])?.toString()?.trim().orEmpty()
+            val time = (item["time"] ?: item["updated"] ?: item["ctime"] ?: item["ts"])?.toString()
+            val stocks = (item["stocks"] as? List<*>) ?: (item["codes"] as? List<*>) ?: emptyList<Any?>()
+            item + mapOf(
+                "id" to (item["id"] ?: item["news_id"] ?: ""),
+                "title" to title,
+                "source" to (item["source"] ?: item["source_name"] ?: ""),
+                "time" to time,
+                "verdict" to (item["verdict"] ?: "insufficient"),
+                "reason" to (item["reason"] ?: item["analysis"] ?: "insufficient"),
+                "stocks" to stocks,
+                "status" to (item["status"] ?: "insufficient"),
+            )
+        }.filter { (it["title"] as? String)?.isNotBlank() == true }
+            .distinctBy { item ->
+                val id = item["id"]?.toString().orEmpty()
+                if (id.isNotBlank()) id else "${item["title"]}|${item["time"] ?: ""}"
+            }.take(50)
         NewsSnapshot(
             ts = o.optString("ts").takeIf { it.isNotEmpty() },
             digest = o.optJSONObject("digest")?.toMap() ?: emptyMap(),
@@ -309,6 +335,8 @@ object SkappApi {
                 PickSignal(
                     code = code,
                     name = e.optString("name").takeIf { it.isNotEmpty() },
+                    imageUrl = listOf("img", "image", "imageUrl", "image_url", "cover")
+                        .firstNotNullOfOrNull { key -> e.optString(key).takeIf { it.startsWith("https://") || it.startsWith("http://") } },
                     price = e.optDoubleOrNull("price"),
                     pctChg = e.pctChg(),
                     score = e.optDoubleOrNull("score"),
