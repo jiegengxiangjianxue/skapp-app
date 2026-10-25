@@ -179,6 +179,31 @@ object SkappApi {
             ?: TodayPicks()
     }
 
+    suspend fun fetchStructuredPicks(): Map<String, StructuredPickArtifact> = withContext(Dispatchers.IO) {
+        val files = listOf(
+            "premarket" to RemoteSources.premarketPicks(),
+            "midday" to RemoteSources.middayPicks(),
+        )
+        files.associate { (key, primary) ->
+            val root = fetchJson(primary)
+                ?: fetchJson(if (key == "premarket") RemoteSources.premarketPicks(RemoteSources.OWNER_C, RemoteSources.REPO_C)
+                else RemoteSources.middayPicks(RemoteSources.OWNER_C, RemoteSources.REPO_C))
+            key to parseStructuredPick(root, key)
+        }
+    }
+
+    suspend fun fetchCloseReview(): CloseReview = withContext(Dispatchers.IO) {
+        val root = fetchJson(RemoteSources.closeReview())
+            ?: fetchJson(RemoteSources.closeReview(RemoteSources.OWNER_C, RemoteSources.REPO_C))
+        parseCloseReview(root)
+    }
+
+    suspend fun fetchWinrateMatrix(): WinrateMatrix = withContext(Dispatchers.IO) {
+        val root = fetchJson(RemoteSources.winrateMatrix())
+            ?: fetchJson(RemoteSources.winrateMatrix(RemoteSources.OWNER_C, RemoteSources.REPO_C))
+        parseWinrateMatrix(root)
+    }
+
     suspend fun fetchStockNames(): Map<String, String> = withContext(Dispatchers.IO) {
         fetchStockNameEntries().mapNotNull { entry ->
             val code = normalize(entry.code) ?: return@mapNotNull null
@@ -250,6 +275,8 @@ object SkappApi {
         extra?.optJSONArray("news")?.let { rawItems.addAll(it.toMapList()) }
         impact?.optJSONArray("items")?.let { rawItems.addAll(it.toMapList()) }
         impact?.optJSONArray("news")?.let { rawItems.addAll(it.toMapList()) }
+        impact?.optJSONArray("impacts")?.let { rawItems.addAll(it.toMapList()) }
+        api?.optJSONArray("impacts")?.let { rawItems.addAll(it.toMapList()) }
 
         fun canonical(item: Map<String, Any?>): Map<String, Any?> {
             val title = (item["title"] ?: item["newsTitle"] ?: item["digest"] ?: item["content"])?.toString()?.trim().orEmpty()
@@ -301,7 +328,7 @@ object SkappApi {
             digest = root?.optJSONObject("digest")?.toMap() ?: emptyMap(),
             items = items,
             themes = root?.optJSONObject("themes")?.optJSONArray("themes")?.toMapList() ?: emptyList(),
-            impacts = impact?.optJSONArray("impacts")?.toMapList() ?: emptyList(),
+            impacts = (impact?.optJSONArray("impacts") ?: api?.optJSONArray("impacts"))?.toMapList() ?: emptyList(),
             transmission = root?.optJSONObject("transmission")?.optJSONArray("items")?.toMapList() ?: emptyList(),
         )
     }
@@ -431,36 +458,10 @@ object SkappApi {
 
     fun parsePicks(o: JSONObject?): TodayPicks? {
         if (o == null) return null
-        val picks = o.optJSONObject("picks")
+        val picks = o.optJSONObject("picks") ?: o
         fun parseArr(name: String): List<PickSignal> {
-            val arr = picks?.optJSONArray(name) ?: return emptyList()
-            return (0 until arr.length()).mapNotNull { i ->
-                val e = arr.optJSONObject(i) ?: return@mapNotNull null
-                val code = e.optString("code").takeIf { it.isNotEmpty() } ?: return@mapNotNull null
-                PickSignal(
-                    code = code,
-                    name = e.optString("name").takeIf { it.isNotEmpty() },
-                    imageUrl = listOf("img", "image", "imageUrl", "image_url", "cover", "images")
-                        .asSequence().flatMap { key ->
-                            when (val v = e.opt(key)) {
-                                is JSONArray -> (0 until v.length()).asSequence().mapNotNull { v.optString(it).takeIf { s -> s.isNotBlank() } }
-                                else -> sequenceOf(e.optString(key))
-                            }
-                        }.firstOrNull { it.startsWith("https://") || it.startsWith("http://") },
-                    price = e.optDoubleOrNull("price"),
-                    pctChg = e.pctChg(),
-                    score = e.optDoubleOrNull("score"),
-                    buyable = when {
-                        e.has("buyable") && !e.isNull("buyable") -> e.optBoolean("buyable")
-                        e.has("can_buy") && !e.isNull("can_buy") -> e.optBoolean("can_buy")
-                        else -> null
-                    },
-                    snapshotStatus = e.optString("status").takeIf { it.isNotBlank() },
-                    engine = e.optString("engine").takeIf { it.isNotEmpty() },
-                    why = e.optJSONArray("why")?.toStringList() ?: emptyList(),
-                    detail = e.optJSONObject("detail")?.let { parseBundle(it) },
-                )
-            }
+            val arr = picks.optJSONArray(name) ?: return emptyList()
+            return (0 until arr.length()).mapNotNull { i -> parsePick(arr.optJSONObject(i)) }
         }
         return TodayPicks(
             ts = o.optString("ts").takeIf { it.isNotEmpty() },
@@ -471,6 +472,106 @@ object SkappApi {
             values = parseArr("values"),
             limitUp = parseArr("limit_up"),
             sources = o.optJSONObject("sources")?.toMap() ?: emptyMap(),
+        )
+    }
+
+    private fun parsePick(e: JSONObject?): PickSignal? {
+        if (e == null) return null
+        val code = e.optString("code").takeIf { it.isNotEmpty() } ?: return null
+        val image = listOf("img", "image", "imageUrl", "image_url", "cover", "images")
+            .asSequence().flatMap { key ->
+                when (val v = e.opt(key)) {
+                    is JSONArray -> (0 until v.length()).asSequence().mapNotNull { v.optString(it).takeIf { s -> s.isNotBlank() } }
+                    else -> sequenceOf(e.optString(key))
+                }
+            }.firstOrNull { it.startsWith("https://") || it.startsWith("http://") }
+        return PickSignal(
+            code = code,
+            name = e.optString("name").takeIf { it.isNotEmpty() },
+            imageUrl = image,
+            price = e.optDoubleOrNull("price") ?: e.optDoubleOrNull("live_price"),
+            pctChg = e.pctChg(),
+            score = e.optDoubleOrNull("score") ?: e.optDoubleOrNull("central_score"),
+            buyable = when {
+                e.has("buyable") && !e.isNull("buyable") -> e.optBoolean("buyable")
+                e.has("can_buy") && !e.isNull("can_buy") -> e.optBoolean("can_buy")
+                else -> null
+            },
+            snapshotStatus = e.optString("status").takeIf { it.isNotBlank() },
+            engine = e.optString("engine").takeIf { it.isNotEmpty() },
+            resonance = e.optDoubleOrNull("resonance") ?: e.optDoubleOrNull("resonance_ratio"),
+            reason = listOf("reason", "buyability_reason", "why_reason").firstNotNullOfOrNull { key ->
+                e.optString(key).takeIf { it.isNotBlank() }
+            },
+            calculationTime = listOf("calculation_time", "calculated_at", "live_price_ts", "ts", "generated_at")
+                .firstNotNullOfOrNull { key -> e.optString(key).takeIf { it.isNotBlank() } },
+            why = e.optJSONArray("why")?.toStringList() ?: emptyList(),
+            detail = e.optJSONObject("detail")?.let { parseBundle(it) },
+        )
+    }
+
+    private fun parseStructuredPick(root: JSONObject?, fallbackSession: String): StructuredPickArtifact {
+        if (root == null) return StructuredPickArtifact(session = fallbackSession)
+        val rows = ArrayList<PickSignal>()
+        val tiers = root.optJSONObject("tiers")
+        listOf("A_buy", "B_watch", "C_watch", "keep", "watch", "drop").forEach { key ->
+            tiers?.optJSONArray(key)?.let { arr -> (0 until arr.length()).forEach { rows += parsePick(arr.optJSONObject(it)) ?: return@forEach } }
+        }
+        root.optJSONObject("afternoon")?.let { afternoon ->
+            listOf("keep", "watch", "drop").forEach { key ->
+                afternoon.optJSONArray(key)?.let { arr -> (0 until arr.length()).forEach { rows += parsePick(arr.optJSONObject(it)) ?: return@forEach } }
+            }
+        }
+        root.optJSONArray("picks")?.let { arr -> (0 until arr.length()).forEach { rows += parsePick(arr.optJSONObject(it)) ?: return@forEach } }
+        root.optJSONObject("picks")?.let { picks ->
+            listOf("signals", "values", "limit_up").forEach { key ->
+                picks.optJSONArray(key)?.let { arr -> (0 until arr.length()).forEach { rows += parsePick(arr.optJSONObject(it)) ?: return@forEach } }
+            }
+        }
+        return StructuredPickArtifact(
+            generatedAt = root.optString("generated_at").takeIf { it.isNotBlank() } ?: root.optString("ts").takeIf { it.isNotBlank() },
+            calculationTime = root.optString("calculation_time").takeIf { it.isNotBlank() },
+            date = root.optString("date").takeIf { it.isNotBlank() },
+            session = root.optString("session").takeIf { it.isNotBlank() } ?: fallbackSession,
+            engine = root.optString("engine").takeIf { it.isNotBlank() },
+            status = root.optString("status").takeIf { it.isNotBlank() } ?: "ok",
+            reason = root.optString("reason").takeIf { it.isNotBlank() },
+            picks = rows.distinctBy { it.code }.map { pick ->
+                pick.copy(
+                    engine = pick.engine ?: root.optString("engine").takeIf { it.isNotBlank() },
+                    calculationTime = pick.calculationTime
+                        ?: root.optString("calculation_time").takeIf { it.isNotBlank() }
+                        ?: root.optString("ts").takeIf { it.isNotBlank() },
+                )
+            },
+            metadata = root.toMap(),
+        )
+    }
+
+    private fun parseCloseReview(root: JSONObject?): CloseReview {
+        if (root == null) return CloseReview()
+        val stages = listOf("premarket", "midday", "morning", "afternoon", "tradable_plans", "premarket_review", "midday_review")
+            .mapNotNull { key -> root.optJSONObject(key)?.let { key to it.toMap() } }.toMap()
+        return CloseReview(
+            generatedAt = root.optString("generated_at").takeIf { it.isNotBlank() },
+            date = root.optString("date").takeIf { it.isNotBlank() },
+            status = root.optString("status").takeIf { it.isNotBlank() } ?: "insufficient",
+            reason = root.optString("reason").takeIf { it.isNotBlank() }
+                ?: root.optJSONObject("market_window")?.optString("reason")?.takeIf { it.isNotBlank() },
+            stages = stages,
+        )
+    }
+
+    private fun parseWinrateMatrix(root: JSONObject?): WinrateMatrix {
+        if (root == null) return WinrateMatrix()
+        val horizons = root.optJSONObject("horizons")?.toMap()?.mapValues { (_, value) ->
+            @Suppress("UNCHECKED_CAST")
+            value as? Map<String, Any?> ?: emptyMap()
+        } ?: emptyMap()
+        return WinrateMatrix(
+            ts = root.optString("ts").takeIf { it.isNotBlank() },
+            source = root.optString("source").takeIf { it.isNotBlank() },
+            horizons = horizons,
         )
     }
 

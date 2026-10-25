@@ -157,8 +157,26 @@ fun PoolsScreen(vm: SkappViewModel, state: UiState) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
             }
         }
-        items(visibleItems, key = { pool.id + "_" + normalizedPoolKey(it) }) { item ->
-            PoolRow(item) { if (isStockCode(item.code)) vm.openDetail(item.code) }
+        if (pool.id == "sector_stocks") {
+            visibleItems.groupBy { it.extra["board"]?.toString()?.takeIf { name -> name.isNotBlank() } ?: "未分类板块" }
+                .toSortedMap()
+                .forEach { (board, boardItems) ->
+                    item(key = "sector_header_$board") {
+                        Text(
+                            "$board · 算法候选 ${boardItems.size} 只",
+                            Modifier.padding(start = 12.dp, top = 8.dp, bottom = 2.dp),
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                    items(boardItems, key = { pool.id + "_" + board + "_" + normalizedPoolKey(it) }) { item ->
+                        PoolRow(item) { if (isStockCode(item.code)) vm.openDetail(item.code) }
+                    }
+                }
+        } else {
+            items(visibleItems, key = { pool.id + "_" + normalizedPoolKey(it) }) { item ->
+                PoolRow(item) { if (isStockCode(item.code)) vm.openDetail(item.code) }
+            }
         }
     }
 }

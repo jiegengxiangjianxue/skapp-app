@@ -86,8 +86,37 @@ data class PickSignal(
     val buyable: Boolean? = null,
     val snapshotStatus: String? = null,
     val engine: String? = null,
+    val resonance: Double? = null,
+    val reason: String? = null,
+    val calculationTime: String? = null,
     val why: List<String> = emptyList(),
     val detail: BundleDetail? = null,
+)
+
+data class StructuredPickArtifact(
+    val generatedAt: String? = null,
+    val calculationTime: String? = null,
+    val date: String? = null,
+    val session: String? = null,
+    val engine: String? = null,
+    val status: String = "insufficient",
+    val reason: String? = null,
+    val picks: List<PickSignal> = emptyList(),
+    val metadata: Map<String, Any?> = emptyMap(),
+)
+
+data class CloseReview(
+    val generatedAt: String? = null,
+    val date: String? = null,
+    val status: String = "insufficient",
+    val reason: String? = null,
+    val stages: Map<String, Map<String, Any?>> = emptyMap(),
+)
+
+data class WinrateMatrix(
+    val ts: String? = null,
+    val source: String? = null,
+    val horizons: Map<String, Map<String, Any?>> = emptyMap(),
 )
 
 data class TodayPicks(

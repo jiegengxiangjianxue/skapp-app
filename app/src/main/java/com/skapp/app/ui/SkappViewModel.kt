@@ -113,6 +113,10 @@ data class UiState(
     val quotes: List<QuoteRow> = emptyList(),
     val quoteTs: String? = null,
     val picks: TodayPicks = TodayPicks(),
+    val premarketPicks: com.skapp.app.data.StructuredPickArtifact = com.skapp.app.data.StructuredPickArtifact(session = "premarket"),
+    val middayPicks: com.skapp.app.data.StructuredPickArtifact = com.skapp.app.data.StructuredPickArtifact(session = "midday"),
+    val closeReview: com.skapp.app.data.CloseReview = com.skapp.app.data.CloseReview(),
+    val winrateMatrix: com.skapp.app.data.WinrateMatrix = com.skapp.app.data.WinrateMatrix(),
     val decision: Decision = Decision(),
     val market: MarketSnapshot = MarketSnapshot(),
     val news: NewsSnapshot = NewsSnapshot(),
@@ -297,6 +301,9 @@ class SkappViewModel : ViewModel() {
                 }
             }
             val picksD = async { requestResult { SkappApi.fetchTodayPicks() }.getOrDefault(TodayPicks()) }
+            val structuredD = async { requestResult { SkappApi.fetchStructuredPicks() }.getOrDefault(emptyMap()) }
+            val closeReviewD = async { requestResult { SkappApi.fetchCloseReview() }.getOrDefault(com.skapp.app.data.CloseReview()) }
+            val winrateD = async { requestResult { SkappApi.fetchWinrateMatrix() }.getOrDefault(com.skapp.app.data.WinrateMatrix()) }
             val decisionD = async { requestResult { SkappApi.fetchDecision() }.getOrDefault(Decision()) }
             val marketD = async { requestResult { SkappApi.fetchMarket() }.getOrDefault(MarketSnapshot()) }
             val newsD = async { requestResult { SkappApi.fetchNews() }.getOrDefault(NewsSnapshot()) }
@@ -311,6 +318,10 @@ class SkappViewModel : ViewModel() {
             _state.value = _state.value.copy(
                 loading = false,
                 picks = picksD.await(),
+                premarketPicks = structuredD.await()["premarket"] ?: com.skapp.app.data.StructuredPickArtifact(session = "premarket"),
+                middayPicks = structuredD.await()["midday"] ?: com.skapp.app.data.StructuredPickArtifact(session = "midday"),
+                closeReview = closeReviewD.await(),
+                winrateMatrix = winrateD.await(),
                 decision = decisionD.await(),
                 market = marketD.await(),
                 news = newsD.await(),
@@ -707,7 +718,11 @@ class SkappViewModel : ViewModel() {
             // 云端新闻快照兜底/补充
             // state.news.items 是消息页统一数据源；实时/持久化数据只补充，不清空已有快照。
             items.addAll(_state.value.news.items)
-            val unique = items.map { item ->
+            if (items.isEmpty()) {
+            val liveFallback = requestResult { MarketDataClient.news724(50) }.getOrDefault(emptyList())
+            items.addAll(liveFallback)
+        }
+        val unique = items.map { item ->
                 val title = (item["title"] ?: item["newsTitle"] ?: item["digest"] ?: item["content"])?.toString()?.trim().orEmpty()
                 val time = (item["time"] ?: item["updated"] ?: item["ctime"] ?: item["ts"])?.toString()
                 item + mapOf(

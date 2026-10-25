@@ -100,6 +100,7 @@ object SiteBoardClient {
         val trendD = async(Dispatchers.IO) { getJson(RemoteSources.trendStrength()) }
         val enrichD = async(Dispatchers.IO) { getJson(RemoteSources.enrich()) }
         val debateD = async(Dispatchers.IO) { getJson(RemoteSources.bullBearDebate()) }
+        val engineV5D = async(Dispatchers.IO) { getJson(RemoteSources.engineV5()) }
         val latestD = async(Dispatchers.IO) { getJson(RemoteSources.latest()) }
 
         val out = ArrayList<Pool>()
@@ -162,6 +163,20 @@ object SiteBoardClient {
 
         val sectorFile = sectorD.await()
         val sectorRoot = sectorsApiD.await()
+        val engineV5 = engineV5D.await()
+        val engineScores = LinkedHashMap<String, PoolItem>()
+        engineV5?.optJSONArray("top")?.let { top ->
+            (0 until top.length()).forEach { index ->
+                val row = top.optJSONObject(index) ?: return@forEach
+                val code = canonicalCode(row.optString("code")) ?: return@forEach
+                engineScores[code] = PoolItem(
+                    code = code,
+                    name = row.optString("name").takeIf { it.isNotBlank() },
+                    score = row.optDouble("score").takeIf { !it.isNaN() && it != 0.0 },
+                    extra = row.toMap(),
+                )
+            }
+        }
         val latestSnapshot = latestD.await()
         val sectorItems = buildList {
             listOfNotNull(sectorRoot?.optJSONObject("sector_pool"), sectorFile).forEach { pool ->
@@ -177,15 +192,63 @@ object SiteBoardClient {
         val moneyflowItems = latestSnapshot?.optJSONObject("sector_moneyflow")
             ?.optJSONArray("data")?.toItems().orEmpty()
         val sectors = mergeSectorItems(sectorItems + industryItems + moneyflowItems)
+        val boardMemberItems = sectorRoot?.optJSONObject("board_members")?.let { boards ->
+            val rows = ArrayList<PoolItem>()
+            boards.keys().forEach { bk ->
+                val board = boards.optJSONObject(bk) ?: return@forEach
+                val boardName = board.optString("name").takeIf { it.isNotBlank() } ?: bk
+                board.optJSONArray("members")?.let { members ->
+                    (0 until members.length()).forEach { index ->
+                        val member = members.optJSONObject(index) ?: return@forEach
+                        val code = member.optString("code").takeIf { it.isNotBlank() } ?: return@forEach
+                        val normalized = canonicalCode(code) ?: return@forEach
+                        if (!isMainBoardCode(normalized)) return@forEach
+                        val name = member.optString("name").takeIf { it.isNotBlank() }
+                        val engine = engineScores[normalized]
+                        rows += PoolItem(
+                            normalized,
+                            name ?: engine?.name,
+                            score = engine?.score,
+                            price = engine?.price,
+                            pctChg = engine?.pctChg,
+                            extra = member.toMap() + (engine?.extra ?: emptyMap()) + mapOf(
+                                "board" to boardName,
+                                "board_code" to bk,
+                                "reason" to if (engine?.score != null) "真实板块成分股；engine_v5 分数 ${"%.1f".format(engine.score)}，作为板块内候选排序依据" else "真实板块成分股；engine_v5 未覆盖，评分数据不足",
+                                "algorithm" to "sector_strength + engine_v5 + central_engine",
+                                "engine_score" to (engine?.score ?: "insufficient_data"),
+                                "ranking_basis" to "板块成员 ∩ engine_v5.top；缺少 engine_v5 分数时保留成员但不宣称高概率",
+                                "source" to (board.optString("source").takeIf { it.isNotBlank() } ?: "api/sectors.json.board_members"),
+                                "source_ts" to (board.optString("source_ts").takeIf { it.isNotBlank() } ?: sectorRoot.optString("ts")),
+                            ),
+                        )
+                    }
+                }
+            }
+            rows.distinctBy { item ->
+                "${item.extra["board_code"] ?: "unknown"}:${item.code}"
+            }.groupBy { it.extra["board_code"]?.toString() ?: "unknown" }
+                .values.flatMap { members ->
+                    members.sortedWith(compareByDescending<PoolItem> { it.score != null }
+                        .thenByDescending { it.score ?: Double.NEGATIVE_INFINITY })
+                        .take(5)
+                }
+        }.orEmpty()
         if (sectors.isNotEmpty()) {
             out.add(Pool("sector", "板块池", "板块梯队、行业与概念", sectors, mapOf(
                 "板块总数" to sectors.size,
+                "个股候选" to boardMemberItems.size,
                 "T1" to sectorMeta?.opt("tier1_count")?.takeUnless { it == JSONObject.NULL },
                 "T2" to sectorMeta?.opt("tier2_count")?.takeUnless { it == JSONObject.NULL },
-                "T3" to sectorMeta?.opt("tier3_count")?.takeUnless { it == JSONObject.NULL }),
+                "T3" to sectorMeta?.opt("tier3_count")?.takeUnless { it == JSONObject.NULL },
+                "board_members" to boardMemberItems),
                 sectorMeta?.optJSONObject("meta")?.optString("ts")?.takeIf { it.isNotEmpty() }
                     ?: sectorRoot?.optString("ts")?.takeIf { it.isNotEmpty() }
                     ?: sectorMeta?.optString("date")?.takeIf { it.isNotEmpty() }))
+            if (boardMemberItems.isNotEmpty()) {
+                out.add(Pool("sector_stocks", "板块个股", "各板块成分股，按中枢引擎排序", boardMemberItems,
+                    mapOf("板块" to sectors.size, "候选" to boardMemberItems.size), sectorRoot?.optString("ts")?.takeIf { it.isNotBlank() }))
+            }
         } else missing("sector", "板块池", "sector_pool.json / api/sectors.json")
 
         cycleD.await()?.let { o ->
@@ -523,6 +586,10 @@ object SiteBoardClient {
     private fun mergeLimitupItems(attribution: List<PoolItem>, latest: List<PoolItem>): List<PoolItem> =
         uniqueStockItems(attribution + latest)
 
+
+    private fun isMainBoardCode(code: String): Boolean =
+        code.length == 6 && (code.startsWith("600") || code.startsWith("601") || code.startsWith("603") ||
+            code.startsWith("605") || code.startsWith("000") || code.startsWith("001") || code.startsWith("002"))
 
     private fun canonicalCode(raw: String): String? {
         val value = raw.trim().lowercase(java.util.Locale.ROOT)
