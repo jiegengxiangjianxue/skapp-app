@@ -134,6 +134,9 @@ data class Board(
     val name: String? = null,
     val totalMktcap: Double? = null,
     val nStocks: Int? = null,
+    val heat: Double? = null,
+    val chg1d: Double? = null,
+    val chg5d: Double? = null,
 )
 
 data class SectorsSnapshot(

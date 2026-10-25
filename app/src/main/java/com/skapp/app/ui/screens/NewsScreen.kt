@@ -58,11 +58,11 @@ fun NewsScreen(vm: SkappViewModel, state: UiState) {
     val items = calcs.filter { n ->
         if (tab == 1) n.newsTitle.startsWith("【主线】") else !n.newsTitle.startsWith("【主线】")
     }
-    val expandedThemes = remember { mutableStateOf(setOf<String>()) }
     val themeNames = state.news.themes.mapNotNull { (it["name"] ?: it["theme"])?.toString() }.filter { it.isNotBlank() }
     val grouped = items.groupBy { item ->
         themeNames.firstOrNull { item.newsTitle.contains(it, ignoreCase = true) } ?: "未知"
     }
+    val expandedThemes = remember(grouped.keys.toList()) { mutableStateOf(grouped.keys.toSet()) }
 
     Column(Modifier.fillMaxWidth()) {
         // ── 顶栏 ──

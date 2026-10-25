@@ -61,6 +61,8 @@ fun RealtimeSummaryScreen(vm: SkappViewModel, state: UiState) {
     ) {
         item {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("盘面解读请前往看板查看统一正文；本页仅展示实时异动与推股策略。",
+                    style = MaterialTheme.typography.bodySmall, color = Color.Gray)
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text("实时总结", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
@@ -75,10 +77,9 @@ fun RealtimeSummaryScreen(vm: SkappViewModel, state: UiState) {
                 val summaryTs = listOfNotNull(
                     summary["date"]?.toString(), summary["session"]?.toString(), summary["ts"]?.toString(),
                 ).filter { it.isNotBlank() }.joinToString(" · ").ifBlank { "session/time: unknown" }
-                Text("盘面总结 · $summaryTs", fontWeight = FontWeight.SemiBold)
-                val summaryText = summary["text"]?.toString()?.takeIf { it.isNotBlank() }
-                Text(summaryText ?: "暂无数据：盘面总结未返回有效内容。",
-                    style = MaterialTheme.typography.bodySmall, color = if (summaryText == null) Color.Gray else MaterialTheme.colorScheme.onSurface)
+                Text("盘面总结已统一到看板 · $summaryTs", fontWeight = FontWeight.SemiBold)
+                Text("本页不重复展示盘前正文；请在看板查看统一盘面解读。",
+                    style = MaterialTheme.typography.bodySmall, color = Color.Gray)
                 SessionStatus(summary)
             }
         }

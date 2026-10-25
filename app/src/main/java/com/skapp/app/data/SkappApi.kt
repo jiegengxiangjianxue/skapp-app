@@ -207,6 +207,11 @@ object SkappApi {
             val title = (item["title"] ?: item["newsTitle"] ?: item["digest"] ?: item["content"])?.toString()?.trim().orEmpty()
             val time = (item["time"] ?: item["updated"] ?: item["ctime"] ?: item["ts"])?.toString()
             val stocks = (item["stocks"] as? List<*>) ?: (item["codes"] as? List<*>) ?: emptyList<Any?>()
+            val themes = when (val raw = item["themes"] ?: item["theme"] ?: item["affected_sectors"] ?: item["sectors"]) {
+                is List<*> -> raw
+                null -> emptyList<Any?>()
+                else -> listOf(raw)
+            }
             val image = listOf("image", "img", "cover", "image_url", "images").asSequence().flatMap { key ->
                 when (val value = item[key]) {
                     is String -> sequenceOf(value)
@@ -217,8 +222,9 @@ object SkappApi {
             return item + mapOf(
                 "id" to (item["id"] ?: item["news_id"] ?: ""),
                 "title" to title,
-                "source" to (item["source"] ?: item["source_name"] ?: ""),
+                "source" to (item["source"] ?: item["source_name"] ?: item["src"] ?: ""),
                 "time" to time,
+                "themes" to themes,
                 "verdict" to (item["verdict"] ?: "insufficient"),
                 "direction" to (item["direction"] ?: item["sentiment"] ?: "insufficient"),
                 "positive_reason" to (item["positive_reason"] ?: item["reason_positive"] ?: item["positive"] ?: "insufficient"),
@@ -227,6 +233,7 @@ object SkappApi {
                 "stocks" to stocks,
                 "codes" to (item["codes"] ?: stocks),
                 "image" to image,
+                "url" to (item["url"] ?: item["source_url"] ?: ""),
                 "status" to (item["status"] ?: "insufficient"),
             )
         }
@@ -255,19 +262,32 @@ object SkappApi {
         val o = fetchJson(RemoteSources.apiSectors())
             ?: fetchJson(RemoteSources.apiSectors(RemoteSources.OWNER_C, RemoteSources.REPO_C))
             ?: return@withContext SectorsSnapshot()
+        val poolRows = o.optJSONObject("sector_pool")?.let { pool ->
+            listOf("tier1", "tier2", "tier3").flatMap { key -> pool.optJSONArray(key)?.toMapList() ?: emptyList() }
+        }?.mapNotNull { row ->
+            val name = (row["sector"] ?: row["name"])?.toString()?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            name to row
+        }?.toMap().orEmpty()
         fun boards(name: String): List<Board> =
             o.optJSONArray(name)?.let { arr ->
                 (0 until arr.length()).mapNotNull { i ->
                     val b = arr.optJSONObject(i) ?: return@mapNotNull null
                     val bk = b.optString("bk").takeIf { it.isNotEmpty() } ?: return@mapNotNull null
+                    val boardName = b.optString("name").takeIf { it.isNotEmpty() }
+                    val pool = boardName?.let { poolRows[it] }
                     Board(
                         bk = bk,
-                        name = b.optString("name").takeIf { it.isNotEmpty() },
+                        name = boardName,
                         totalMktcap = b.optDoubleOrNull("total_mktcap"),
                         nStocks = b.optIntOrNull("n_stocks"),
+                        heat = pool?.get("score")?.toString()?.toDoubleOrNull()
+                            ?: b.optDoubleOrNull("score") ?: b.optDoubleOrNull("heat"),
+                        chg1d = pool?.get("avg_chg_1d")?.toString()?.toDoubleOrNull()
+                            ?: b.optDoubleOrNull("chg_1d") ?: b.optDoubleOrNull("changePct") ?: b.optDoubleOrNull("avg_chg_1d"),
+                        chg5d = pool?.get("chg_5d")?.toString()?.toDoubleOrNull() ?: b.optDoubleOrNull("chg_5d"),
                     )
                 }
-            } ?: emptyList()
+            }?.sortedByDescending { it.heat ?: Double.NEGATIVE_INFINITY } ?: emptyList()
         val members = mutableMapOf<String, Map<String, Any?>>()
         o.optJSONObject("board_members")?.let { bm ->
             bm.keys().forEach { k -> bm.optJSONObject(k)?.let { members[k] = it.toMap() } }

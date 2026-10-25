@@ -119,7 +119,7 @@ fun DashboardScreen(vm: SkappViewModel, state: UiState) {
             }
         }
 
-        // ── 盘面解读（commentary）：每日总结正文 ──
+        // 盘面解读只保留看板这一处；实时总结复用同一份 summary，不再重复展示正文。
         item { CommentaryCard(state.summary) }
 
         // ── 主线（mainlines）：当前主线题材 ──

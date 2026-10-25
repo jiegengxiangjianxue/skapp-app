@@ -113,6 +113,15 @@ fun SectorsScreen(vm: SkappViewModel, state: UiState) {
                         Column(Modifier.weight(1f)) {
                             Text(b.name ?: b.bk, fontWeight = FontWeight.Medium)
                             Text(
+                                listOfNotNull(
+                                    b.chg1d?.let { String.format("1日 %+.2f%%", it) },
+                                    b.chg5d?.let { String.format("5日 %+.2f%%", it) },
+                                    b.heat?.let { String.format("热度 %.1f", it) },
+                                ).joinToString(" · ").ifBlank { "暂无热度数据" },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if ((b.chg1d ?: 0.0) >= 0) Color(0xFFF85149) else Color(0xFF3FB950),
+                            )
+                            Text(
                                 b.bk + "　" + (b.nStocks?.let { "$it 只" } ?: "只数暂无"),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = Color.Gray,

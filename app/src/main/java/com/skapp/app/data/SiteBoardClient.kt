@@ -240,6 +240,24 @@ object SiteBoardClient {
             ?: src.optJSONArray("tx_sector_ranking")?.toMapList()
             ?: src.optJSONArray("themes")?.toMapList()
             ?: emptyList<Map<String, Any?>>()
+        getJson(RemoteSources.apiSectors())?.let { sectors ->
+                val ranked = sectors.optJSONObject("sector_pool")?.let { pool ->
+                    listOf("tier1", "tier2", "tier3").flatMap { key ->
+                        (pool.optJSONArray(key)?.toMapList() ?: emptyList()).map { row ->
+                            row + mapOf(
+                                "name" to (row["sector"] ?: row["name"]),
+                                "chg_pct" to (row["avg_chg_1d"] ?: row["chg_1d"] ?: row["score"]),
+                                "chg5d" to row["chg_5d"],
+                                "heat" to (row["score"] ?: row["avg_chg_1d"]),
+                                "leader" to row["leader"],
+                            )
+                        }
+                    }
+                } ?: emptyList()
+                val fallback = sectors.optJSONArray("industries")?.toMapList() ?: emptyList()
+            if (ranked.isNotEmpty()) out["sectors"] = ranked else if ((out["sectors"] as? List<*>)?.isNullOrEmpty() != false) out["sectors"] = fallback
+            out["sector_ts"] = sectors.optString("ts").takeIf { it.isNotEmpty() }
+        }
         out["status"] = "ok"
         out
     }
