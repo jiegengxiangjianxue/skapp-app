@@ -125,7 +125,9 @@ class AllSourcesClient {
         val sectorCount = groups?.optJSONObject("sector")?.optInt("merged", 0) ?: 0
         val newsCount = groups?.optJSONObject("news")?.optInt("merged", 0) ?: 0
         val totalMerged = summary?.optInt("total_merged", 0) ?: 0
-        val registry = j.optJSONArray("sources") ?: j.optJSONArray("registry")
+        val registry = j.optJSONArray("sources_registry")
+            ?: j.optJSONArray("sources")
+            ?: j.optJSONArray("registry")
         val known = registry?.length()
         val sourceCount = known?.let { "已知${it}源" } ?: "源总数未知"
 

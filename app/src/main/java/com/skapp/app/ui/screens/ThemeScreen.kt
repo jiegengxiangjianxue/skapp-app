@@ -53,10 +53,22 @@ fun ThemeScreen(vm: SkappViewModel, state: UiState) {
     ) {
         when {
             loading -> Text("正在加载题材报告…", color = Color.Gray, style = MaterialTheme.typography.bodySmall)
-            failed -> Text(
-                "题材报告加载失败：请检查网络；云端文件存在时会显示题材数与更新时间。",
-                color = Color.Gray, style = MaterialTheme.typography.bodySmall,
-            )
+            failed -> {
+                val fallback = state.news.themes
+                if (fallback.isEmpty()) {
+                    Text(
+                        "题材报告加载失败：请检查网络；云端文件存在时会显示题材数与更新时间。",
+                        color = Color.Gray, style = MaterialTheme.typography.bodySmall,
+                    )
+                } else {
+                    Text("theme_report 不可达，以下仅为旧热点 fallback（${fallback.size}）",
+                        color = Color.Gray, style = MaterialTheme.typography.bodySmall)
+                    fallback.forEach { theme ->
+                        Text((theme["name"] ?: theme["theme"] ?: "insufficient").toString(),
+                            style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
+            }
             else -> {
                 val root = json!!
                 Text(
@@ -130,22 +142,27 @@ private fun ThemeCard(t: JSONObject, vm: SkappViewModel) {
             }
             Spacer(Modifier.height(6.dp))
 
-            // 补涨候选
-            val watch = t.optJSONArray("watchlist")
-            Text("未启动补涨候选（${watch?.length() ?: 0} 只 · 星级越高越优先）",
+            // 补涨候选只显示可识别的主板代码与非涨停附近标的。
+            val rawWatch = t.optJSONArray("watchlist")
+            val watchItems = (0 until (rawWatch?.length() ?: 0)).mapNotNull { i ->
+                val w = rawWatch?.optJSONObject(i) ?: return@mapNotNull null
+                val code = w.optString("code").takeLast(6)
+                val pct = w.optDouble("pctChg", Double.NaN)
+                val status = w.optString("status").lowercase()
+                val buyable = w.has("buyable") && w.optBoolean("buyable", false) &&
+                    status !in setOf("insufficient", "fallback", "stale")
+                if (isMainBoardPick(code) && buyable && !pct.isNaN() && pct < 9.6) w else null
+            }
+            Text("未启动补涨候选（${watchItems.size} 只 · 星级越高越优先）",
                 fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodySmall)
-            if (watch != null) {
-                for (i in 0 until watch.length()) {
-                    val w = watch.optJSONObject(i) ?: continue
-                    val star = w.optInt("star", 0)
-                    Row(Modifier.fillMaxWidth().padding(vertical = 2.dp).let {
-                        it
-                    }, horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text("${w.optString("code")}　${"★".repeat(star)}",
-                            style = MaterialTheme.typography.bodySmall)
-                        Text("20日 ${w.opt("chg20") ?: "—"}% · 位置 ${w.opt("pos") ?: "—"}% · 现价 ${w.opt("close") ?: "—"}",
-                            style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-                    }
+            watchItems.forEach { w ->
+                val star = w.optInt("star", 0)
+                Row(Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("${w.optString("code")}　${"★".repeat(star)}",
+                        style = MaterialTheme.typography.bodySmall)
+                    Text("20日 ${w.opt("chg20") ?: "—"}% · 位置 ${w.opt("pos") ?: "—"}% · 现价 ${w.opt("close") ?: "—"}",
+                        style = MaterialTheme.typography.bodySmall, color = Color.Gray)
                 }
             }
 

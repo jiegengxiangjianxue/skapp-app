@@ -99,8 +99,8 @@ fun BoardScreen(vm: SkappViewModel, state: UiState) {
             }
         }
 
-        // 每日总结（网页版 daily_brief 盘后自动生成）
-        item { DailyBriefCard() }
+        // 每日总结（与 Dashboard 共用 ViewModel 数据源）
+        item { DailyBriefCard(state.summary) }
 
         // 云端数据源健康度（190 源合并产物）
         state.allSourcesSummary?.let { s ->
@@ -477,14 +477,8 @@ private fun readRemoteText(url: String): String? = try {
 } catch (e: Exception) { null }
 
 @Composable
-private fun DailyBriefCard() {
-    var text by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(Unit) {
-        text = withContext(Dispatchers.IO) {
-            readRemoteText(com.skapp.app.data.RemoteSources.dailyBrief())
-        }?.let { runCatching { org.json.JSONObject(it).optString("text") }.getOrNull() }
-    }
-    val t = text ?: return
+private fun DailyBriefCard(summary: Map<String, Any?>) {
+    val t = summary["text"]?.toString()?.takeIf { it.isNotBlank() } ?: return
     Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors()) {
         Column(Modifier.padding(12.dp)) {
             Text("每日总结（盘后自动生成）", fontWeight = FontWeight.SemiBold)

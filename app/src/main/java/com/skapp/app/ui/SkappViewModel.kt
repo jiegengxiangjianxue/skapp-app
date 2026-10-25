@@ -360,7 +360,9 @@ class SkappViewModel : ViewModel() {
     }
 
     private fun registryStats(root: JSONObject): Map<String, Any?> {
-        val registry = root.optJSONArray("sources") ?: root.optJSONArray("registry")
+        val registry = root.optJSONArray("sources_registry")
+            ?: root.optJSONArray("sources")
+            ?: root.optJSONArray("registry")
             ?: return mapOf("status" to "unknown")
         var tested = 0
         var success = 0
@@ -368,14 +370,18 @@ class SkappViewModel : ViewModel() {
         var stale = 0
         var unknown = 0
         for (i in 0 until registry.length()) {
-            val item = registry.optJSONObject(i) ?: run { unknown++; continue }
+            val item = registry.optJSONObject(i)
+            if (item == null) {
+                unknown++
+                continue
+            }
             val status = item.optString("status").lowercase()
             val result = item.optString("result").lowercase()
             tested += if (status.isNotBlank() || result.isNotBlank()) 1 else 0
             when {
-                status in setOf("success", "ok", "healthy") || result in setOf("success", "ok", "healthy") -> success++
-                status in setOf("failure", "failed", "error") || result in setOf("failure", "failed", "error") -> failure++
-                status == "stale" || result == "stale" -> stale++
+                listOf(status, result).any { it in setOf("success", "ok", "healthy") || it.contains("success") || it.contains("healthy") } -> success++
+                listOf(status, result).any { it in setOf("failure", "failed", "error") || it.contains("fail") || it.contains("error") } -> failure++
+                listOf(status, result).any { it == "stale" || it.contains("stale") } -> stale++
                 else -> unknown++
             }
         }
@@ -423,7 +429,9 @@ class SkappViewModel : ViewModel() {
         if (!MarketHours.isTrading() && !MarketHours.isAuction()) return
         viewModelScope.launch {
             val codes = (_state.value.picks.signals + _state.value.picks.values +
-                _state.value.decision.cards.map { PickSignal(it.code, it.name, it.price, it.pctChg) })
+                _state.value.decision.cards.map {
+                    PickSignal(code = it.code, name = it.name, price = it.price, pctChg = it.pctChg)
+                })
                 .map { it.code }.distinct()
             if (codes.isEmpty()) return@launch
             val prefixed = codes.map { SkappApi.prefixed(it) }

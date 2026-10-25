@@ -91,7 +91,7 @@ object LocalScreener {
                 if (batch.size < maxOf(pz, 500)) break
             }
             val all = pages.distinctBy {
-                it["code"]?.toString()?.filter(Char::isDigit)?.takeLast(6)?.padStart(6, '0')
+                standardCode(it["code"]?.toString())
             }
             if (all.isNotEmpty()) return@withContext all
             // 手机网络或东财出口失败时仅重试一页，仍保持真实空结果语义。
@@ -174,6 +174,10 @@ object LocalScreener {
         // 评分不足时只展示可买且有可用本地引擎的实时结果，不把 insufficient 伪装成推荐。
         onProgress("评分达标 0 只，暂无可买推荐（数据不足或过滤涨停）")
         emptyList()
+    }
+    private fun standardCode(raw: String?): String? {
+        val digits = raw.orEmpty().filter(Char::isDigit)
+        return digits.takeLast(6).takeIf { it.length == 6 }
     }
 }
 

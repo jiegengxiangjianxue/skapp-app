@@ -109,7 +109,9 @@ private fun probe(): List<Pair<String, String>> {
     val registryBody = registryResult.substringAfter("|")
     out += "源注册表" to if (registryCode == "200") {
         val root = runCatching { JSONObject(registryBody) }.getOrNull()
-        val sources = root?.optJSONArray("sources") ?: root?.optJSONArray("registry")
+        val sources = root?.optJSONArray("sources_registry")
+            ?: root?.optJSONArray("sources")
+            ?: root?.optJSONArray("registry")
         if (sources == null) "UNKNOWN：注册表未提供" else {
             var tested = 0
             var success = 0
@@ -117,7 +119,11 @@ private fun probe(): List<Pair<String, String>> {
             var stale = 0
             var unknown = 0
             for (i in 0 until sources.length()) {
-                val source = sources.optJSONObject(i) ?: run { unknown++; continue }
+                val source = sources.optJSONObject(i)
+                if (source == null) {
+                    unknown++
+                    continue
+                }
                 val status = (source.optString("status") + " " + source.optString("result")).lowercase()
                 when {
                     status.contains("success") || status.contains("ok") || status.contains("healthy") -> { tested++; success++ }
@@ -170,10 +176,10 @@ private fun probe(): List<Pair<String, String>> {
         val o = runCatching { JSONObject(b) }.getOrNull()
         "${o?.optJSONArray("themes")?.length() ?: 0}个题材"
     }
-    check("自选实时行情(腾讯)", "https://qt.gtimg.cn/q=sh600519") { b ->
+    check("自选实时行情(腾讯)", RemoteSources.quoteProbe()) { b ->
         if (b.contains("~")) "OK 报价可解析" else "响应异常"
     }
-    check("7x24快讯(东财)", "https://np-listapi.eastmoney.com/comm/web/getNewsByColumns?client=web&biz=web7_24&fastColumn=100&column=100&pageSize=5&sortEnd=&sortType=0") { b ->
+    check("7x24快讯(东财)", RemoteSources.news724Probe()) { b ->
         val n = runCatching { JSONObject(b).optJSONObject("data")?.optJSONArray("list")?.length() }.getOrNull()
         if (n != null) "${n}条实时" else "解析失败"
     }

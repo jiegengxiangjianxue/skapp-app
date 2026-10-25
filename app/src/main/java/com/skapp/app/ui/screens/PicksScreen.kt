@@ -157,7 +157,7 @@ fun PicksScreen(vm: SkappViewModel, state: UiState) {
                     // 本地扫描失败/无结果时降级：直接展示云端今日推股（真实数据，30信号/20评分/8涨停）
                     val fb = when (tab) { 1 -> p.signals; 2 -> p.values; 3 -> p.limitUp; else -> p.signals }
                         .filter { sig ->
-                            isMainBoardPick(sig.code) && (tab == 3 || (sig.pctChg != null && sig.pctChg < 9.6))
+                            isMainBoardPick(sig.code) && sig.buyable == true && sig.snapshotStatus != null && sig.snapshotStatus != "stale" && sig.pctChg != null && (tab == 3 || sig.pctChg < 9.6)
                         }
                     if (fb.isNotEmpty()) {
                         Text(
@@ -242,7 +242,7 @@ fun PicksScreen(vm: SkappViewModel, state: UiState) {
         // 云端三 Tab 兜底主板红线过滤（上游若混入 300/301/688/北交所不渲染）
         // 推股不推涨停票：涨幅≥9.6%（主板涨停附近）的标的不进推荐
         val current = (tabs.getOrNull(tab)?.second ?: emptyList()).filter { sig ->
-            isMainBoardPick(sig.code) && sig.pctChg != null && sig.pctChg < 9.6
+            isMainBoardPick(sig.code) && sig.buyable == true && sig.snapshotStatus != null && sig.snapshotStatus != "stale" && sig.pctChg != null && sig.pctChg < 9.6
         }
         if (current.isEmpty()) {
             Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {

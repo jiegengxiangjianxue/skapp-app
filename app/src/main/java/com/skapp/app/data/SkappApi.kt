@@ -108,10 +108,18 @@ object SkappApi {
         }
     }
 
-    /** 新闻逐条分析持久化索引（云端 news_impact_analyze 回写） */
+    /** 新闻逐条分析持久化索引，v2 优先，旧文件作真实 fallback。 */
     suspend fun fetchNewsImpact(): List<Map<String, Any?>> = withContext(Dispatchers.IO) {
-        fetchJson(RemoteSources.appFile(RemoteSources.OWNER_A, RemoteSources.REPO_A, "news_impact.json"))
-            ?.optJSONArray("items")?.toMapList() ?: emptyList()
+        val roots = listOf(
+            fetchJson(RemoteSources.newsImpactV2()),
+            fetchJson(RemoteSources.newsImpact()),
+            fetchJson(RemoteSources.newsImpactV2(RemoteSources.OWNER_C, RemoteSources.REPO_C)),
+            fetchJson(RemoteSources.newsImpact(RemoteSources.OWNER_C, RemoteSources.REPO_C)),
+        )
+        roots.firstNotNullOfOrNull { root ->
+            val arr = root?.optJSONArray("items") ?: root?.optJSONArray("news")
+            arr?.toMapList()?.takeIf { it.isNotEmpty() }
+        } ?: emptyList()
     }
 
     /** app 主文件：A 仓优先，失败退 C 仓 */
@@ -176,20 +184,37 @@ object SkappApi {
         } ?: MarketSnapshot()
     }
 
-    /** 消息面: A 仓优先, 退 C 仓 */
+    /** 消息面：实时 7x24、hot_news/news_extra 与 news_impact v2 统一合并。 */
     suspend fun fetchNews(): NewsSnapshot = withContext(Dispatchers.IO) {
-        val o = fetchJson(RemoteSources.apiNews())
+        val api = fetchJson(RemoteSources.apiNews())
             ?: fetchJson(RemoteSources.apiNews(RemoteSources.OWNER_C, RemoteSources.REPO_C))
-            ?: return@withContext NewsSnapshot()
+        val extra = fetchJson(RemoteSources.newsExtra())
+            ?: fetchJson(RemoteSources.newsExtra(RemoteSources.OWNER_C, RemoteSources.REPO_C))
+        val impact = fetchJson(RemoteSources.newsImpactV2())
+            ?: fetchJson(RemoteSources.newsImpact())
+            ?: fetchJson(RemoteSources.newsImpactV2(RemoteSources.OWNER_C, RemoteSources.REPO_C))
+            ?: fetchJson(RemoteSources.newsImpact(RemoteSources.OWNER_C, RemoteSources.REPO_C))
         val rawItems = ArrayList<Map<String, Any?>>()
-        o.optJSONObject("hot_news")?.optJSONArray("items")?.let { rawItems.addAll(it.toMapList()) }
-        o.optJSONObject("extra")?.optJSONArray("items")?.let { rawItems.addAll(it.toMapList()) }
-        o.optJSONArray("items")?.let { rawItems.addAll(it.toMapList()) }
-        val items = rawItems.map { item ->
-            val title = (item["title"] ?: item["digest"] ?: item["content"])?.toString()?.trim().orEmpty()
+        api?.optJSONObject("hot_news")?.optJSONArray("items")?.let { rawItems.addAll(it.toMapList()) }
+        api?.optJSONObject("extra")?.optJSONArray("items")?.let { rawItems.addAll(it.toMapList()) }
+        api?.optJSONArray("items")?.let { rawItems.addAll(it.toMapList()) }
+        extra?.optJSONArray("items")?.let { rawItems.addAll(it.toMapList()) }
+        extra?.optJSONArray("news")?.let { rawItems.addAll(it.toMapList()) }
+        impact?.optJSONArray("items")?.let { rawItems.addAll(it.toMapList()) }
+        impact?.optJSONArray("news")?.let { rawItems.addAll(it.toMapList()) }
+
+        fun canonical(item: Map<String, Any?>): Map<String, Any?> {
+            val title = (item["title"] ?: item["newsTitle"] ?: item["digest"] ?: item["content"])?.toString()?.trim().orEmpty()
             val time = (item["time"] ?: item["updated"] ?: item["ctime"] ?: item["ts"])?.toString()
             val stocks = (item["stocks"] as? List<*>) ?: (item["codes"] as? List<*>) ?: emptyList<Any?>()
-            item + mapOf(
+            val image = listOf("image", "img", "cover", "image_url", "images").asSequence().flatMap { key ->
+                when (val value = item[key]) {
+                    is String -> sequenceOf(value)
+                    is List<*> -> value.asSequence().mapNotNull { it?.toString() }
+                    else -> emptySequence()
+                }
+            }.firstOrNull { it.startsWith("https://") || it.startsWith("http://") }
+            return item + mapOf(
                 "id" to (item["id"] ?: item["news_id"] ?: ""),
                 "title" to title,
                 "source" to (item["source"] ?: item["source_name"] ?: ""),
@@ -201,25 +226,27 @@ object SkappApi {
                 "reason" to (item["reason"] ?: item["analysis"] ?: "insufficient"),
                 "stocks" to stocks,
                 "codes" to (item["codes"] ?: stocks),
-                "image" to listOf("image", "img", "cover", "image_url", "images")
-                    .firstNotNullOfOrNull { key -> item[key] ?: item[key]?.let { listOf(it) } },
+                "image" to image,
                 "status" to (item["status"] ?: "insufficient"),
             )
-        }.filter { (it["title"] as? String)?.isNotBlank() == true }
+        }
+        val items = rawItems.map(::canonical)
+            .filter { (it["title"] as? String)?.isNotBlank() == true }
             .distinctBy { item ->
                 val id = item["id"]?.toString().orEmpty()
                 if (id.isNotBlank()) id else "${item["title"]}|${item["time"] ?: ""}"
             }.take(50)
+        val root = api ?: extra ?: impact
         NewsSnapshot(
-            schemaVersion = (o.opt("schema_version") ?: o.opt("schemaVersion"))?.toString(),
-            date = o.optString("date").takeIf { it.isNotEmpty() },
-            n = o.optIntOrNull("n") ?: items.size,
-            ts = o.optString("ts").takeIf { it.isNotEmpty() },
-            digest = o.optJSONObject("digest")?.toMap() ?: emptyMap(),
+            schemaVersion = (root?.opt("schema_version") ?: root?.opt("schemaVersion"))?.toString(),
+            date = root?.optString("date").takeIf { !it.isNullOrEmpty() },
+            n = root?.optIntOrNull("n") ?: items.size,
+            ts = root?.optString("ts").takeIf { !it.isNullOrEmpty() },
+            digest = root?.optJSONObject("digest")?.toMap() ?: emptyMap(),
             items = items,
-            themes = o.optJSONObject("themes")?.optJSONArray("themes")?.toMapList() ?: emptyList(),
-            impacts = o.optJSONObject("impact")?.optJSONArray("impacts")?.toMapList() ?: emptyList(),
-            transmission = o.optJSONObject("transmission")?.optJSONArray("items")?.toMapList() ?: emptyList(),
+            themes = root?.optJSONObject("themes")?.optJSONArray("themes")?.toMapList() ?: emptyList(),
+            impacts = impact?.optJSONArray("impacts")?.toMapList() ?: emptyList(),
+            transmission = root?.optJSONObject("transmission")?.optJSONArray("items")?.toMapList() ?: emptyList(),
         )
     }
 

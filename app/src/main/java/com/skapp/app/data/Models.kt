@@ -125,6 +125,7 @@ data class NewsSnapshot(
     val themes: List<Map<String, Any?>> = emptyList(),
     val impacts: List<Map<String, Any?>> = emptyList(),
     val transmission: List<Map<String, Any?>> = emptyList(),
+    val usedFallback: Boolean = false,
 )
 
 /** 板块 */

@@ -3,8 +3,7 @@ package com.skapp.app.data
 /**
  * 远端数据源地址。app 只读 raw.githubusercontent.com 静态 JSON（无服务端）。
  *
- * 布局说明（2026-10-21 修复）：app 期望 base(…/data) + "/data/<file>"，
- * 因此三个仓都必须有 data/data/ 双 data 路径。
+ * 布局说明：base 已定位到仓库的 data 目录，appFile 只追加文件名，避免形成 data/data。
  */
 object RemoteSources {
 
@@ -57,6 +56,23 @@ object RemoteSources {
     /** 消息面: 站点 news_* 四个引擎 + hot_news/news_digest 聚合 */
     fun apiNews(owner: String = OWNER_A, repo: String = REPO_A): String =
         "${base(owner, repo)}/api/news.json"
+
+    /** 可独立回写的新闻附加与逐条影响分析产物。 */
+    fun newsExtra(owner: String = OWNER_A, repo: String = REPO_A): String =
+        appFile(owner, repo, "news_extra.json")
+
+    fun newsImpact(owner: String = OWNER_A, repo: String = REPO_A): String =
+        appFile(owner, repo, "news_impact.json")
+
+    fun newsImpactV2(owner: String = OWNER_A, repo: String = REPO_A): String =
+        appFile(owner, repo, "news_impact_v2.json")
+
+    /** 诊断页使用的真实外部探针地址，避免 UI 散落 raw URL。 */
+    fun quoteProbe(): String = "${QUOTE_QT}sh600519"
+
+    fun news724Probe(): String =
+        "https://np-listapi.eastmoney.com/comm/web/getNewsByColumns" +
+            "?client=web&biz=web7_24&fastColumn=100&column=100&pageSize=5&sortEnd=&sortType=0"
 
     fun themeReport(owner: String = OWNER_A, repo: String = REPO_A): String =
         appFile(owner, repo, "theme_report.json")
