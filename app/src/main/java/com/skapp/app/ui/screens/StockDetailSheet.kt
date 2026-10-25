@@ -58,7 +58,7 @@ private val BLUE = Color(0xFF58A6FF)
 /**
  * 个股详情（本地引擎 + 多源数据）：
  *   实时报价 / 日K图(前·后复权切换) / 分时 / 历史资金流 / 所属板块 /
- *   本地多引擎评分与理由 / 技术参数 / 云端财务摘要 / AI 问答 / 数据来源
+ *   本地多引擎评分与理由 / 技术参数 / 云端财务摘要 / 数据来源
  */
 @Composable
 fun StockDetailSheet(vm: SkappViewModel, state: UiState) {
@@ -346,7 +346,7 @@ fun StockDetailSheet(vm: SkappViewModel, state: UiState) {
             Column(Modifier.padding(12.dp)) {
                 Text("历史资金流", fontWeight = FontWeight.SemiBold)
                 Text(
-                    "主力净额（东财 push2his）",
+                    "来源：东财 push2his fflow（兜底 push2delay） · 覆盖：${if (state.fundFlow.isNotEmpty()) "ok" else "unknown"}",
                     style = MaterialTheme.typography.bodySmall,
                     color = Color.Gray,
                 )
@@ -373,6 +373,11 @@ fun StockDetailSheet(vm: SkappViewModel, state: UiState) {
         SectionCard("所属板块") {
             val boards = state.boardsOf.mapNotNull { it["name"]?.toString() }
             val cloudBoards = d.boards
+            Text(
+                "来源：东财 stock/get · 覆盖：${if (boards.isNotEmpty() || cloudBoards.isNotEmpty()) "ok" else "unknown"}",
+                style = MaterialTheme.typography.bodySmall,
+                color = Color.Gray,
+            )
             if (boards.isEmpty() && cloudBoards.isEmpty()) {
                 Text("暂无数据", color = Color.Gray)
             } else {
@@ -385,40 +390,17 @@ fun StockDetailSheet(vm: SkappViewModel, state: UiState) {
         // ── 云端财务摘要 ──
         SectionCard("财务摘要（云端 bundle）") {
             val fin = d.detail?.financialLatest
+            Text(
+                "来源：cloud bundle · 覆盖：${d.detail?.status ?: "unknown"} · 时点：${d.detail?.ts ?: "unknown"}",
+                style = MaterialTheme.typography.bodySmall,
+                color = Color.Gray,
+            )
             if (fin.isNullOrEmpty()) {
                 Text("暂无数据：分片 bundle 未覆盖该股。", color = Color.Gray)
             } else {
                 fin.entries.take(12).forEach { (k, v) ->
                     Text("${finLabel(k)}：${v ?: "暂无数据"}")
                 }
-            }
-        }
-
-        // ── 云端引擎评分（站点产物）──
-        SectionCard("云端引擎评分（站点 CI 产物）") {
-            if (d.engineScores.isEmpty()) {
-                Text("暂无数据：该股未进入今日云端推股池。", color = Color.Gray)
-            } else {
-                d.engineScores.entries.forEach { (k, v) ->
-                    Text("$k：${v?.let { String.format("%.2f", it) } ?: "暂无数据"}")
-                }
-            }
-        }
-
-        // ── AI 问答 ──
-        SectionCard("AI 问答（基于真实数据）") {
-            val qa = d.aiQa
-            if (qa == null || qa.status != "ok") {
-                Text("暂无数据：该股尚未生成 AI 问答（${qa?.reason ?: "未生成"}）。", color = Color.Gray)
-            } else {
-                if (!qa.why.isNullOrBlank()) Text("为何关注：${qa.why}")
-                if (!qa.risk.isNullOrBlank()) Text("主要风险：${qa.risk}")
-                if (!qa.focus.isNullOrBlank()) Text("观察点：${qa.focus}")
-                Text(
-                    "模型：${qa.model ?: "未知"}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = Color.Gray,
-                )
             }
         }
 
@@ -459,7 +441,7 @@ fun StockDetailSheet(vm: SkappViewModel, state: UiState) {
             Text("东财：F10 财务 / 龙虎榜 / 板块资金 / 全球指数")
             Text("新浪：hq.sinajs.cn / vip.stock.finance.sina.com.cn")
             Text("雪球热搜：stock.xueqiu.com")
-            Text("云端 bundle / AI 问答：qwerzxcva/stocks-ai-view + 镜像")
+            Text("云端 bundle：qwerzxcva/stocks-ai-view + 镜像；AI 总结请从唯一入口进入")
         }
     }
 }
