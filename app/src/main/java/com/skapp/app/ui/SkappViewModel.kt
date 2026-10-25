@@ -268,7 +268,6 @@ class SkappViewModel : ViewModel() {
             val sectorsD = async { SkappApi.fetchSectors() }
             val poolsD = async { SiteBoardClient.pools() }
             val boardD = async { SiteBoardClient.board() }
-            val summaryD = async { SiteBoardClient.summary() }
             val themeD = async { SiteBoardClient.themeReport() }
 
             val symbols = symbolsD.await()
@@ -283,7 +282,6 @@ class SkappViewModel : ViewModel() {
                 sectors = sectorsD.await(),
                 pools = poolsD.await(),
                 board = boardD.await(),
-                summary = summaryD.await(),
                 themeReport = themeD.await(),
                 symbols = symbols,
             )
@@ -292,7 +290,6 @@ class SkappViewModel : ViewModel() {
             refreshQuotes()
             refreshPickQuotes()   // 推股/决策列表补实时报价（覆盖快照价）
             loadIndices()
-            loadNewsCalcs()
             loadMarketState()
         }
     }
@@ -668,7 +665,18 @@ class SkappViewModel : ViewModel() {
         }
     }
 
-    /** 实时总结 */
+    /** 手动刷新实时总结：正文、消息异动和本地推股统一由一个入口触发。 */
+    fun refreshRealtimeSummary(mode: String = "score") {
+        viewModelScope.launch {
+            coroutineScope {
+                launch { loadSummary() }
+                launch { loadNewsCalcs() }
+                launch { runScreen(mode, force = true) }
+            }
+        }
+    }
+
+    /** 实时总结正文只在用户刷新时加载。 */
     fun loadSummary() {
         viewModelScope.launch {
             val s = runCatching { SiteBoardClient.summary() }.getOrElse {
@@ -836,7 +844,6 @@ $ctx
             coroutineScope {
                 async { loadBoard() }
                 async { loadPicks() }
-                async { loadNewsCalcs() }
                 async { refreshQuotes() }
                 async { loadIndices() }
             }

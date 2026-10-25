@@ -22,7 +22,6 @@ import androidx.compose.material.icons.filled.Newspaper
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.QueryStats
 import androidx.compose.material.icons.filled.ShowChart
-import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -56,8 +55,7 @@ fun HubScreen(vm: SkappViewModel, state: UiState, onNavigate: (Int) -> Unit) {
             title = "决策",
             subtitle = "候选、策略与复盘",
             modules = listOf(
-                ModuleSpec("实时总结", "早盘/午盘/收盘 + 本地算法与引擎", "实时总结", 1, Icons.Filled.AutoGraph),
-                ModuleSpec("个股决策", "仓位建议与买卖点", "决策", 6, Icons.Filled.Tune),
+                ModuleSpec("实时总结", "早盘/午盘/收盘 + 推股策略与引擎", "实时总结", 1, Icons.Filled.AutoGraph),
                 ModuleSpec("多池选股", "好股票与策略池", "多池", 7, Icons.Filled.Layers),
             ),
         ),
@@ -65,8 +63,7 @@ fun HubScreen(vm: SkappViewModel, state: UiState, onNavigate: (Int) -> Unit) {
             title = "资讯",
             subtitle = "新闻与题材变化",
             modules = listOf(
-                ModuleSpec("消息中心", "市场新闻与重要动态", "消息", 3, Icons.Filled.Newspaper),
-                ModuleSpec("题材观察", "题材热度与关联标的", "题材", 2, Icons.Filled.Category),
+                ModuleSpec("消息与题材", "按题材展开消息，未匹配内容归入未知", "消息与题材", 3, Icons.Filled.Newspaper),
             ),
         ),
         ModuleGroup(
@@ -152,7 +149,6 @@ private fun ModuleCard(
         0 -> "${state.aShareIndices.size} 个指数"
         1 -> "${state.picks.signals.size + state.picks.values.size} 条候选"
         5 -> "${state.aShareIndices.size + state.globalIndices.size} 个指数"
-        6 -> "${state.decision.cards.size} 张决策卡"
         7 -> "${state.pools.size} 个选股池"
         8 -> "${state.sectors.industries.size + state.sectors.concepts.size} 个板块"
         else -> module.category

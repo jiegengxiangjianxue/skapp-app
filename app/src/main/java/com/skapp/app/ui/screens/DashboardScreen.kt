@@ -18,13 +18,13 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Card
+import androidx.compose.material3.Button
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -275,19 +275,35 @@ private fun CommentaryCard(summary: Map<String, Any?>) {
 @Composable
 private fun StockSearchCard(vm: SkappViewModel, state: UiState) {
     var query by remember { mutableStateOf("") }
+    var searched by remember { mutableStateOf(false) }
     Card(colors = CardDefaults.cardColors()) {
         Column(Modifier.padding(12.dp)) {
             Text("个股查（panel-stock）", fontWeight = FontWeight.SemiBold,
                 style = MaterialTheme.typography.bodySmall)
             Spacer(Modifier.height(4.dp))
-            androidx.compose.material3.OutlinedTextField(
-                value = query,
-                onValueChange = { query = it; vm.search(it) },
-                label = { Text("输入股票代码或名称，如 600519") },
+            Row(
                 modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-            )
-            if (query.isNotBlank() && state.searchResults.isNotEmpty()) {
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                androidx.compose.material3.OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it; searched = false },
+                    label = { Text("输入股票代码或名称，如 600519") },
+                    modifier = Modifier.weight(1f),
+                    singleLine = true,
+                )
+                Button(
+                    onClick = {
+                        searched = true
+                        vm.search(query)
+                    },
+                    enabled = query.isNotBlank(),
+                ) {
+                    Text("搜索")
+                }
+            }
+            if (searched && state.searchResults.isNotEmpty()) {
                 state.searchResults.take(6).forEach { s ->
                     Row(Modifier.fillMaxWidth().padding(vertical = 4.dp).clickable { vm.openDetail(s.code) },
                         horizontalArrangement = Arrangement.SpaceBetween) {
@@ -296,6 +312,9 @@ private fun StockSearchCard(vm: SkappViewModel, state: UiState) {
                             style = MaterialTheme.typography.bodySmall)
                     }
                 }
+            } else if (searched) {
+                Text("暂无匹配股票，请检查代码或名称。", color = Color.Gray,
+                    style = MaterialTheme.typography.bodySmall)
             }
         }
     }

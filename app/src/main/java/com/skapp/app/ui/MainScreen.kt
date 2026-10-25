@@ -41,7 +41,7 @@ import com.skapp.app.ui.screens.UnifiedAskScreen
 
 /** 模块编号与 HubScreen 一致；保留旧编号，避免业务页面路由变化。 */
 private val MODULE_NAMES = mapOf(
-    0 to "看板", 1 to "实时总结", 2 to "题材", 3 to "消息", 4 to "全部",
+    0 to "看板", 1 to "实时总结", 2 to "消息与题材", 3 to "消息与题材", 4 to "全部",
     5 to "行情", 6 to "决策", 7 to "多池", 8 to "板块", 11 to "AI 总结", 12 to "自检",
 )
 
@@ -115,7 +115,7 @@ fun MainScreen(vm: SkappViewModel) {
                 when (module) {
                     0 -> DashboardScreen(vm, state)
                     1 -> RealtimeSummaryScreen(vm, state)
-                    2 -> ThemeScreen(vm, state)
+                    2 -> NewsScreen(vm, state)
                     3 -> NewsScreen(vm, state)
                     4 -> HubScreen(vm, state) { module = it }
                     5 -> MarketScreen(vm, state)

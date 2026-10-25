@@ -30,7 +30,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -53,13 +52,15 @@ private val DOWN = Color(0xFF3FB950)
 @Composable
 fun NewsScreen(vm: SkappViewModel, state: UiState) {
     var tab by remember { mutableStateOf(0) }   // 0 快讯 / 1 主线
-    // 进入页面自动拉一次（含设备直连的实时 7x24，不再是纯 CI 快照）
-    LaunchedEffect(Unit) {
-        if (state.newsCalcs.isEmpty() && !state.newsCalcLoading) vm.loadNewsCalcs()
-    }
+    // 消息只在用户点击刷新时拉取，避免进入页面自动触发慢请求。
     val calcs = state.newsCalcs
     val items = calcs.filter { n ->
         if (tab == 1) n.newsTitle.startsWith("【主线】") else !n.newsTitle.startsWith("【主线】")
+    }
+    val expandedThemes = remember { mutableStateOf(setOf<String>()) }
+    val themeNames = state.news.themes.mapNotNull { (it["name"] ?: it["theme"])?.toString() }.filter { it.isNotBlank() }
+    val grouped = items.groupBy { item ->
+        themeNames.firstOrNull { item.newsTitle.contains(it, ignoreCase = true) } ?: "未知"
     }
 
     Column(Modifier.fillMaxWidth()) {
@@ -108,8 +109,27 @@ fun NewsScreen(vm: SkappViewModel, state: UiState) {
                 Modifier.fillMaxWidth().padding(horizontal = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                items(items, key = { it.newsTitle.hashCode() }) { n ->
-                    NewsCardWithCalc(n, vm)
+                grouped.forEach { (theme, rows) ->
+                    item(key = "theme:$theme") {
+                        Row(
+                            Modifier.fillMaxWidth().clickable {
+                                val current = expandedThemes.value
+                                expandedThemes.value = if (theme in current) current - theme else current + theme
+                            }.padding(vertical = 8.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text("$theme · ${rows.size} 条", fontWeight = FontWeight.SemiBold)
+                            Text(if (theme in expandedThemes.value) "收起" else "展开",
+                                color = MaterialTheme.colorScheme.primary,
+                                style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                    if (theme in expandedThemes.value) {
+                        items(rows, key = { "news:${theme}:${it.newsTitle}:${it.ts.orEmpty()}" }) { n ->
+                            NewsCardWithCalc(n, vm)
+                        }
+                    }
                 }
             }
         }

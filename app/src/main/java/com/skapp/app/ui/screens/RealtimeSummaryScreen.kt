@@ -16,7 +16,6 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -37,8 +36,6 @@ private enum class ResultOrder(val title: String, val mode: String) {
 @Composable
 fun RealtimeSummaryScreen(vm: SkappViewModel, state: UiState) {
     var order by remember { mutableStateOf(ResultOrder.SCORE) }
-
-    LaunchedEffect(order) { vm.runScreen(order.mode) }
 
     val uniqueResults = remember(state.screened) {
         state.screened.distinctBy { normalizeScreenCode(it.code) }
@@ -71,8 +68,7 @@ fun RealtimeSummaryScreen(vm: SkappViewModel, state: UiState) {
                             style = MaterialTheme.typography.bodySmall, color = Color.Gray)
                     }
                     Text("刷新", Modifier.clickable {
-                        vm.loadSummary()
-                        vm.runScreen(order.mode, force = true)
+                        vm.refreshRealtimeSummary(order.mode)
                     }, color = MaterialTheme.colorScheme.primary)
                 }
                 val summary = state.summary
@@ -83,15 +79,13 @@ fun RealtimeSummaryScreen(vm: SkappViewModel, state: UiState) {
                 val summaryText = summary["text"]?.toString()?.takeIf { it.isNotBlank() }
                 Text(summaryText ?: "暂无数据：盘面总结未返回有效内容。",
                     style = MaterialTheme.typography.bodySmall, color = if (summaryText == null) Color.Gray else MaterialTheme.colorScheme.onSurface)
-                Text("推股主入口：LocalScreener → LocalEngine；云端 engine_v5 仅作来源参考。",
-                    style = MaterialTheme.typography.bodySmall, color = Color.Gray)
                 SessionStatus(summary)
             }
         }
 
         item {
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text("本地实时结果", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                Text("推股策略", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     ResultOrder.values().forEach { option ->
                         Card(
@@ -110,13 +104,13 @@ fun RealtimeSummaryScreen(vm: SkappViewModel, state: UiState) {
                     else Text("扫描", Modifier.clickable { vm.runScreen(order.mode, force = true) }
                         .padding(horizontal = 8.dp, vertical = 7.dp), color = MaterialTheme.colorScheme.primary)
                 }
-                Text("${state.screenMsg ?: "本地实时扫描"} · ${state.scanMode.ifBlank { "mode unknown" }}",
+                Text("${state.screenMsg ?: "实时策略待刷新"} · ${state.scanMode.ifBlank { "mode unknown" }}",
                     style = MaterialTheme.typography.bodySmall, color = Color.Gray)
             }
         }
 
         if (visible.isEmpty()) {
-            item { Text(if (state.screening) "本地扫描进行中…" else "暂无数据：当前模式没有可展示的本地结果。", color = Color.Gray) }
+            item { Text(if (state.screening) "实时策略扫描进行中…" else "暂无数据：请点击“扫描”获取当前模式结果。", color = Color.Gray) }
         } else {
             item { Text("${visible.size} 只 · ${order.title}排序", style = MaterialTheme.typography.bodySmall, color = Color.Gray) }
             items(visible, key = { normalizeScreenCode(it.code) }) { item ->
