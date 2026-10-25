@@ -326,3 +326,23 @@ private fun StockSearchCard(vm: SkappViewModel, state: UiState) {
 private fun EmptyNote(msg: String) {
     Text(msg, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
 }
+
+/** 本文件的 SectionTitle（原引 BoardScreen 的 private 版本，编译报 private-in-file） */
+@Composable
+private fun SectionTitle(t: String) {
+    Text(t, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+}
+
+/** 市场状态卡（简化版；原引 BoardScreen 的 private MarketStateCard） */
+@Composable
+private fun MarketStateCard(ms: com.skapp.app.data.MarketState) {
+    Card(colors = CardDefaults.cardColors()) {
+        Column(Modifier.padding(12.dp)) {
+            Text("市场状态机", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            Text(
+                "${ms.mode} · ${ms.note}",
+                style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+            )
+        }
+    }
+}

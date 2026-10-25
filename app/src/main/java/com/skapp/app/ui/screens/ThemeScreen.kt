@@ -1,6 +1,8 @@
 package com.skapp.app.ui.screens
 
 import androidx.compose.foundation.layout.Arrangement
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -56,8 +58,6 @@ private fun readRemoteText(url: String): String? = try {
     }
 } catch (e: Exception) { null }
 
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 
 @Composable
 fun ThemeScreen(vm: SkappViewModel, state: UiState) {
