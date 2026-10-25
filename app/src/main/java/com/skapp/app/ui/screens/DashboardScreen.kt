@@ -40,12 +40,8 @@ import com.skapp.app.ui.SkappViewModel
 import com.skapp.app.ui.UiState
 
 /**
- * 看板首页 —— 网页版 panel-board 完整对齐重构。
- *
- * 网页版结构（index.html）：顶部 KPI 8 格（涨停/跌停/炸板/封板率 + 宽度热力条）
- *   + 盘面解读(commentary) + 主线(mainlines) + 行业排行(panel-industry)
- *   + 个股查(panel-stock) + 板块池(panel-board)。
- * 本页按同一 IA 重排，每区独立空态（数据缺哪个就标哪个，不再整页空白）。
+ * 看板首页：盘面解读、市场总览与个股查询。
+ * 板块池与涨停池统一从多池页面进入，避免重复列表。
  */
 private val UP = Color(0xFFF85149)
 private val DOWN = Color(0xFF3FB950)
@@ -121,73 +117,6 @@ fun DashboardScreen(vm: SkappViewModel, state: UiState) {
 
         // 盘面解读只保留看板这一处；实时总结复用同一份 summary，不再重复展示正文。
         item { CommentaryCard(state.summary) }
-
-        // ── 主线（mainlines）：当前主线题材 ──
-        item {
-            val ml = b["mainlines"] as? List<*>
-            if (!ml.isNullOrEmpty()) {
-                SectionTitle("主线题材（${ml.size}）")
-                ml.take(6).forEach { it2 ->
-                    val m = it2 as? Map<*, *> ?: return@forEach
-                    Card(colors = CardDefaults.cardColors()) {
-                        Row(Modifier.fillMaxWidth().padding(12.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text((m["name"] ?: m["theme"])?.toString() ?: "—", fontWeight = FontWeight.Medium)
-                            Text("${(m["heat"] as? Number)?.toDouble()?.let { String.format("%.0f", it) } ?: "—"} 热度",
-                                style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-                        }
-                    }
-                }
-            } else {
-                EmptyNote("主线题材：latest.json 未产出 mainlines")
-            }
-        }
-
-        // ── 行业排行（panel-industry）──
-        item {
-            val secs = b["sectors"] as? List<*>
-            if (!secs.isNullOrEmpty()) {
-                SectionTitle("行业/板块热度（${secs.size}）")
-                secs.take(10).forEach { it2 ->
-                    val m = it2 as? Map<*, *> ?: return@forEach
-                    val chg = (m["chg"] ?: m["pctChg"] ?: m["avg_chg_1d"]) as? Number
-                    Card(colors = CardDefaults.cardColors()) {
-                        Row(Modifier.fillMaxWidth().padding(12.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text((m["name"] ?: m["sector"] ?: m["board"])?.toString() ?: "—",
-                                fontWeight = FontWeight.Medium)
-                            Text(chg?.let { String.format("%+.2f%%", it.toDouble()) } ?: "—",
-                                color = if ((chg?.toDouble() ?: 0.0) >= 0) UP else DOWN,
-                                style = MaterialTheme.typography.bodySmall)
-                        }
-                    }
-                }
-            } else {
-                EmptyNote("行业排行：latest.json 未产出 sectors/tx_sector_ranking/themes")
-            }
-        }
-
-        // ── 涨停池（limit_up_pool）──
-        item {
-            val lu = b["limit_up"] as? List<*>
-            if (!lu.isNullOrEmpty()) {
-                SectionTitle("涨停池（${lu.size}）")
-                lu.take(12).forEach { it2 ->
-                    val m = it2 as? Map<*, *> ?: return@forEach
-                    Card(colors = CardDefaults.cardColors()) {
-                        Row(Modifier.fillMaxWidth().padding(12.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text("${(m["name"] ?: m["code"])?.toString() ?: "—"}",
-                                fontWeight = FontWeight.Medium)
-                            Text("${m["lianban"] ?: m["board_num"] ?: "1"}板 · ${m["seal_label"] ?: m["industry"] ?: ""}",
-                                style = MaterialTheme.typography.bodySmall, color = UP)
-                        }
-                    }
-                }
-            } else {
-                EmptyNote("涨停池：latest.json 未产出 limit_up_pool")
-            }
-        }
 
         // ── 个股查（panel-stock）：搜索入口 ──
         item { StockSearchCard(vm, state) }

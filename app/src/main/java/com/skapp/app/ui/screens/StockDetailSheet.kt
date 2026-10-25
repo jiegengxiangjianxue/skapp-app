@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -65,19 +66,20 @@ fun StockDetailSheet(vm: SkappViewModel, state: UiState) {
     val d = state.detail
     // 控制图表显示区间；state.kline 已含全历史，这里只裁剪展示，无需改 ViewModel
     var klineCount by remember { mutableStateOf(320) }
-    Column(
-        Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(12.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
+    Column(Modifier.fillMaxSize()) {
         Row(
-            Modifier.fillMaxWidth(),
+            Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface).padding(horizontal = 12.dp, vertical = 4.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            TextButton(onClick = vm::closeDetail) {
+                Text("‹ 返回")
+            }
             Text(
                 "${d?.name ?: d?.code ?: "加载中"}",
-                style = MaterialTheme.typography.titleLarge,
+                style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold,
+                modifier = Modifier.weight(1f),
             )
             Row(verticalAlignment = Alignment.CenterVertically) {
                 d?.code?.let { code ->
@@ -95,7 +97,10 @@ fun StockDetailSheet(vm: SkappViewModel, state: UiState) {
                 }
             }
         }
-
+        Column(
+            Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
         if (state.detailLoading || d == null) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 CircularProgressIndicator()
@@ -442,6 +447,7 @@ fun StockDetailSheet(vm: SkappViewModel, state: UiState) {
             Text("新浪：hq.sinajs.cn / vip.stock.finance.sina.com.cn")
             Text("雪球热搜：stock.xueqiu.com")
             Text("云端 bundle：qwerzxcva/stocks-ai-view + 镜像；AI 总结请从唯一入口进入")
+        }
         }
     }
 }

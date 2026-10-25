@@ -43,15 +43,21 @@ import com.skapp.app.data.TechnicalCalc
 import com.skapp.app.data.SectorsSnapshot
 import com.skapp.app.data.SymbolEntry
 import com.skapp.app.data.TodayPicks
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.supervisorScope
+import kotlinx.coroutines.withContext
 import org.json.JSONObject
 
 /** 自选股：SharedPreferences 持久化 + Compose 可观察，支持增删 */
@@ -159,6 +165,8 @@ data class UiState(
     /** 逐条快讯的实时算法计算（直接显示在标题下） */
     val newsCalcs: List<NewsCalc> = emptyList(),
     val newsCalcLoading: Boolean = false,
+    val summaryRefreshing: Boolean = false,
+    val summaryRefreshMessage: String? = null,
     /** GitCode AI */
     val aiToken: String = "",
     val aiConfigured: Boolean = false,
@@ -199,7 +207,20 @@ class SkappViewModel : ViewModel() {
     val state: StateFlow<UiState> = _state.asStateFlow()
 
     private var quoteJob: Job? = null
+    private var detailJob: Job? = null
     private var askEngine: AskEngine? = null
+    private var stockNames: Map<String, String> = emptyMap()
+    private var searchQuery: String = ""
+
+    private suspend fun <T> requestResult(block: suspend () -> T): Result<T> = try {
+        val value = block()
+        currentCoroutineContext().ensureActive()
+        Result.success(value)
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        Result.failure(e)
+    }
 
     init {
         // 不在 init 里 load()：token 要等 loadSavedToken 恢复；此时拉数据会因无鉴权全失败（app 打开全空的根因）
@@ -259,8 +280,18 @@ class SkappViewModel : ViewModel() {
     fun load() {
         viewModelScope.launch {
             _state.value = _state.value.copy(loading = true, error = null)
-            val namesD = async { SkappApi.fetchStockNames() }
-            val symbolsD = async { SkappApi.fetchSymbols() }
+            val namesD = async {
+                SkappApi.fetchStockNames().also { names ->
+                    stockNames = names
+                    search(searchQuery)
+                }
+            }
+            val symbolsD = async {
+                SkappApi.fetchSymbols().also { symbols ->
+                    _state.value = _state.value.copy(symbols = symbols)
+                    search(searchQuery)
+                }
+            }
             val picksD = async { SkappApi.fetchTodayPicks() }
             val decisionD = async { SkappApi.fetchDecision() }
             val marketD = async { SkappApi.fetchMarket() }
@@ -480,18 +511,28 @@ class SkappViewModel : ViewModel() {
     /** 搜索：代码或名称模糊匹配 */
     fun search(q: String) {
         val query = q.trim().lowercase()
+        searchQuery = q
         if (query.isEmpty()) {
             _state.value = _state.value.copy(searchResults = emptyList())
             return
         }
-        val res = _state.value.symbols.asSequence()
+        val res = (_state.value.symbols + stockNames.map { (code, name) -> SymbolEntry(code, name) })
+            .asSequence()
+            .mapNotNull { entry ->
+                val code = SkappApi.normalize(entry.code) ?: return@mapNotNull null
+                SymbolEntry(code, entry.name?.takeIf { it.isNotBlank() } ?: stockNames[code])
+            }
+            .distinctBy { it.code }
             .filter { s ->
                 s.code.lowercase().contains(query) ||
                     (s.name?.lowercase()?.contains(query) == true)
             }
             .take(50)
             .toList()
-        _state.value = _state.value.copy(searchResults = res)
+        val fallback = if (res.isEmpty()) SkappApi.directSymbol(query)?.let {
+            listOf(it.copy(name = stockNames[it.code]))
+        } ?: emptyList() else emptyList()
+        _state.value = _state.value.copy(searchResults = res.ifEmpty { fallback })
     }
 
     /**
@@ -506,47 +547,99 @@ class SkappViewModel : ViewModel() {
     }
 
     fun openDetail(code: String, adjust: String = "qfq") {
-        val same = _state.value.detail?.code == code &&
+        val normalized = SkappApi.normalize(code) ?: code
+        val same = _state.value.detail?.code == normalized &&
             _state.value.detailAdjust == adjust &&
-            _state.value.holo != null
-        viewModelScope.launch {
-            _state.value = _state.value.copy(detailLoading = !same, detailAdjust = adjust)
-            // 1) stocks-holo（网页版同源：kline/technical/finance/moneyflow/news/sentiment）
-            val holo = HoloClient.full(code)
-            // 2) 日 K：holo 优先（全史），退化腾讯/东财
-            val bars = when {
-                holo.kline.size >= 30 -> holo.kline
-                else -> DataCache.kline(code, adjust, 250)
-            }
-            if (!same) _state.value = _state.value.copy(kline = bars, holo = holo)
-            // 3) 实时报价（现价以实时为准，修「多维评分价格与真实价不一致」）
-            val q = DataCache.quote(code)
-            // 4) 本地引擎（吃 K 线 + holo technical）
-            val engine = DataCache.engine(code, adjust, bars)
-            // 5) 资金流：holo 优先，退化东财
-            val flow = holo.moneyflow.ifEmpty { DataCache.fundFlow(code, 60) }
-            // 6) 板块：东财实时 + 云端
-            val boards = DataCache.boards(code)
-            // 7) 云端 bundle/QA（兜底）
-            val cloud = SkappApi.fetchStockDetail(code)
-            val qa = SkappApi.fetchQa(code)
-            val merged = (cloud ?: StockDetail(code = code)).copy(
-                name = q?.name?.takeIf { it.isNotBlank() } ?: holo.holo?.get("name")?.toString()
-                    ?: cloud?.name,
-                detail = cloud?.detail ?: bundleFromLocal(code, bars, q, holo),
-                aiQa = qa ?: cloud?.aiQa,
-            )
+            !_state.value.detailLoading && _state.value.holo != null
+        if (same) return
+        detailJob?.cancel()
+        detailJob = viewModelScope.launch {
+            val code = normalized
             _state.value = _state.value.copy(
-                detailLoading = false,
-                detail = merged,
-                localEngine = engine,
-                fundFlow = flow,
-                boardsOf = boards,
-                liveQuote = q,
+                detailLoading = true,
+                detail = StockDetail(code = code, name = stockNames[code]),
+                detailAdjust = adjust,
+                kline = emptyList(),
+                kPeriod = KPeriod.DAY,
+                holo = null,
+                localEngine = null,
+                liveQuote = null,
+                fundFlow = emptyList(),
+                boardsOf = emptyList(),
+                minuteTrend = emptyList(),
             )
-            if (MarketHours.isTrading() || MarketHours.isAuction() ||
-                MarketHours.phase() == MarketHours.Phase.AFTER_HOURS) {
-                _state.value = _state.value.copy(minuteTrend = DataCache.minute(code))
+            try {
+                supervisorScope {
+                    val holoD = async { requestResult { HoloClient.full(code) }.getOrNull() }
+                    val quoteD = async {
+                        val q = requestResult { DataCache.quote(code) }.getOrNull()
+                        _state.value = _state.value.copy(
+                            detailLoading = false,
+                            liveQuote = q,
+                            detail = _state.value.detail?.copy(
+                                name = q?.name?.takeIf { it.isNotBlank() } ?: _state.value.detail?.name,
+                            ),
+                        )
+                    }
+                    val cloudD = async {
+                        val cloud = requestResult { SkappApi.fetchStockDetail(code) }.getOrNull()
+                        if (cloud != null) {
+                            val current = _state.value.detail
+                            _state.value = _state.value.copy(
+                                detailLoading = false,
+                                detail = cloud.copy(
+                                    name = _state.value.liveQuote?.name?.takeIf { it.isNotBlank() }
+                                        ?: cloud.name ?: current?.name,
+                                    detail = cloud.detail ?: current?.detail,
+                                ),
+                            )
+                        }
+                    }
+                    val boardsD = async {
+                        val boards = requestResult { DataCache.boards(code) }.getOrDefault(emptyList())
+                        _state.value = _state.value.copy(boardsOf = boards)
+                    }
+                    val minuteD = async {
+                        if (MarketHours.isTrading() || MarketHours.isAuction() ||
+                            MarketHours.phase() == MarketHours.Phase.AFTER_HOURS) {
+                            val minute = requestResult { DataCache.minute(code) }.getOrDefault(emptyList())
+                            _state.value = _state.value.copy(minuteTrend = minute)
+                        }
+                    }
+                    val historyD = async {
+                        val holo = holoD.await()
+                        _state.value = _state.value.copy(holo = holo?.takeIf { it.covered })
+                        val bars = holo?.kline?.takeIf { it.size >= 30 }
+                            ?: requestResult { DataCache.kline(code, adjust, 250) }.getOrDefault(emptyList())
+                        _state.value = _state.value.copy(kline = bars)
+                        val engine = requestResult {
+                            withContext(Dispatchers.Default) { DataCache.engine(code, adjust, bars) }
+                        }.getOrNull()
+                        _state.value = _state.value.copy(localEngine = engine)
+                        val local = requestResult {
+                            bundleFromLocal(code, bars, _state.value.liveQuote, holo)
+                        }.getOrNull()
+                        val current = _state.value.detail
+                        _state.value = _state.value.copy(detail = current?.copy(
+                            name = current.name ?: holo?.holo?.get("name")?.toString()?.takeIf { it.isNotBlank() },
+                            detail = current.detail ?: local,
+                        ))
+                    }
+                    val flowD = async {
+                        val holo = holoD.await()
+                        val flow = holo?.moneyflow?.takeIf { it.isNotEmpty() }
+                            ?: requestResult { DataCache.fundFlow(code, 60) }.getOrDefault(emptyList())
+                        _state.value = _state.value.copy(fundFlow = flow)
+                    }
+                    quoteD.await()
+                    cloudD.await()
+                    boardsD.await()
+                    minuteD.await()
+                    historyD.await()
+                    flowD.await()
+                }
+            } finally {
+                if (isActive) _state.value = _state.value.copy(detailLoading = false)
             }
         }
     }
@@ -559,16 +652,20 @@ class SkappViewModel : ViewModel() {
     }
 
     /** 快讯 + 主线：逐条标题下实时算（标题命中的股票 → 实时行情 + 本地引擎） */
-    fun loadNewsCalcs() {
-        viewModelScope.launch {
-            _state.value = _state.value.copy(newsCalcLoading = true)
+    fun loadNewsCalcs(): Job = viewModelScope.launch {
+        requestResult { refreshNewsCalcs() }
+    }
+
+    private suspend fun refreshNewsCalcs() {
+        _state.value = _state.value.copy(newsCalcLoading = true)
+        try {
             val symbols = _state.value.symbols
             val items = ArrayList<Map<String, Any?>>()
             // 实时 7x24：设备直连东财
-            val liveItems = runCatching { MarketDataClient.news724() }.getOrElse { emptyList() }
+            val liveItems = requestResult { MarketDataClient.news724() }.getOrDefault(emptyList())
             items.addAll(liveItems)
             // GitHub 新闻数据库：已分析记录带 verdict/codes，作为持久化结果合并回来
-            val stored = runCatching { SkappApi.fetchNewsImpact() }.getOrElse { emptyList() }
+            val stored = requestResult { SkappApi.fetchNewsImpact() }.getOrDefault(emptyList())
             items.addAll(stored)
             // 云端新闻快照兜底/补充
             items.addAll(_state.value.news.items)
@@ -617,6 +714,7 @@ class SkappViewModel : ViewModel() {
                 val id = item["id"]?.toString().orEmpty()
                 if (id.isNotBlank()) id else "${item["title"]}|${item["time"] ?: ""}"
             }.take(50)
+            if (merged.isEmpty()) throw IllegalStateException("暂无消息数据")
             val calcs = NewsCalcEngine.compute(merged, symbols).map { calc ->
                 val source = merged.firstOrNull { it["title"] == calc.newsTitle }
                 calc.copy(
@@ -630,7 +728,9 @@ class SkappViewModel : ViewModel() {
                     note = source?.get("reason")?.toString()?.takeIf { it.isNotBlank() && it != "insufficient" } ?: calc.note,
                 )
             }
-            _state.value = _state.value.copy(newsCalcLoading = false, newsCalcs = calcs)
+            _state.value = _state.value.copy(newsCalcs = calcs)
+        } finally {
+            _state.value = _state.value.copy(newsCalcLoading = false)
         }
     }
 
@@ -667,22 +767,54 @@ class SkappViewModel : ViewModel() {
 
     /** 手动刷新实时总结：正文、消息异动和本地推股统一由一个入口触发。 */
     fun refreshRealtimeSummary(mode: String = "score") {
+        if (_state.value.summaryRefreshing) return
         viewModelScope.launch {
-            coroutineScope {
-                launch { loadSummary() }
-                launch { loadNewsCalcs() }
-                launch { runScreen(mode, force = true) }
+            _state.value = _state.value.copy(summaryRefreshing = true, summaryRefreshMessage = "正在刷新盘面、消息和实时推股…")
+            var message = "刷新已取消"
+            try {
+                val results = supervisorScope {
+                    val summaryD = async { requestResult { refreshSummary() } }
+                    val newsD = async { requestResult { refreshNewsCalcs() } }
+                    val screenD = async {
+                        requestResult {
+                            if (_state.value.screening) throw IllegalStateException("已有实时选股任务正在运行")
+                            refreshScreen(mode)
+                        }
+                    }
+                    listOf("盘面" to summaryD.await(), "消息" to newsD.await(), "实时推股" to screenD.await())
+                }
+                val failures = results.filter { it.second.isFailure }
+                message = if (failures.isEmpty()) "刷新完成" else {
+                    val details = failures.joinToString("；") { (label, result) ->
+                        "$label：${result.exceptionOrNull()?.message ?: "数据源不可达"}"
+                    }
+                    val prefix = if (failures.size == results.size) "刷新失败" else "部分刷新完成"
+                    "$prefix；$details"
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                message = "刷新失败：${e.message ?: "数据源不可达"}"
+            } finally {
+                _state.value = _state.value.copy(summaryRefreshing = false, summaryRefreshMessage = message)
             }
         }
     }
 
     /** 实时总结正文只在用户刷新时加载。 */
-    fun loadSummary() {
-        viewModelScope.launch {
-            val s = runCatching { SiteBoardClient.summary() }.getOrElse {
-                mapOf<String, Any?>("status" to "insufficient", "reason" to it.message)
-            }
-            _state.value = _state.value.copy(summary = s)
+    fun loadSummary(): Job = viewModelScope.launch {
+        requestResult { refreshSummary() }
+    }
+
+    private suspend fun refreshSummary() {
+        val result = requestResult { SiteBoardClient.summary() }
+        val summary = result.getOrElse {
+            mapOf<String, Any?>("status" to "insufficient", "reason" to it.message)
+        }
+        _state.value = _state.value.copy(summary = summary)
+        result.getOrThrow()
+        if (summary.isEmpty() || summary["status"]?.toString() in setOf("insufficient", "unknown", "error")) {
+            throw IllegalStateException(summary["reason"]?.toString() ?: "暂无盘面数据")
         }
     }
 
@@ -851,38 +983,43 @@ $ctx
     }
 
     /** 本地实时选股（设备直连行情 + 本地引擎，不用云端快照）。同模式结果缓存，切 tab 不重扫。 */
-    fun runScreen(mode: String = "score", force: Boolean = false) {
-        if (_state.value.screening) return
-        if (_state.value.scanMode == mode && _state.value.screened.isNotEmpty() && !force) return
-        viewModelScope.launch {
-            _state.value = _state.value.copy(screening = true, screenMsg = "正在实时拉取全市场行情…")
-            val res = runCatching {
-                LocalScreener.screen(onProgress = { msg ->
-                    _state.value = _state.value.copy(screenMsg = msg)
-                }, mode = mode)
-            }.getOrElse {
-                _state.value = _state.value.copy(
-                    screening = false,
-                    screenMsg = "实时选股失败：${it.message ?: "行情接口不可达"}",
-                )
-                return@launch
-            }
+    fun runScreen(mode: String = "score", force: Boolean = false): Job? {
+        if (_state.value.screening) return null
+        if (_state.value.scanMode == mode && _state.value.screened.isNotEmpty() && !force) return null
+        return viewModelScope.launch {
+            requestResult { refreshScreen(mode) }
+        }
+    }
+
+    private suspend fun refreshScreen(mode: String) {
+        _state.value = _state.value.copy(screening = true, screenMsg = "正在实时拉取全市场行情…")
+        try {
+            val res = LocalScreener.screen(onProgress = { msg ->
+                _state.value = _state.value.copy(screenMsg = msg)
+            }, mode = mode)
+            currentCoroutineContext().ensureActive()
             _state.value = _state.value.copy(
-                screening = false,
                 screened = res,
                 scanMode = mode,
                 screenMsg = if (res.isEmpty()) "预筛后无满足条件的股票" else null,
             )
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            _state.value = _state.value.copy(screenMsg = "实时选股失败：${e.message ?: "行情接口不可达"}")
+            throw e
+        } finally {
+            _state.value = _state.value.copy(screening = false)
         }
     }
 
     /** 用本地 K 线造一个 bundle 形状，供 UI 复用同一套渲染 */
     private suspend fun bundleFromLocal(code: String, bars: List<KBar>, q: Quote?, holo: HoloBundle? = null): BundleDetail? {
-        if (bars.isEmpty() && holo == null) return null
+        if (bars.isEmpty() && holo?.covered != true) return null
         val f = TechnicalCalc.compute(bars)
         return BundleDetail(
             status = "ok",
-            ts = bars.last().date,
+            ts = bars.lastOrNull()?.date,
             quote = buildMap {
                 val hPrice = (holo?.holo?.get("price") as? Number)?.toDouble()
                 val live = q?.price ?: hPrice ?: bars.lastOrNull()?.close
@@ -903,7 +1040,9 @@ $ctx
     }
 
     fun closeDetail() {
-        _state.value = _state.value.copy(detail = null, kline = emptyList())
+        detailJob?.cancel()
+        detailJob = null
+        _state.value = _state.value.copy(detail = null, detailLoading = false, kline = emptyList())
     }
 
     fun onQuestionChange(q: String) {

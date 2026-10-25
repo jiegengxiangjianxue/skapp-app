@@ -13,9 +13,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -34,7 +32,6 @@ import com.skapp.app.ui.screens.MarketScreen
 import com.skapp.app.ui.screens.NewsScreen
 import com.skapp.app.ui.screens.RealtimeSummaryScreen
 import com.skapp.app.ui.screens.PoolsScreen
-import com.skapp.app.ui.screens.SectorsScreen
 import com.skapp.app.ui.screens.StockDetailSheet
 import com.skapp.app.ui.screens.ThemeScreen
 import com.skapp.app.ui.screens.UnifiedAskScreen
@@ -42,7 +39,7 @@ import com.skapp.app.ui.screens.UnifiedAskScreen
 /** 模块编号与 HubScreen 一致；保留旧编号，避免业务页面路由变化。 */
 private val MODULE_NAMES = mapOf(
     0 to "看板", 1 to "实时总结", 2 to "消息与题材", 3 to "消息与题材", 4 to "全部",
-    5 to "行情", 6 to "决策", 7 to "多池", 8 to "板块", 11 to "AI 总结", 12 to "自检",
+    5 to "行情", 6 to "决策", 7 to "多池", 11 to "AI 总结", 12 to "自检",
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -51,7 +48,10 @@ fun MainScreen(vm: SkappViewModel) {
     val state by vm.state.collectAsStateWithLifecycle()
     var module by remember { mutableStateOf(4) }
 
-    BackHandler(enabled = module != 4) {
+    BackHandler(enabled = state.detail != null || state.detailLoading) {
+        vm.closeDetail()
+    }
+    BackHandler(enabled = state.detail == null && !state.detailLoading && module != 4) {
         module = 4
     }
 
@@ -63,7 +63,7 @@ fun MainScreen(vm: SkappViewModel) {
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
-            .pointerInput(module) {
+            .pointerInput(module, state.detail, state.detailLoading) {
                 var edgeStartX = Float.MAX_VALUE
                 var edgeDragX = 0f
                 detectHorizontalDragGestures(
@@ -77,7 +77,7 @@ fun MainScreen(vm: SkappViewModel) {
                         }
                     },
                     onDragEnd = {
-                        if (module != 4 && edgeStartX <= 36.dp.toPx() && edgeDragX >= 96.dp.toPx()) {
+                        if (state.detail == null && !state.detailLoading && module != 4 && edgeStartX <= 36.dp.toPx() && edgeDragX >= 96.dp.toPx()) {
                             module = 4
                         }
                     },
@@ -121,7 +121,6 @@ fun MainScreen(vm: SkappViewModel) {
                     5 -> MarketScreen(vm, state)
                     6 -> DecisionScreen(vm, state)
                     7 -> PoolsScreen(vm, state)
-                    8 -> SectorsScreen(vm, state)
                     11 -> UnifiedAskScreen(vm, state)
                     12 -> DiagScreen(vm, state)
                 }
@@ -129,10 +128,9 @@ fun MainScreen(vm: SkappViewModel) {
         }
 
         if (state.detail != null || state.detailLoading) {
-            val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-            ModalBottomSheet(
-                onDismissRequest = vm::closeDetail,
-                sheetState = sheetState,
+            Box(
+                Modifier.fillMaxSize()
+                    .background(MaterialTheme.colorScheme.background)
             ) {
                 StockDetailSheet(vm, state)
             }

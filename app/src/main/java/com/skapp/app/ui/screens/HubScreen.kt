@@ -14,7 +14,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccessTime
 import androidx.compose.material.icons.filled.AutoGraph
-import androidx.compose.material.icons.filled.Category
 import androidx.compose.material.icons.filled.Dashboard
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.MonitorHeart
@@ -44,18 +43,17 @@ fun HubScreen(vm: SkappViewModel, state: UiState, onNavigate: (Int) -> Unit) {
     val groups = listOf(
         ModuleGroup(
             title = "市场",
-            subtitle = "指数、行情与板块脉搏",
+            subtitle = "指数与市场总览",
             modules = listOf(
                 ModuleSpec("行情看板", "指数与市场总览", "看板", 0, Icons.Filled.Dashboard),
                 ModuleSpec("全球与自选", "A 股指数与自选行情", "行情", 5, Icons.Filled.ShowChart),
-                ModuleSpec("板块地图", "行业、概念与成分股", "板块", 8, Icons.Filled.Category),
             ),
         ),
         ModuleGroup(
             title = "决策",
-            subtitle = "候选、策略与复盘",
+            subtitle = "实时结果与多池数据",
             modules = listOf(
-                ModuleSpec("实时总结", "早盘/午盘/收盘 + 推股策略与引擎", "实时总结", 1, Icons.Filled.AutoGraph),
+                ModuleSpec("实时总结", "本地扫描、综合评分、指标共振与涨停观察", "实时总结", 1, Icons.Filled.AutoGraph),
                 ModuleSpec("多池选股", "好股票与策略池", "多池", 7, Icons.Filled.Layers),
             ),
         ),
@@ -150,7 +148,6 @@ private fun ModuleCard(
         1 -> "${state.picks.signals.size + state.picks.values.size} 条候选"
         5 -> "${state.aShareIndices.size + state.globalIndices.size} 个指数"
         7 -> "${state.pools.size} 个选股池"
-        8 -> "${state.sectors.industries.size + state.sectors.concepts.size} 个板块"
         else -> module.category
     }
     GlassCard(

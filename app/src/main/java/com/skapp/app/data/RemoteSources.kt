@@ -46,6 +46,9 @@ object RemoteSources {
     fun appFile(owner: String, repo: String, name: String): String =
         "${base(owner, repo)}/$name"
 
+    fun symbols(owner: String = OWNER_SYMBOLS, repo: String = REPO_SYMBOLS): String =
+        "${RAW}/$owner/$repo/main/data/search/symbols.json"
+
     /** 静态 API */
     fun apiIndex(owner: String = OWNER_A, repo: String = REPO_A): String =
         "${base(owner, repo)}/api/index.json"
@@ -82,6 +85,13 @@ object RemoteSources {
 
     fun allSources(owner: String = OWNER_A, repo: String = REPO_A): String =
         appFile(owner, repo, "all_sources.json")
+
+    /** Static JSON files used by the website's multi-pool view. */
+    fun poolFile(name: String, owner: String = OWNER_A, repo: String = REPO_A): String =
+        appFile(owner, repo, name)
+
+    fun latest(owner: String = OWNER_A, repo: String = REPO_A): String =
+        appFile(owner, repo, "latest.json")
 
     /** 板块: 行业/概念/板块池/成分股(移植站点 sector 面板) */
     fun apiSectors(owner: String = OWNER_A, repo: String = REPO_A): String =

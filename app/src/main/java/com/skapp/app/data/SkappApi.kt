@@ -87,25 +87,69 @@ object SkappApi {
         out
     }
 
-    /** 全市场代码表（app 只从 skapp-data 取） */
+    /** 代码表失败时仍允许按 A 股代码直接查询，避免把“代码表不可达”误报为无匹配。 */
+    fun directSymbol(raw: String): SymbolEntry? {
+        val code = normalize(raw) ?: return null
+        val prefix = code.take(3)
+        if (prefix !in setOf("600", "601", "603", "605", "000", "001", "002", "300", "301", "688", "689")) return null
+        return SymbolEntry(code, null)
+    }
+
+    /** 全市场代码表，兼容 symbols.json 裸数组与包装，并合并 stock_names.json。 */
     suspend fun fetchSymbols(): List<SymbolEntry> = withContext(Dispatchers.IO) {
-        val url = RemoteSources.appFile(
-            RemoteSources.OWNER_SYMBOLS, RemoteSources.REPO_SYMBOLS, "search/symbols.json")
-        val txt = fetchText(url) ?: return@withContext emptyList()
-        // 远端实际是 {"ts","n","symbols":[...]}，不是裸数组——按裸 JSONArray 解析会失败，
-        // 导致代码表全空（股票名称全显示代码、消息页匹配不到股票）。两种形态都兼容。
+        val symbols = fetchSymbolsRaw()
+        val names = fetchStockNameEntries()
+        SymbolIndex(symbols + names).entries
+    }
+
+    private suspend fun fetchSymbolsRaw(): List<SymbolEntry> {
+        val txt = fetchText(RemoteSources.symbols()) ?: return emptyList()
+        // symbols.json 支持裸数组与 {symbols:[...]} / {data:[...]} 包装。
+        val root = runCatching { JSONObject(txt) }.getOrNull()
         val arr = runCatching { JSONArray(txt) }.getOrNull()
-            ?: runCatching { JSONObject(txt).optJSONArray("symbols") }.getOrNull()
-            ?: runCatching { JSONObject(txt).optJSONArray("data") }.getOrNull()
-            ?: return@withContext emptyList()
-        (0 until arr.length()).mapNotNull { i ->
+            ?: root?.optJSONArray("symbols")
+            ?: root?.optJSONArray("data")
+            ?: return emptyList()
+        return (0 until arr.length()).mapNotNull { i ->
             val o = arr.optJSONObject(i) ?: return@mapNotNull null
-            val code = o.optString("s").takeIf { it.isNotEmpty() }
-                ?: o.optString("symbol").takeIf { it.isNotEmpty() }
-            if (code.isNullOrEmpty()) null
-            else SymbolEntry(code, o.optString("n").takeIf { it.isNotEmpty() }
-                ?: o.optString("name").takeIf { it.isNotEmpty() })
+            val code = listOf("s", "symbol", "code", "stock_code")
+                .firstNotNullOfOrNull { key -> o.optString(key).trim().takeIf { it.isNotEmpty() } }
+            val name = listOf("n", "name", "stock_name", "display_name")
+                .firstNotNullOfOrNull { key -> o.optString(key).trim().takeIf { it.isNotEmpty() } }
+            code?.let { SymbolEntry(it, name) }
         }
+    }
+
+    private fun parseStockNames(root: JSONObject): List<SymbolEntry> {
+        val out = ArrayList<SymbolEntry>()
+        root.keys().forEach { rawCode ->
+            val value = root.opt(rawCode)
+            when (value) {
+                is JSONObject -> {
+                    val code = value.optString("code").takeIf { it.isNotBlank() } ?: rawCode
+                    val name = listOf("name", "n", "stock_name", "display_name")
+                        .firstNotNullOfOrNull { key -> value.optString(key).trim().takeIf { it.isNotEmpty() } }
+                    out += SymbolEntry(code, name)
+                }
+                else -> value?.toString()?.trim()?.takeIf { it.isNotEmpty() && it != "null" }
+                    ?.let { out += SymbolEntry(rawCode, it) }
+            }
+        }
+        return out
+    }
+
+    /** 合并中文 symbols 与 stock_names 对象，SymbolIndex 负责规范化、去重和稳定名称优先级。 */
+    suspend fun fetchSymbolIndex(): SymbolIndex = withContext(Dispatchers.IO) {
+        SymbolIndex(fetchSymbolsRaw() + fetchStockNameEntries())
+    }
+
+    private suspend fun fetchStockNameEntries(): List<SymbolEntry> {
+        val roots = listOf(
+            RemoteSources.appFile(RemoteSources.OWNER_A, RemoteSources.REPO_A, "stock_names.json"),
+            RemoteSources.appFile(RemoteSources.OWNER_C, RemoteSources.REPO_C, "stock_names.json"),
+        )
+        return roots.asSequence().mapNotNull { fetchJson(it) }
+            .map(::parseStockNames).firstOrNull { it.isNotEmpty() }.orEmpty()
     }
 
     /** 新闻逐条分析持久化索引，v2 优先，旧文件作真实 fallback。 */
@@ -136,13 +180,10 @@ object SkappApi {
     }
 
     suspend fun fetchStockNames(): Map<String, String> = withContext(Dispatchers.IO) {
-        val url = RemoteSources.appFile(RemoteSources.OWNER_A, RemoteSources.REPO_A, "stock_names.json")
-        val o = fetchJson(url) ?: fetchJson(
-            RemoteSources.appFile(RemoteSources.OWNER_C, RemoteSources.REPO_C, "stock_names.json"))
-            ?: return@withContext emptyMap()
-        val map = LinkedHashMap<String, String>()
-        o.keys().forEach { k -> o.optString(k).takeIf { it.isNotEmpty() }?.let { map[k] = it } }
-        map
+        fetchStockNameEntries().mapNotNull { entry ->
+            val code = normalize(entry.code) ?: return@mapNotNull null
+            entry.name?.let { code to it }
+        }.toMap()
     }
 
     /** 个股详情：优先 A 仓 API，退 C 仓镜像；再补充分片 bundle */

@@ -61,7 +61,7 @@ fun RealtimeSummaryScreen(vm: SkappViewModel, state: UiState) {
     ) {
         item {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text("盘面解读请前往看板查看统一正文；本页仅展示实时异动与推股策略。",
+                Text("盘面解读请前往看板查看统一正文；本页仅展示实时异动和实时结果。",
                     style = MaterialTheme.typography.bodySmall, color = Color.Gray)
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
@@ -69,9 +69,18 @@ fun RealtimeSummaryScreen(vm: SkappViewModel, state: UiState) {
                         Text("${state.marketPhase} · ${state.quoteTs ?: "时点暂无"}",
                             style = MaterialTheme.typography.bodySmall, color = Color.Gray)
                     }
-                    Text("刷新", Modifier.clickable {
-                        vm.refreshRealtimeSummary(order.mode)
-                    }, color = MaterialTheme.colorScheme.primary)
+                    if (state.summaryRefreshing) {
+                        CircularProgressIndicator(modifier = Modifier.height(20.dp), strokeWidth = 2.dp)
+                    } else {
+                        Text("刷新", Modifier.clickable {
+                            vm.refreshRealtimeSummary(order.mode)
+                        }.padding(horizontal = 8.dp, vertical = 6.dp), color = MaterialTheme.colorScheme.primary)
+                    }
+                }
+                state.summaryRefreshMessage?.let { message ->
+                    Text(message, style = MaterialTheme.typography.bodySmall,
+                        color = if (message.startsWith("刷新失败")) MaterialTheme.colorScheme.error
+                        else MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 val summary = state.summary
                 val summaryTs = listOfNotNull(
@@ -86,7 +95,7 @@ fun RealtimeSummaryScreen(vm: SkappViewModel, state: UiState) {
 
         item {
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text("推股策略", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                Text("实时结果", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     ResultOrder.values().forEach { option ->
                         Card(
@@ -101,11 +110,11 @@ fun RealtimeSummaryScreen(vm: SkappViewModel, state: UiState) {
                         }
                     }
                     Spacer(Modifier.weight(1f))
-                    if (state.screening) CircularProgressIndicator()
+                    if (state.screening) CircularProgressIndicator(modifier = Modifier.height(20.dp), strokeWidth = 2.dp)
                     else Text("扫描", Modifier.clickable { vm.runScreen(order.mode, force = true) }
                         .padding(horizontal = 8.dp, vertical = 7.dp), color = MaterialTheme.colorScheme.primary)
                 }
-                Text("${state.screenMsg ?: "实时策略待刷新"} · ${state.scanMode.ifBlank { "mode unknown" }}",
+                Text("${state.summaryRefreshMessage ?: state.screenMsg ?: "实时结果待刷新"} · ${state.scanMode.ifBlank { "mode unknown" }}",
                     style = MaterialTheme.typography.bodySmall, color = Color.Gray)
             }
         }
@@ -119,6 +128,18 @@ fun RealtimeSummaryScreen(vm: SkappViewModel, state: UiState) {
             }
         }
 
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("引擎状态", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                val engine = state.engineFeeds
+                Text("本地扫描 ${if (state.screening) "运行中" else if (state.scanMode.isNotBlank()) "${state.scanMode} · ${state.screened.size} 条" else "待运行"}",
+                    style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                Text("综合评分 ${if (uniqueResults.any { it.engine?.composite != null }) "可用" else "暂无"} · 共振 ${if (uniqueResults.any { it.engine?.engines?.any { score -> score.score != null } == true }) "可用" else "暂无"} · 涨停观察 ${uniqueResults.count { (it.pctChg ?: 0.0) >= 9.6 }} 只",
+                    style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                Text("引擎数据 ${if (engine == null) "暂无" else "已载入 · ${engine.missing.size} 项缺失"} · 时点 ${engine?.ts?.toString() ?: "暂无"}",
+                    style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+            }
+        }
         item {
             Text("实时异动与消息", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
         }
@@ -136,27 +157,9 @@ fun RealtimeSummaryScreen(vm: SkappViewModel, state: UiState) {
         }
 
         item {
-            Text("补充数据面板", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            Text("多池 ${state.pools.size} · 板块 ${state.sectors.industries.size + state.sectors.concepts.size} · 云端 engine_v5 ${if (state.engineFeeds?.engineV5 != null) "available" else "unknown"}",
+            Text("补充数据", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text("实时引擎数据 ${if (state.engineFeeds == null) "暂无数据" else "已载入"} · ${state.engineFeeds?.missing?.size ?: 0} 项数据缺失；板块池、涨停池与其他选股池统一在多池选股中查看。",
                 style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-            val poolStamp = state.pools.firstOrNull()?.ts?.takeIf { it.isNotBlank() } ?: "时点暂无"
-            Text("多池时点：$poolStamp；云端结果仅为来源参考，不加入本地推荐列表。",
-                style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-        }
-        item {
-            val poolRows = state.pools.flatMap { pool -> pool.items.map { pool.name to it } }
-                .distinctBy { normalizeScreenCode(it.second.code) }
-            poolRows.take(20).forEach { (poolName, item) ->
-                Card(colors = CardDefaults.cardColors()) {
-                    Row(Modifier.fillMaxWidth().padding(10.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text("${item.name ?: item.code} · $poolName",
-                            style = MaterialTheme.typography.bodySmall)
-                        Text(item.score?.let { String.format("%.1f", it) } ?: "暂无评分",
-                            style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-                    }
-                }
-            }
         }
     }
 }

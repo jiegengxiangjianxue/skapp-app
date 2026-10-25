@@ -106,6 +106,44 @@ data class SymbolEntry(
     val name: String?,
 )
 
+class SymbolIndex(sources: List<SymbolEntry> = emptyList()) {
+    val byCode: Map<String, SymbolEntry>
+    val byName: Map<String, List<SymbolEntry>>
+    val entries: List<SymbolEntry>
+
+    init {
+        val merged = sortedMapOf<String, SymbolEntry>()
+        sources.forEach { entry ->
+            val code = SkappApi.normalize(entry.code) ?: return@forEach
+            val name = entry.name?.trim()?.takeIf { it.isNotEmpty() && it != "null" }
+            val previous = merged[code]?.name
+            val preferred = when {
+                previous == null -> name
+                name == null -> previous
+                name.any { it in '\u3400'..'\u9fff' } && previous.none { it in '\u3400'..'\u9fff' } -> name
+                else -> previous
+            }
+            merged[code] = SymbolEntry(code, preferred)
+        }
+        byCode = merged.toMap()
+        entries = byCode.values.toList()
+        byName = entries.filter { !it.name.isNullOrBlank() }.groupBy { searchKey(it.name.orEmpty()) }
+    }
+
+    fun search(query: String, limit: Int = 50): List<SymbolEntry> {
+        val key = searchKey(query)
+        if (key.isEmpty() || limit <= 0) return emptyList()
+        val normalizedCode = SkappApi.normalize(query)
+        val exact = listOfNotNull(normalizedCode?.let(byCode::get)) + byName[key].orEmpty()
+        return (exact.asSequence() + entries.asSequence().filter {
+            (normalizedCode != null && it.code.contains(normalizedCode)) ||
+                searchKey(it.name.orEmpty()).contains(key)
+        }).distinctBy { it.code }.take(limit).toList()
+    }
+
+    private fun searchKey(value: String): String = value.lowercase(java.util.Locale.ROOT).filterNot { it.isWhitespace() }
+}
+
 data class MarketSnapshot(
     val ts: String? = null,
     val market: Map<String, Any?> = emptyMap(),
