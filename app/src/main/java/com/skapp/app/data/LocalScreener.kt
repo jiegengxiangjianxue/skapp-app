@@ -50,7 +50,7 @@ object LocalScreener {
     )
 
     /** 全市场实时行情快照（东财 clist） */
-    suspend fun marketSnapshot(pn: Int = 1, pz: Int = 3000): List<Map<String, Any?>> =
+    suspend fun marketSnapshot(pn: Int = 1, pz: Int = 100): List<Map<String, Any?>> =
         withContext(Dispatchers.IO) {
             fun fetchPage(p: Int, size: Int): List<Map<String, Any?>> {
                 val url = "https://push2.eastmoney.com/api/qt/clist/get?pn=$p&pz=$size&po=1&fid=f3" +
@@ -81,14 +81,8 @@ object LocalScreener {
             }
             val first = fetchPage(pn, pz)
             if (first.isNotEmpty()) return@withContext first
-            // 大页被出口拒绝时降级：按 100 只分页拉全市场（遇空页即停）
-            val out = ArrayList<Map<String, Any?>>()
-            for (p in 1..40) {
-                val page = fetchPage(p, 100)
-                if (page.isEmpty()) break
-                out.addAll(page)
-            }
-            out
+            // 手机网络或东财出口失败时只重试一个小页，禁止 40 页长轮询把 UI 卡死
+            fetchPage(1, 100)
         }
 
     /**
