@@ -428,11 +428,10 @@ class SkappViewModel : ViewModel() {
     fun refreshPickQuotes() {
         if (!MarketHours.isTrading() && !MarketHours.isAuction()) return
         viewModelScope.launch {
-            val codes = (_state.value.picks.signals + _state.value.picks.values +
-                _state.value.decision.cards.map {
-                    PickSignal(code = it.code, name = it.name, price = it.price, pctChg = it.pctChg)
-                })
-                .map { it.code }.distinct()
+            val codes = (_state.value.picks.signals.map { it.code } +
+                _state.value.picks.values.map { it.code } +
+                _state.value.decision.cards.map { it.code })
+                .distinct()
             if (codes.isEmpty()) return@launch
             val prefixed = codes.map { SkappApi.prefixed(it) }
             val quotes = SkappApi.fetchQuotes(prefixed)
