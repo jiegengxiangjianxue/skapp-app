@@ -163,10 +163,6 @@ fun RealtimeSummaryScreen(vm: SkappViewModel, state: UiState) {
                 }
             }
         }
-items(poolRows.take(20), key = { "pool:${normalizeScreenCode(it.second.code)}" }) { (poolName, item) ->
-            Text("${item.name} ${item.code} · $poolName · ${item.score?.let { "%.1f".format(it) } ?: "暂无评分"}",
-                style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-        }
     }
 }
 
@@ -222,8 +218,6 @@ private fun SessionStatus(summary: Map<String, Any?>) {
         }
     }
 }
-
-private fun normalizeScreenCode(code: String): String = code.takeLast(6)
 
 private fun resonanceRatio(item: LocalScreener.Screened): Double {
     val engines = item.engine?.engines ?: return 0.0

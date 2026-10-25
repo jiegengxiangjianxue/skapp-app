@@ -74,7 +74,6 @@ fun MainScreen(vm: SkappViewModel) {
                     onHorizontalDrag = { change, dragAmount ->
                         if (edgeStartX <= 36.dp.toPx() && dragAmount > 0f) {
                             edgeDragX += dragAmount
-                            change.consumePositionChange()
                         }
                     },
                     onDragEnd = {
