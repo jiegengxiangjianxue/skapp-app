@@ -36,6 +36,29 @@ import org.json.JSONObject
  *   题材拆分支（不是把板块当标签）→ 在炒的 vs 未启动补涨 → 补涨星级 → 炒作路径时间线。
  * 展示不编造：所有数值来自引擎实测（连板高度/20日涨幅/60日位置/板块时序）。
  */
+
+/** 读远端文本（含 gzip 解压）。raw.githubusercontent.com 会按 gzip 返回，
+ *  HttpURLConnection 默认请求 gzip 但不自动解压，直接读流是乱码 → JSON 解析失败 → 页面空白。 */
+private fun readRemoteText(url: String): String? = try {
+    val conn = (java.net.URL(url).openConnection() as java.net.HttpURLConnection).apply {
+        connectTimeout = 20000; readTimeout = 20000
+        setRequestProperty("User-Agent", "Mozilla/5.0 (Android) skapp")
+    }
+    val code = conn.responseCode
+    if (code != java.net.HttpURLConnection.HTTP_OK) { conn.disconnect(); null }
+    else {
+        val enc = conn.contentEncoding
+        val stream = if (enc == "gzip" || enc == "x-gzip")
+            java.util.zip.GZIPInputStream(conn.inputStream) else conn.inputStream
+        val txt = stream.bufferedReader().use { it.readText() }
+        conn.disconnect()
+        txt
+    }
+} catch (e: Exception) { null }
+
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+
 @Composable
 fun ThemeScreen(vm: SkappViewModel, state: UiState) {
     var json by remember { mutableStateOf<JSONObject?>(null) }
@@ -43,10 +66,10 @@ fun ThemeScreen(vm: SkappViewModel, state: UiState) {
     var failed by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
-        val txt = runCatching {
-            java.net.URL("https://raw.githubusercontent.com/qwerzxcva/stocks-ai-view/main/data/theme_report.json")
-                .openStream().bufferedReader().use { it.readText() }
-        }.getOrNull()
+        val txt = withContext(Dispatchers.IO) {
+            readRemoteText(
+                "https://raw.githubusercontent.com/qwerzxcva/stocks-ai-view/main/data/theme_report.json")
+        }
         json = txt?.let { runCatching { JSONObject(it) }.getOrNull() }
         if (json == null) failed = true
         loading = false
@@ -58,22 +81,16 @@ fun ThemeScreen(vm: SkappViewModel, state: UiState) {
             .padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Text("题材挖掘", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-        Text(
-            "炒作路径 · 分支拆解 · 在炒/补涨分层 · 补涨星级（引擎实测，每日收盘后更新）",
-            style = MaterialTheme.typography.bodySmall, color = Color.Gray,
-        )
-
         when {
-            loading -> Text("加载题材报告…", color = Color.Gray, style = MaterialTheme.typography.bodySmall)
+            loading -> Text("正在加载题材报告…", color = Color.Gray, style = MaterialTheme.typography.bodySmall)
             failed -> Text(
-                "题材报告暂不可用：上游未产出或网络不可达。",
+                "题材报告加载失败：请检查网络；云端文件存在时会显示题材数与更新时间。",
                 color = Color.Gray, style = MaterialTheme.typography.bodySmall,
             )
             else -> {
                 val root = json!!
                 Text(
-                    "生成 ${root.optString("ts")}",
+                    "生成 ${root.optString("ts")} · ${root.optInt("n_themes")} 个题材",
                     style = MaterialTheme.typography.bodySmall, color = Color.Gray,
                 )
                 val themes = root.optJSONArray("themes")

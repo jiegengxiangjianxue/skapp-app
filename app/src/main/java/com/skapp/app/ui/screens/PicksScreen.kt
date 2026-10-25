@@ -136,7 +136,19 @@ fun PicksScreen(vm: SkappViewModel, state: UiState) {
                 }
                 Spacer(Modifier.height(8.dp))
                 if (sorted.isEmpty() && !state.screening) {
-                    Text("暂无结果：点击「开始实时扫描」（约需 10-60 秒，视网络）", color = Color.Gray)
+                    // 本地扫描失败/无结果时降级：直接展示云端今日推股（真实数据，30信号/20评分/8涨停）
+                    val fb = when (tab) { 1 -> p.signals; 2 -> p.values; 3 -> p.limitUp; else -> p.signals }
+                        .filter { isMainBoardPick(it.code) && ((it.pctChg ?: 0.0) < 9.6 || tab == 3) }
+                    if (fb.isNotEmpty()) {
+                        Text(
+                            "本地实时扫描暂不可用（${state.screenMsg ?: "网络受限"}），以下为云端今日推股（真实数据）",
+                            style = MaterialTheme.typography.bodySmall, color = Color(0xFFD29922),
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        fb.forEach { sig -> PickCard(sig, tabs[tab].first, vm, state) }
+                    } else {
+                        Text("暂无结果：点击「开始实时扫描」（约需 10-60 秒，视网络）", color = Color.Gray)
+                    }
                 } else {
                     Text("命中 ${sorted.size} 只（${tabs[tab].first}排序 · 本地引擎现算）",
                         style = MaterialTheme.typography.bodySmall, color = Color.Gray)

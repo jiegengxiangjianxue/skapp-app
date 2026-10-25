@@ -218,14 +218,33 @@ object SiteBoardClient {
             return@withContext out
         }
         out["ts"] = src.optString("ts").takeIf { it.isNotEmpty() } ?: src.optString("asof")
-        out["indices"] = src.optJSONArray("indices")?.toMapList()
-            ?: src.optJSONObject("indices")?.toMap() ?: emptyMap<String, Any>()
         out["market"] = src.optJSONObject("market")?.toMap() ?: emptyMap<String, Any>()
         out["phase"] = src.opt("phase")
-        out["gainers"] = src.optJSONArray("gainers")?.toMapList() ?: emptyList<Map<String, Any?>>()
-        out["losers"] = src.optJSONArray("losers")?.toMapList() ?: emptyList<Map<String, Any?>>()
-        out["limit_up"] = src.optJSONArray("limit_up")?.toMapList() ?: emptyList<Map<String, Any?>>()
-        out["sectors"] = src.optJSONArray("sectors")?.toMapList() ?: emptyList<Map<String, Any?>>()
+        // 字段映射（2026-10-25 修）：latest.json/market_now.json 的真实字段名与看板期望的不一致，
+        // 原代码取 gainers/losers/limit_up/sectors 恒为空 → 看板涨跌统计/涨跌幅榜/涨停池/板块热度全空白。
+        // 真实字段：limit_up_pool / limit_down_pool / ths_strong / tx_sector_ranking / themes
+        out["indices"] = src.optJSONArray("indices")?.toMapList()
+            ?: src.optJSONObject("indices")?.toMap()
+            ?: src.optJSONArray("index_kline")?.toMapList()
+            ?: emptyMap<String, Any>()
+        out["gainers"] = src.optJSONArray("gainers")?.toMapList()
+            ?: src.optJSONArray("ths_strong")?.toMapList()
+            ?: emptyList<Map<String, Any?>>()
+        out["losers"] = src.optJSONArray("losers")?.toMapList()
+            ?: src.optJSONArray("ths_weak")?.toMapList()
+            ?: emptyList<Map<String, Any?>>()
+        out["limit_up"] = src.optJSONArray("limit_up")?.toMapList()
+            ?: src.optJSONArray("limit_up_pool")?.toMapList()
+            ?: src.optJSONObject("limit_up_pool")?.optJSONArray("items")?.toMapList()
+            ?: emptyList<Map<String, Any?>>()
+        out["limit_down"] = src.optJSONArray("limit_down")?.toMapList()
+            ?: src.optJSONArray("limit_down_pool")?.toMapList()
+            ?: src.optJSONObject("limit_down_pool")?.optJSONArray("items")?.toMapList()
+            ?: emptyList<Map<String, Any?>>()
+        out["sectors"] = src.optJSONArray("sectors")?.toMapList()
+            ?: src.optJSONArray("tx_sector_ranking")?.toMapList()
+            ?: src.optJSONArray("themes")?.toMapList()
+            ?: emptyList<Map<String, Any?>>()
         out["status"] = "ok"
         out
     }

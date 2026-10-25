@@ -31,6 +31,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.skapp.app.ui.SkappViewModel
 import com.skapp.app.ui.UiState
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 private val UP = Color(0xFFF85149)
 private val DOWN = Color(0xFF3FB950)
@@ -72,6 +74,29 @@ fun BoardScreen(vm: SkappViewModel, state: UiState) {
         // 市场状态机（进攻/防守）—— 决策根基，置顶
         state.marketState?.let { ms ->
             item { MarketStateCard(ms) }
+        }
+
+        // 网页版核心市场 KPI 前置，不再被次要面板挤到后面
+        @Suppress("UNCHECKED_CAST")
+        val market = (b["market"] as? Map<String, Any?>) ?: emptyMap()
+        if (market.isNotEmpty()) {
+            item { SectionTitle("市场概况") }
+            item {
+                Card(colors = CardDefaults.cardColors()) {
+                    Text(
+                        market.entries.joinToString("　") { (k, v) -> "${marketLabel(k)} ${v ?: "—"}" },
+                        Modifier.padding(12.dp),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
+            }
+        } else {
+            item {
+                Text(
+                    "市场概况暂未加载：${b["reason"]?.toString() ?: "请点击刷新重试"}",
+                    style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+                )
+            }
         }
 
         // 每日总结（网页版 daily_brief 盘后自动生成）
@@ -232,21 +257,9 @@ fun BoardScreen(vm: SkappViewModel, state: UiState) {
             }
         }
 
-        // 涨跌统计
-        @Suppress("UNCHECKED_CAST")
-        val market = (b["market"] as? Map<String, Any?>) ?: emptyMap()
-        if (market.isNotEmpty()) {
-            item { SectionTitle("涨跌统计") }
-            item {
-                Card(colors = CardDefaults.cardColors()) {
-                    Text(
-                        market.entries.joinToString("　") { (k, v) -> "${marketLabel(k)} ${v ?: "—"}" },
-                        Modifier.padding(12.dp),
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
-                }
-            }
-        }
+        // 涨跌统计已在顶部展示；避免同一 KPI 重复占用页面
+        @Suppress("UNUSED_EXPRESSION")
+        val marketStatsDisplayed = market.isNotEmpty()
 
         // 情绪/阶段
         b["phase"]?.let { ph ->
@@ -443,14 +456,34 @@ private fun marketLabel(k: String): String = when (k) {
 }
 
 /** 每日总结卡：网页版 daily_brief.json（盘后自动生成），取正文前 25 行展示 */
+
+/** 读远端文本（含 gzip 解压）。raw.githubusercontent.com 会按 gzip 返回，
+ *  HttpURLConnection 默认请求 gzip 但不自动解压，直接读流是乱码 → JSON 解析失败 → 页面空白。 */
+private fun readRemoteText(url: String): String? = try {
+    val conn = (java.net.URL(url).openConnection() as java.net.HttpURLConnection).apply {
+        connectTimeout = 20000; readTimeout = 20000
+        setRequestProperty("User-Agent", "Mozilla/5.0 (Android) skapp")
+    }
+    val code = conn.responseCode
+    if (code != java.net.HttpURLConnection.HTTP_OK) { conn.disconnect(); null }
+    else {
+        val enc = conn.contentEncoding
+        val stream = if (enc == "gzip" || enc == "x-gzip")
+            java.util.zip.GZIPInputStream(conn.inputStream) else conn.inputStream
+        val txt = stream.bufferedReader().use { it.readText() }
+        conn.disconnect()
+        txt
+    }
+} catch (e: Exception) { null }
+
 @Composable
 private fun DailyBriefCard() {
     var text by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(Unit) {
-        text = runCatching {
-            java.net.URL("https://raw.githubusercontent.com/qwerzxcva/stocks-ai-view/main/data/daily_brief.json")
-                .openStream().bufferedReader().use { it.readText() }
-        }.getOrNull()?.let { runCatching { org.json.JSONObject(it).optString("text") }.getOrNull() }
+        text = withContext(Dispatchers.IO) {
+            readRemoteText(
+                "https://raw.githubusercontent.com/qwerzxcva/stocks-ai-view/main/data/daily_brief.json")
+        }?.let { runCatching { org.json.JSONObject(it).optString("text") }.getOrNull() }
     }
     val t = text ?: return
     Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors()) {
