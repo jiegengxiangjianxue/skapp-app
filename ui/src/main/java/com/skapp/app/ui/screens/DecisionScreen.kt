@@ -92,7 +92,7 @@ fun DecisionScreen(vm: SkappViewModel, state: UiState) {
             }
         }
 
-        // ── 聪明钱：宽基 ETF 份额跟踪（份额口径来自 push2 实时快照，K 线换手率不可用于增减判断）──
+        // ── 聪明钱：宽基 ETF 份额跟踪（按指数聚合交易所日度总份额）──
         item { SmartMoneyCard(state, vm) }
 
         if (d.cards.isNotEmpty()) {
@@ -226,7 +226,7 @@ private fun SmartMoneyCard(state: UiState, vm: SkappViewModel) {
             Spacer(Modifier.height(6.dp))
             if (sm.ready) {
                 Text(
-                    "信号成熟（${sm.progressText}）· 篮子 ${sm.etfsUsed} 只 · 窗口 ${sm.windowDays} 天 · " +
+                    "信号成熟（${sm.progressText}）· ${sm.etfsUsed} 个宽基指数合计 · 窗口 ${sm.windowDays} 天 · " +
                         "仓位百分位 ${sm.positionPct?.let { String.format("%.1f", it) }}%",
                     style = MaterialTheme.typography.bodySmall,
                     fontWeight = FontWeight.Medium,
@@ -262,7 +262,8 @@ private fun SmartMoneyCard(state: UiState, vm: SkappViewModel) {
                         Column(Modifier.weight(2.4f)) {
                             Text(e.name, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
                             Text(
-                                "${e.code} · ${e.liveDays} 天历史",
+                                if (e.nEtfs > 1) "${e.nEtfs} 只 ETF 合计 · ${e.liveDays} 天历史"
+                                else "${e.code} · ${e.liveDays} 天历史",
                                 style = MaterialTheme.typography.bodySmall, color = Color.Gray,
                             )
                         }
@@ -277,8 +278,8 @@ private fun SmartMoneyCard(state: UiState, vm: SkappViewModel) {
                 }
                 HorizontalDivider()
                 Text(
-                    "份额来自交易所日度披露（上交所 ETF 规模 / 深交所基金规模，单位亿份）；日/5日/20日为份额变动百分比，" +
-                        "样本不足显示「—」，不用估算补齐。",
+                    "每个指数取该指数下全部 ETF 的份额合计（沪深300 就聚合了 30 只），来源为上交所 ETF 规模 / " +
+                        "深交所基金规模日度披露，单位亿份；日/5日/20日为份额变动百分比，样本不足显示「—」，不用估算补齐。",
                     style = MaterialTheme.typography.bodySmall, color = Color.Gray,
                 )
             }

@@ -14,10 +14,15 @@ import java.net.URL
  *   unit                "亿份"
  *   min_history_days    出仓位信号所需的最少历史天数（云端阈值，当前 20）
  *   window_days         百分位窗口（当前 250）
- *   smart_money         篮子仓位百分位；历史不足时为 null（云端不造假）
- *   basket[code]        name / market / latest{date,shares_yi,d1, d5, d20}
- *                       series[{date,shares_yi,source}]  ← 交易所日度真值（sse_etf_vol / szse_fund_size）
- *                       live_series[...]                 ← 旧的成交量/换手率估算，仅量级对照
+ *   smart_money         仓位百分位；历史不足时为 null（云端不造假）
+ *   indexes[icode]      **主口径**：一个宽基指数下全部 ETF 的份额合计
+ *                       name / n_etfs / members{sse,szse} / latest{d1,d5,d20}
+ *                       series[{date,shares_yi}]  ← 已聚合的交易所真值
+ *   basket[code]        单只代表 ETF（对照用），series 点带 source=sse_etf_vol / szse_fund_size
+ *
+ * 为什么按指数聚合：同一指数下常有几十只 ETF（沪深300 有 30 只），只看一只会把
+ * 「同类 ETF 之间的份额搬家」当成净申购，也会低估规模——2026-10-20→10-26 沪深300
+ * 系列合计 +157.77 亿份，而 510300 单只只占 38%。
  *
  * 本机只做「读取 + 展示 + 按规则调档」，不自己拟合份额：
  * - 主序列只认 series 里 source 为交易所真值的点（上交所 TOT_VOL / 深交所 current_size）；
@@ -35,7 +40,7 @@ object SmartMoney {
     /** 云端出仓位信号所需的最少历史天数；实际以 etf_shares.json 的 min_history_days 为准 */
     const val NEED_DAYS = 20
 
-    /** 单只 ETF 的份额跟踪行 */
+    /** 份额跟踪行：主口径是「一个宽基指数下全部 ETF 的份额合计」，回退时才是一单只 ETF */
     data class EtfRow(
         val code: String,
         val name: String,
@@ -48,6 +53,8 @@ object SmartMoney {
         val d1NetYi: Double?,
         val d5NetYi: Double?,
         val liveDays: Int,
+        /** 该行聚合了多少只 ETF（单只口径时恒为 1） */
+        val nEtfs: Int = 1,
     )
 
     data class Signal(
@@ -112,20 +119,25 @@ object SmartMoney {
 
     internal fun parse(text: String): Signal {
         val root = JSONObject(text)
-        val basket = root.optJSONObject("basket") ?: JSONObject()
+        // 主口径 indexes（指数聚合）；只有老数据才没有它，回退到单只 basket
+        val indexes = root.optJSONObject("indexes")
+        val useIndexes = indexes != null && indexes.length() > 0
+        val container = if (useIndexes) indexes!! else (root.optJSONObject("basket") ?: JSONObject())
         val rows = mutableListOf<EtfRow>()
-        val codes = basket.keys().asSequence().sorted().toList()
+        val codes = container.keys().asSequence().sorted().toList()
         for (code in codes) {
-            val o = basket.optJSONObject(code) ?: continue
+            val o = container.optJSONObject(code) ?: continue
             val latest = o.optJSONObject("latest")
-            // 真值序列优先：只认交易所来源（sse_etf_vol / szse_fund_size）。
-            // 旧 live_series 是成交量/换手率估算，量级接近但口径不同，混算会得出荒谬的日变动。
+            // indexes 的 series 已是聚合后的交易所真值，无需再过滤；
+            // basket 的 series 是真值与估算混放的，只认 source=sse_*/szse_*。
             val points = mutableListOf<Pair<String, Double>>()
             o.optJSONArray("series")?.let { arr ->
                 for (i in 0 until arr.length()) {
                     val p = arr.optJSONObject(i) ?: continue
-                    val src = p.optString("source")
-                    if (!src.startsWith("sse_") && !src.startsWith("szse_")) continue
+                    if (!useIndexes) {
+                        val src = p.optString("source")
+                        if (!src.startsWith("sse_") && !src.startsWith("szse_")) continue
+                    }
                     val dt = p.optString("date").takeIf { it.isNotBlank() } ?: continue
                     val v = p.optDouble("shares_yi", Double.NaN)
                     if (!v.isNaN()) points.add(dt to v)
@@ -156,6 +168,7 @@ object SmartMoney {
                     d1NetYi = delta(points, 1),
                     d5NetYi = delta(points, 5),
                     liveDays = points.size,
+                    nEtfs = o.optInt("n_etfs", 1),
                 )
             )
         }
@@ -170,7 +183,7 @@ object SmartMoney {
             positionNote = sm?.optString("note")?.takeIf { it.isNotBlank() },
             d1NetYi = sumOrNull(rows.map { it.d1NetYi }),
             d5NetYi = sumOrNull(rows.map { it.d5NetYi }),
-            etfsUsed = sm?.optInt("etfs_used") ?: 0,
+            etfsUsed = sm?.optInt("index_used") ?: sm?.optInt("etfs_used") ?: 0,
             windowDays = sm?.optInt("window_days") ?: root.optInt("window_days", 0),
             minHistoryDays = minDays,
         )
