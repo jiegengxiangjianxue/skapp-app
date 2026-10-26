@@ -1646,7 +1646,8 @@ $ctx
                 "boll_lower" to f?.bollLower, "boll_mid" to f?.bollMid, "boll_upper" to f?.bollUpper,
             ).filterValues { it != null },
             financialLatest = holo?.finance?.takeIf { it.isNotEmpty() }
-                ?: MarketDataClient.financeQuote(code),
+                ?: MarketDataClient.financeQuote(code).takeIf { it.isNotEmpty() }
+                ?: (runCatching { SkappApi.fetchStockFinancial(code) }.getOrNull() ?: emptyMap()),
         )
     }
 

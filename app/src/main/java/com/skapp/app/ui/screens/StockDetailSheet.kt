@@ -41,6 +41,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
@@ -403,16 +404,15 @@ fun StockDetailSheet(vm: SkappViewModel, state: UiState) {
                 if (flows.isEmpty()) {
                     Text("暂无数据：资金流接口未返回。", color = Color.Gray)
                 } else {
-                    FundFlowChart(flows.takeLast(30), Modifier.fillMaxWidth().height(120.dp))
-                    Spacer(Modifier.height(4.dp))
-                    flows.takeLast(5).reversed().forEach { f ->
-                        val main = (f["main"] as? Number)?.toDouble()
-                        Text(
-                            "${f["date"]}　主力 ${main?.let { String.format("%.0f 万", it / 1e4) } ?: "暂无"}",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = if (main != null && main >= 0) UP else DOWN,
-                        )
-                    }
+                    val shown = flows.takeLast(30)
+                    FundFlowChart(shown, Modifier.fillMaxWidth().height(170.dp))
+                    val sumMain = shown.mapNotNull { (it["main"] as? Number)?.toDouble() }.sum()
+                    Text(
+                        "近 ${shown.size} 日主力净额合计 ${String.format("%.2f 亿", sumMain / 1e8)}（红=净流入，绿=净流出，柱顶为当日金额）",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (sumMain >= 0) UP else DOWN,
+                        modifier = Modifier.padding(top = 4.dp),
+                    )
                 }
             }
         }
@@ -752,17 +752,22 @@ private fun MinuteChart(points: List<Map<String, Any?>>, modifier: Modifier = Mo
     }
 }
 
-/** 资金流柱状图（主力净额，正红负绿） */
+/** 资金流柱状图：柱体直接标注当日金额 + 底部时间轴（不再把数字单独列成一块）。 */
 @Composable
 private fun FundFlowChart(flows: List<Map<String, Any?>>, modifier: Modifier = Modifier) {
+    val vals = flows.mapNotNull { (it["main"] as? Number)?.toDouble() }
+    val dates = flows.map { it["date"]?.toString()?.takeLast(5) ?: "" }
     Canvas(modifier) {
-        val vals = flows.mapNotNull { (it["main"] as? Number)?.toDouble() }
         if (vals.isEmpty()) return@Canvas
         val maxAbs = maxOf(vals.maxOf { kotlin.math.abs(it) }, 1.0)
         val bw = size.width / vals.size
-        val midY = size.height / 2
+        val topPad = 20f
+        val bottomPad = 24f
+        val midY = topPad + (size.height - topPad - bottomPad) / 2f
+        val half = (size.height - topPad - bottomPad) / 2f
+
         vals.forEachIndexed { i, v ->
-            val h = (kotlin.math.abs(v) / maxAbs * (size.height / 2)).toFloat()
+            val h = (kotlin.math.abs(v) / maxAbs * half).toFloat()
             val x = i * bw
             if (v >= 0) {
                 drawRect(UP, topLeft = Offset(x, midY - h), size = androidx.compose.ui.geometry.Size(bw * 0.8f, h))
@@ -770,13 +775,47 @@ private fun FundFlowChart(flows: List<Map<String, Any?>>, modifier: Modifier = M
                 drawRect(DOWN, topLeft = Offset(x, midY), size = androidx.compose.ui.geometry.Size(bw * 0.8f, h))
             }
         }
-        drawLine(
-            color = Color.Gray,
-            start = Offset(0f, midY),
-            end = Offset(size.width, midY),
-            strokeWidth = 1f,
-        )
+        drawLine(Color.Gray.copy(alpha = 0.6f), Offset(0f, midY), Offset(size.width, midY), strokeWidth = 1f)
+
+        // 金额标注：只标绝对值最大的 8 根，避免文字重叠
+        val labelled = vals.withIndex()
+            .sortedByDescending { kotlin.math.abs(it.value) }
+            .take(8).map { it.index }.toSet()
+        val paint = android.graphics.Paint().apply {
+            isAntiAlias = true
+            textSize = 20f
+            textAlign = android.graphics.Paint.Align.CENTER
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+        }
+        vals.forEachIndexed { i, v ->
+            if (i !in labelled) return@forEachIndexed
+            paint.color = if (v >= 0) 0xFFE53935.toInt() else 0xFF2E7D32.toInt()
+            val h = (kotlin.math.abs(v) / maxAbs * half).toFloat()
+            val cx = i * bw + bw * 0.4f
+            val ty = if (v >= 0) (midY - h - 5f).coerceAtLeast(14f)
+            else (midY + h + 18f).coerceAtMost(size.height - 6f)
+            drawContext.canvas.nativeCanvas.drawText(fundFlowText(v), cx, ty, paint)
+        }
+
+        // 时间轴：首 / 中 / 末
+        paint.color = 0xFF9E9E9E.toInt()
+        paint.textSize = 18f
+        paint.typeface = android.graphics.Typeface.DEFAULT
+        paint.textAlign = android.graphics.Paint.Align.LEFT
+        dates.firstOrNull()?.let { drawContext.canvas.nativeCanvas.drawText(it, 2f, size.height - 5f, paint) }
+        if (dates.size > 2) {
+            paint.textAlign = android.graphics.Paint.Align.CENTER
+            drawContext.canvas.nativeCanvas.drawText(dates[dates.size / 2], size.width / 2f, size.height - 5f, paint)
+        }
+        paint.textAlign = android.graphics.Paint.Align.RIGHT
+        dates.lastOrNull()?.let { drawContext.canvas.nativeCanvas.drawText(it, size.width - 2f, size.height - 5f, paint) }
     }
+}
+
+private fun fundFlowText(v: Double): String = when {
+    kotlin.math.abs(v) >= 1e8 -> String.format("%.1f亿", v / 1e8)
+    kotlin.math.abs(v) >= 1e4 -> String.format("%.0f万", v / 1e4)
+    else -> String.format("%.0f", v)
 }
 
 private fun engineName(k: String): String = when (k) {

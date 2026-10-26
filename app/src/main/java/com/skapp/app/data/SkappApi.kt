@@ -411,6 +411,16 @@ object SkappApi {
         )
     }
 
+    /** 单股 API 财务兜底：分片 bundle 未覆盖该股时，直接读 api/stocks/{code}.json。 */
+    suspend fun fetchStockFinancial(code: String): Map<String, Any?>? = withContext(Dispatchers.IO) {
+        val o = fetchJson(RemoteSources.apiStock(RemoteSources.OWNER_A, RemoteSources.REPO_A, code))
+            ?: fetchJson(RemoteSources.apiStock(RemoteSources.OWNER_C, RemoteSources.REPO_C, code))
+            ?: return@withContext null
+        val direct = o.optJSONObject("financial_latest")?.toMap()
+        val arr = o.optJSONArray("financial")?.optJSONObject(0)?.toMap()
+        (direct ?: arr)?.takeIf { it.isNotEmpty() }
+    }
+
     /** 数据源台账：A 仓优先，退 C 仓；不可达时返回空快照，由 UI 显示暂无数据。 */
     suspend fun fetchDataSources(): DataSourcesSnapshot = withContext(Dispatchers.IO) {
         val o = fetchJson(RemoteSources.apiSources())
