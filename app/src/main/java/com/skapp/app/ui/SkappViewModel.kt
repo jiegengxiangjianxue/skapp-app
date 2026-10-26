@@ -125,6 +125,8 @@ data class UiState(
     val market: MarketSnapshot = MarketSnapshot(),
     val news: NewsSnapshot = NewsSnapshot(),
     val sectors: SectorsSnapshot = SectorsSnapshot(),
+    /** 数据源台账（登记/可用/已接执行器/缺口/不可用） */
+    val dataSources: com.skapp.app.data.DataSourcesSnapshot = com.skapp.app.data.DataSourcesSnapshot(),
     /** 引擎产出聚合（engines_feed：regime/cycle/anomaly/price_level/orchestrator） */
     val engineFeeds: com.skapp.app.data.EngineFeed.EngineFeeds? = null,
     val symbols: List<SymbolEntry> = emptyList(),
@@ -321,6 +323,7 @@ class SkappViewModel : ViewModel() {
             val marketD = async { requestResult { SkappApi.fetchMarket() }.getOrDefault(MarketSnapshot()) }
             val newsD = async { requestResult { SkappApi.fetchNews() }.getOrDefault(NewsSnapshot()) }
             val sectorsD = async { requestResult { SkappApi.fetchSectors() }.getOrDefault(SectorsSnapshot()) }
+            val sourcesD = async { requestResult { SkappApi.fetchDataSources() }.getOrDefault(com.skapp.app.data.DataSourcesSnapshot()) }
             val poolsD = async { requestResult { SiteBoardClient.pools() }.getOrDefault(emptyList()) }
             val boardD = async { requestResult { SiteBoardClient.board() }.getOrDefault(emptyMap()) }
             val themeD = async { requestResult { SiteBoardClient.themeReport() }.getOrNull() }
@@ -339,6 +342,7 @@ class SkappViewModel : ViewModel() {
                 market = marketD.await(),
                 news = newsD.await(),
                 sectors = sectorsD.await(),
+                dataSources = sourcesD.await(),
                 pools = poolsD.await(),
                 board = boardD.await(),
                 themeReport = themeD.await(),
@@ -1110,6 +1114,15 @@ class SkappViewModel : ViewModel() {
                 reason = if (items.isEmpty()) "本轮本地深算尚无候选，可在实时总结刷新" else null,
             )
         )
+    }
+
+    /** 数据源台账刷新（诊断页用） */
+    fun loadDataSources() {
+        viewModelScope.launch {
+            val snap = runCatching { SkappApi.fetchDataSources() }
+                .getOrDefault(com.skapp.app.data.DataSourcesSnapshot())
+            _state.value = _state.value.copy(dataSources = snap)
+        }
     }
 
     /** 看板 */

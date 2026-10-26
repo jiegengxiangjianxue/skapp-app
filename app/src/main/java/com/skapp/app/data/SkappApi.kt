@@ -407,6 +407,40 @@ object SkappApi {
         )
     }
 
+    /** 数据源台账：A 仓优先，退 C 仓；不可达时返回空快照，由 UI 显示暂无数据。 */
+    suspend fun fetchDataSources(): DataSourcesSnapshot = withContext(Dispatchers.IO) {
+        val o = fetchJson(RemoteSources.apiSources())
+            ?: fetchJson(RemoteSources.apiSources(RemoteSources.OWNER_C, RemoteSources.REPO_C))
+            ?: return@withContext DataSourcesSnapshot()
+        val items = o.optJSONArray("items")?.toMapList()?.map { row ->
+            DataSourceStatus(
+                id = row["id"]?.toString() ?: "",
+                name = row["name"]?.toString(),
+                group = row["group"]?.toString(),
+                status = row["status"]?.toString() ?: "missing",
+                hasFetcher = row["has_fetcher"] == true || row["has_fetcher"]?.toString() == "true",
+                note = row["note"]?.toString(),
+            )
+        } ?: emptyList()
+        fun ids(key: String): List<String> = o.optJSONArray(key)?.toStringList() ?: emptyList()
+        DataSourcesSnapshot(
+            ts = o.optString("ts").takeIf { it.isNotBlank() },
+            total = o.optIntOrNull("total") ?: items.size,
+            usable = o.optIntOrNull("usable") ?: 0,
+            withFetcher = o.optIntOrNull("with_fetcher") ?: 0,
+            live = o.optIntOrNull("live") ?: 0,
+            gap = o.optIntOrNull("usable_without_fetcher") ?: 0,
+            blocked = o.optIntOrNull("blocked_or_unauth") ?: 0,
+            groups = o.optJSONObject("groups")?.toMap()
+                ?.mapValues { (_, v) -> (v as? Map<*, *>)?.entries?.associate { it.key.toString() to it.value } ?: emptyMap() }
+                ?: emptyMap(),
+            mergedIds = ids("merged_ids"),
+            gapIds = ids("gap_ids"),
+            blockedIds = ids("blocked_ids"),
+            items = items,
+        )
+    }
+
     private suspend fun fetchBundle(code: String): StockDetail? = withContext(Dispatchers.IO) {
         val url = RemoteSources.shardBundle(code) ?: return@withContext null
         val o = fetchJson(url) ?: return@withContext null

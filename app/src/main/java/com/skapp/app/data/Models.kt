@@ -250,6 +250,31 @@ data class SectorsSnapshot(
     val boardMembers: Map<String, Map<String, Any?>> = emptyMap(),
 )
 
+/** 数据源台账：登记 / 可用 / 已接执行器 / 缺口 / 不可用 */
+data class DataSourceStatus(
+    val id: String,
+    val name: String? = null,
+    val group: String? = null,
+    val status: String = "missing",
+    val hasFetcher: Boolean = false,
+    val note: String? = null,
+)
+
+data class DataSourcesSnapshot(
+    val ts: String? = null,
+    val total: Int = 0,
+    val usable: Int = 0,
+    val withFetcher: Int = 0,
+    val live: Int = 0,
+    val gap: Int = 0,
+    val blocked: Int = 0,
+    val groups: Map<String, Map<String, Any?>> = emptyMap(),
+    val mergedIds: List<String> = emptyList(),
+    val gapIds: List<String> = emptyList(),
+    val blockedIds: List<String> = emptyList(),
+    val items: List<DataSourceStatus> = emptyList(),
+)
+
 /** 用户提问 → 命中个股 → 答案 */
 data class AskResult(
     val question: String,

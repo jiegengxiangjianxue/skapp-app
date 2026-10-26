@@ -1,5 +1,6 @@
 package com.skapp.app.ui.screens
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -55,6 +56,7 @@ fun DiagScreen(vm: SkappViewModel, state: UiState) {
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Text("数据源自检", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        SourceLedgerCard(state, vm)
         val stats = state.registryStats
         val registry = rows.firstOrNull { it.first == "源注册表" }?.second
         Text(
@@ -78,8 +80,49 @@ fun DiagScreen(vm: SkappViewModel, state: UiState) {
     }
 }
 
-private fun probe(): List<Pair<String, String>> {
-    fun http(url: String): String = try {
+@Composable
+private fun SourceLedgerCard(state: UiState, vm: SkappViewModel) {
+    val ds = state.dataSources
+    Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors()) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("数据源台账", fontWeight = FontWeight.SemiBold)
+                Text(
+                    "刷新",
+                    Modifier.clickable { vm.loadDataSources() },
+                    color = MaterialTheme.colorScheme.primary,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+            if (ds.total == 0) {
+                Text("暂无数据：api/sources.json 不可达。", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                return@Column
+            }
+            Text(
+                "登记 ${ds.total} · 可用 ${ds.usable} · 已接执行器 ${ds.withFetcher} · 可用且已接 ${ds.live}",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            Text(
+                "可用但无执行器 ${ds.gap} · 不可用(blocked/unauth) ${ds.blocked} · 更新 ${ds.ts ?: "暂无"}",
+                style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+            )
+            if (ds.gapIds.isNotEmpty()) {
+                Text(
+                    "缺口（登记可用但没接）：${ds.gapIds.take(15).joinToString("、")}",
+                    style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+                )
+            }
+            if (ds.blockedIds.isNotEmpty()) {
+                Text(
+                    "不可用（不绕过）：${ds.blockedIds.take(10).joinToString("、")}",
+                    style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+                )
+            }
+        }
+    }
+}
+
+private fun probe(): List<Pair<String, String>> {    fun http(url: String): String = try {
         val conn = (java.net.URL(url).openConnection() as java.net.HttpURLConnection).apply {
             connectTimeout = 15000; readTimeout = 15000
             setRequestProperty("User-Agent", "Mozilla/5.0 (Android) skapp")

@@ -126,9 +126,12 @@ object RemoteSources {
     fun apiSectors(owner: String = OWNER_A, repo: String = REPO_A): String =
         "${base(owner, repo)}/api/sectors.json"
 
+    /** 数据源台账（登记/可用/已接执行器/缺口/不可用） */
+    fun apiSources(owner: String = OWNER_A, repo: String = REPO_A): String =
+        "${base(owner, repo)}/api/sources.json"
+
     fun apiStock(owner: String, repo: String, code: String): String =
         "${base(owner, repo)}/api/stocks/$code.json"
-
     fun apiQa(owner: String, repo: String, code: String): String =
         "${base(owner, repo)}/api/qa/$code.json"
 
