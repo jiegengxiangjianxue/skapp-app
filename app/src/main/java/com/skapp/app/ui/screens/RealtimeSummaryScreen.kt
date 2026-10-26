@@ -23,6 +23,7 @@ import androidx.compose.ui.unit.dp
 import com.skapp.app.data.CloseReview
 import com.skapp.app.data.PickSignal
 import com.skapp.app.data.StructuredPickArtifact
+import com.skapp.app.data.MarketHours
 import com.skapp.app.ui.SkappViewModel
 import com.skapp.app.ui.UiState
 
@@ -58,16 +59,23 @@ fun RealtimeSummaryScreen(vm: SkappViewModel, state: UiState) {
 
 @Composable
 private fun PickArtifactCard(title: String, artifact: StructuredPickArtifact, today: String, vm: SkappViewModel) {
-    val current = artifact.date == today
+    val sourceDate = artifact.date ?: artifact.generatedAt?.take(10)
+    val current = sourceDate == today
+    val premarket = title.contains("盘前")
+    val premarketActive = MarketHours.phase() in setOf(MarketHours.Phase.PRE_OPEN, MarketHours.Phase.AUCTION_OPEN)
+    val visibleForSession = !premarket || premarketActive
     Card(colors = CardDefaults.cardColors()) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(title, fontWeight = FontWeight.SemiBold)
             Text("生成 ${artifact.generatedAt ?: "暂无数据"} · 计算 ${artifact.calculationTime ?: "暂无数据"}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-            if (artifact.picks.isEmpty()) {
-                Text(if (artifact.reason.isNullOrBlank()) "暂无数据：该时段没有可展示推股。" else artifact.reason, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+            if (artifact.picks.isEmpty() || !current || !visibleForSession) {
+                val message = when {
+                    !current -> "暂无数据：源日期 ${sourceDate ?: "未知"}，不是当前交易日。"
+                    premarket && !premarketActive -> "盘前推股时段已结束；当前请查看本地实时推股或等待午盘推股。"
+                    else -> artifact.reason ?: "暂无数据：该时段没有可展示推股。"
+                }
+                Text(message, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
             } else {
-                if (!current) Text("源日期 ${artifact.date ?: "未知"}，不是今日数据；以下仅作历史参考。", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-
                 Text("引擎：${artifact.engine ?: "暂无数据"} · ${artifact.picks.size} 条", style = MaterialTheme.typography.bodySmall)
                 itemsPreview(artifact.picks, vm)
             }
