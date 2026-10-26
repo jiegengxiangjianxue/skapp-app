@@ -118,7 +118,7 @@ private fun WinrateCard(state: UiState) {
             Text("推股胜率", fontWeight = FontWeight.SemiBold)
             Text("生成 ${state.winrateMatrix.ts ?: "时点暂无"} · 源数据 ${state.winrateMatrix.sourceTs ?: "暂无数据"} · 来源 ${state.winrateMatrix.source ?: "暂无数据"}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
             val sourceDate = state.winrateMatrix.sourceTs?.take(10)
-            val fresh = sourceDate == null || sourceDate == java.time.LocalDate.now().toString()
+            val fresh = sourceDate == java.time.LocalDate.now().toString()
             if (!fresh) Text("暂无数据：胜率源数据不是当前交易日，不能作为今日统计。", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
             if (state.winrateMatrix.horizons.isEmpty() || !fresh) Text("暂无数据：当前无可用当日胜率。", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
             else state.winrateMatrix.horizons.toSortedMap().forEach { (horizon, data) ->
