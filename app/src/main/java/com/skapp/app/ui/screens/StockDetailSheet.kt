@@ -490,23 +490,6 @@ fun StockDetailSheet(vm: SkappViewModel, state: UiState) {
             }
         }
 
-        // ── 云端财务摘要 ──
-        SectionCard("财务摘要（云端 bundle）") {
-            val fin = d.detail?.financialLatest
-            Text(
-                "来源：cloud bundle · 覆盖：${d.detail?.status ?: "unknown"} · 时点：${d.detail?.ts ?: "unknown"}",
-                style = MaterialTheme.typography.bodySmall,
-                color = Color.Gray,
-            )
-            if (fin.isNullOrEmpty()) {
-                Text("暂无数据：分片 bundle 未覆盖该股。", color = Color.Gray)
-            } else {
-                fin.entries.take(12).forEach { (k, v) ->
-                    Text("${finLabel(k)}：${v ?: "暂无数据"}")
-                }
-            }
-        }
-
         // ── 29 因子库 ──
         Card(colors = CardDefaults.cardColors()) {
             Column(Modifier.padding(12.dp)) {
@@ -531,10 +514,29 @@ fun StockDetailSheet(vm: SkappViewModel, state: UiState) {
             }
         }
 
+        // ── 云端财务摘要 ──
+        SectionCard("财务摘要（云端 bundle · 仅作补充，本机引擎在上）") {
+            val fin = d.detail?.financialLatest
+            Text(
+                "来源：cloud bundle · 覆盖：${d.detail?.status ?: "unknown"} · 时点：${d.detail?.ts ?: "unknown"}",
+                style = MaterialTheme.typography.bodySmall,
+                color = Color.Gray,
+            )
+            if (fin.isNullOrEmpty()) {
+                Text("暂无数据：分片 bundle 未覆盖该股。", color = Color.Gray)
+            } else {
+                fin.entries.take(12).forEach { (k, v) ->
+                    Text("${finLabel(k)}：${v ?: "暂无数据"}")
+                }
+            }
+        }
+
         // ── 数据来源 ──
         SectionCard("数据来源") {
             Text("实时报价：腾讯 qt.gtimg.cn（兜底 东财 push2 / 新浪 hq.sinajs）")
-            Text("日 K：腾讯 web.ifzq fqkline（兜底 东财 push2his kline）")
+            Text("日 K：后复权=东财 push2his fqt=2（HTTP 兜底）→ 同花顺 v6/line 02 档 → 腾讯 hfq；前复权/不复权=腾讯 fqkline → 东财 → 同花顺")
+            Text("复权口径提示：三家复权基准日不同（东财/腾讯 hfq 比值恒约 0.892），绝对价不可跨源比较，同一张图只用一家")
+            Text("指数：中证指数官网 csindex-home/perf/index-perf；公告：巨潮资讯 cninfo（POST）；代码表：上交所/深交所官网")
             Text("分时：腾讯 minute/query（兜底 东财 push2his trends2）")
             Text("资金流：东财 push2his fflow（兜底 push2delay）")
             Text("所属板块：东财 push2 stock/get")
