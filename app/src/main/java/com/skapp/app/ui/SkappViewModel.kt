@@ -25,6 +25,7 @@ import com.skapp.app.data.KPeriod
 import com.skapp.app.data.KlineApi
 import com.skapp.app.data.LocalEngine
 import com.skapp.app.data.LocalEngineResult
+import com.skapp.app.data.LocalNewsResult
 import com.skapp.app.data.LocalScreener
 import com.skapp.app.data.MarketDataClient
 import com.skapp.app.data.MarketHours
@@ -215,6 +216,7 @@ class SkappViewModel : ViewModel() {
     val state: StateFlow<UiState> = _state.asStateFlow()
 
     private var quoteJob: Job? = null
+    private var newsJob: Job? = null
     private var detailJob: Job? = null
     private var askEngine: AskEngine? = null
     private var stockNames: Map<String, String> = emptyMap()
@@ -233,6 +235,7 @@ class SkappViewModel : ViewModel() {
     init {
         // 不在 init 里 load()：token 要等 loadSavedToken 恢复；此时拉数据会因无鉴权全失败（app 打开全空的根因）
         startQuoteLoop()
+        startNewsLoop()
     }
 
     /** MainActivity 启动时调用：从 SharedPreferences 恢复 GitCode + GitHub token，并初始化双源路由 */
@@ -456,12 +459,28 @@ class SkappViewModel : ViewModel() {
                 if (trading) {
                     refreshQuotes()
                     refreshPickQuotes()
-                    delay(30_000)
+                    delay(5_000)
                 } else {
                     // 休市：按距离下一次开市的剩余时间睡，最长 10 分钟醒一次更新状态
                     val wait = MarketHours.msUntilAutoRefresh(now) ?: (10 * 60_000L)
                     delay(minOf(wait, 10 * 60_000L))
                 }
+            }
+        }
+    }
+
+    /** 本地消息刷新：交易时段约30秒，非交易时段约3分钟；云端快照只作低频补偿。 */
+    fun startNewsLoop() {
+        newsJob?.cancel()
+        newsJob = viewModelScope.launch {
+            while (isActive) {
+                if (_state.value.newsCalcLoading) {
+                    delay(5_000)
+                    continue
+                }
+                runCatching { refreshNewsCalcs() }
+                val wait = if (MarketHours.isTrading() || MarketHours.isAuction()) 30_000L else 180_000L
+                delay(wait)
             }
         }
     }
@@ -709,19 +728,18 @@ class SkappViewModel : ViewModel() {
         try {
             val symbols = _state.value.symbols
             val items = ArrayList<Map<String, Any?>>()
-            // 实时 7x24：设备直连东财
-            val liveItems = requestResult { MarketDataClient.news724() }.getOrDefault(emptyList())
-            items.addAll(liveItems)
-            // GitHub 新闻数据库：已分析记录带 verdict/codes，作为持久化结果合并回来
+            // 本地多源：东财、爱股票、金融界，各源失败隔离并保留健康状态。
+            val local = requestResult { MarketDataClient.localNews(30) }.getOrDefault(LocalNewsResult())
+            items.addAll(local.items)
+            // 云端新闻数据库：分析字段和跨源映射只作补充，不覆盖本地新消息。
             val stored = requestResult { SkappApi.fetchNewsImpact() }.getOrDefault(emptyList())
             items.addAll(stored)
-            // 云端新闻快照兜底/补充
-            // state.news.items 是消息页统一数据源；实时/持久化数据只补充，不清空已有快照。
+            // state.news.items 是消息页统一数据源；保留已加载的云端快照作为最后补充。
             items.addAll(_state.value.news.items)
             if (items.isEmpty()) {
-            val liveFallback = requestResult { MarketDataClient.news724(50) }.getOrDefault(emptyList())
-            items.addAll(liveFallback)
-        }
+                val liveFallback = requestResult { MarketDataClient.news724(50) }.getOrDefault(emptyList())
+                items.addAll(liveFallback)
+            }
         val unique = items.map { item ->
                 val title = (item["title"] ?: item["newsTitle"] ?: item["digest"] ?: item["content"])?.toString()?.trim().orEmpty()
                 val time = (item["time"] ?: item["updated"] ?: item["ctime"] ?: item["ts"])?.toString()
@@ -768,7 +786,19 @@ class SkappViewModel : ViewModel() {
                 if (id.isNotBlank()) id else "${item["title"]}|${item["time"] ?: ""}"
             }.take(50)
             if (merged.isEmpty()) throw IllegalStateException("暂无消息数据")
-            _state.value = _state.value.copy(news = _state.value.news.copy(items = merged))
+            val previous = _state.value.news
+            val sourceTs = merged.mapNotNull { it["time"]?.toString()?.takeIf { ts -> ts.isNotBlank() } }.maxOrNull()
+            _state.value = _state.value.copy(
+                news = previous.copy(
+                    items = merged,
+                    n = merged.size,
+                    sourceTs = sourceTs ?: previous.sourceTs,
+                    fetchedAt = local.fetchedAt ?: previous.fetchedAt,
+                    sourceStatus = local.sourceStatus,
+                    sourceErrors = local.errors,
+                    dedupCount = (items.size - merged.size).coerceAtLeast(0),
+                ),
+            )
             val calcs = NewsCalcEngine.compute(merged, symbols).map { calc ->
                 val source = merged.firstOrNull { it["title"] == calc.newsTitle }
                 calc.copy(

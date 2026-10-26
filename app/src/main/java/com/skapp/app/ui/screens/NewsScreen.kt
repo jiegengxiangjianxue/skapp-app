@@ -67,7 +67,14 @@ fun NewsScreen(vm: SkappViewModel, state: UiState) {
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text("消息快照为主，实时计算结果作为标题下补充。", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+            val sourceLine = state.news.sourceStatus.entries.joinToString(" · ") { "${it.key}:${it.value}" }
+            Text(
+                "本地多源 ${if (sourceLine.isBlank()) "暂无状态" else sourceLine} · 抓取 ${state.news.fetchedAt ?: "暂无数据"} · 去重 ${state.news.dedupCount ?: "暂无数据"}",
+                style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+            )
+            if (state.news.sourceErrors.isNotEmpty()) {
+                Text("部分源失败：${state.news.sourceErrors.joinToString("；")}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+            }
             if (state.newsCalcLoading) CircularProgressIndicator(modifier = Modifier.height(20.dp), strokeWidth = 2.dp)
             else Text("刷新", Modifier.clickable { vm.loadNewsCalcs() }, color = MaterialTheme.colorScheme.primary,
                 style = MaterialTheme.typography.bodySmall)

@@ -182,11 +182,23 @@ data class MarketSnapshot(
 )
 
 /** 消息面：移植站点 news_* 四个引擎产出 */
+data class LocalNewsResult(
+    val items: List<Map<String, Any?>> = emptyList(),
+    val sourceStatus: Map<String, String> = emptyMap(),
+    val errors: List<String> = emptyList(),
+    val fetchedAt: String? = null,
+)
+
 data class NewsSnapshot(
     val schemaVersion: String? = null,
     val date: String? = null,
     val n: Int? = null,
     val ts: String? = null,
+    val sourceTs: String? = null,
+    val fetchedAt: String? = null,
+    val sourceStatus: Map<String, String> = emptyMap(),
+    val sourceErrors: List<String> = emptyList(),
+    val dedupCount: Int? = null,
     val digest: Map<String, Any?> = emptyMap(),
     /** 统一新闻 schema：id/title/source/time/verdict/direction/reason/stocks/status/image */
     val items: List<Map<String, Any?>> = emptyList(),

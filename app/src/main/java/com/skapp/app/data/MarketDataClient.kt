@@ -1,6 +1,9 @@
 package com.skapp.app.data
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -378,6 +381,74 @@ object MarketDataClient {
                     d.opt("f60")?.let { put("每股净资产", it) }
                 }
             } ?: emptyMap()
+    }
+
+    /** 本地多源消息：东财 7x24 + 爱股票快讯 + 金融界要闻。各源失败隔离。 */
+    suspend fun localNews(limit: Int = 30): LocalNewsResult = coroutineScope {
+        val fetchedAt = java.time.OffsetDateTime.now().toString()
+        data class SourceResult(val name: String, val rows: List<Map<String, Any?>>?, val error: String?)
+        val results = listOf(
+            async(Dispatchers.IO) { runCatching { news724(limit) }.fold({ SourceResult("eastmoney_724", it, null) }, { SourceResult("eastmoney_724", null, it.message) }) },
+            async(Dispatchers.IO) { runCatching { aigupiaoExpress(limit) }.fold({ SourceResult("aigupiao_express", it, null) }, { SourceResult("aigupiao_express", null, it.message) }) },
+            async(Dispatchers.IO) { runCatching { jrjHeadlines(limit) }.fold({ SourceResult("jrj_yaowen", it, null) }, { SourceResult("jrj_yaowen", null, it.message) }) },
+        ).awaitAll()
+        val status = linkedMapOf<String, String>()
+        val errors = ArrayList<String>()
+        val all = ArrayList<Map<String, Any?>>()
+        results.forEach { result ->
+            if (result.rows != null) {
+                all.addAll(result.rows)
+                status[result.name] = if (result.rows.isEmpty()) "empty" else "ok"
+            } else {
+                status[result.name] = "error"
+                if (!result.error.isNullOrBlank()) errors += "${result.name}: ${result.error}"
+            }
+        }
+        LocalNewsResult(all, status, errors, fetchedAt)
+    }
+
+    private suspend fun aigupiaoExpress(limit: Int): List<Map<String, Any?>> = withContext(Dispatchers.IO) {
+        val url = "https://apis.aigupiao.com/Express/express_list/?before=0&source=pc&web_data=yes&number=$limit&express_show_type=1"
+        val root = getJson(url) ?: return@withContext emptyList()
+        val out = ArrayList<Map<String, Any?>>()
+        root.optJSONObject("data")?.keys()?.forEach { day ->
+            root.optJSONObject("data")?.optJSONObject(day)?.optJSONArray("data")?.let { arr ->
+                for (i in 0 until arr.length()) {
+                    val item = arr.optJSONObject(i) ?: continue
+                    val title = item.optString("content").trim()
+                    if (title.isBlank()) continue
+                    val stocks = ArrayList<Map<String, Any?>>()
+                    item.optJSONArray("stock_infos")?.let { ss ->
+                        for (j in 0 until ss.length()) {
+                            val s = ss.optJSONObject(j) ?: continue
+                            if (s.optString("kind") == "stock" && s.optString("code").isNotBlank()) {
+                                stocks += mapOf("code" to s.optString("code").replace("USA", ""), "name" to s.optString("name"))
+                            }
+                        }
+                    }
+                    out += mapOf("id" to (item.opt("id") ?: item.opt("rec_time")), "title" to title,
+                        "source" to "aigupiao_express", "time" to item.optString("rec_time"),
+                        "themes" to item.optString("theme"), "stocks" to stocks.take(5),
+                        "important" to (item.optString("important") == "yes"))
+                }
+            }
+        }
+        out.take(limit)
+    }
+
+    private suspend fun jrjHeadlines(limit: Int): List<Map<String, Any?>> = withContext(Dispatchers.IO) {
+        val date = java.time.LocalDate.now().toString()
+        val body = get("https://stockjs.jrj.com.cn/share/news/yaowen/yw$date.js") ?: return@withContext emptyList()
+        val json = body.substringAfter('=', body).trim()
+        val root = runCatching { JSONObject(json) }.getOrNull() ?: return@withContext emptyList()
+        val arr = root.optJSONArray("newsinfo") ?: return@withContext emptyList()
+        (0 until minOf(arr.length(), limit)).mapNotNull { i ->
+            val item = arr.optJSONObject(i) ?: return@mapNotNull null
+            val title = item.optString("title").trim().takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            mapOf("id" to (item.opt("iiid") ?: title), "title" to title,
+                "content" to item.optString("detail").take(300), "source" to "jrj_yaowen",
+                "time" to item.optString("makedate"), "url" to item.optString("infourl"))
+        }
     }
 
     /** 实时 7x24 快讯（东财 np-listapi，设备直连，不受 CI 快照时效限制） */
