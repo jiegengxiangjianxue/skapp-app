@@ -22,6 +22,9 @@ data class MarketPulseRow(
     val volRatio: Double?,
     val turnover: Double?,
     val mainNet: Double?,
+    val board: String? = null,
+    val outlook: String = "insufficient",
+    val outlookReason: String? = null,
     val snapshotStatus: String = "live",
 )
 

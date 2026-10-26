@@ -277,6 +277,10 @@ object SkappApi {
         impact?.optJSONArray("news")?.let { rawItems.addAll(it.toMapList()) }
         impact?.optJSONArray("impacts")?.let { rawItems.addAll(it.toMapList()) }
         api?.optJSONArray("impacts")?.let { rawItems.addAll(it.toMapList()) }
+        api?.optJSONObject("impact")?.let { nested ->
+            nested.optJSONArray("items")?.let { rawItems.addAll(it.toMapList()) }
+            nested.optJSONArray("impacts")?.let { rawItems.addAll(it.toMapList()) }
+        }
 
         fun canonical(item: Map<String, Any?>): Map<String, Any?> {
             val title = (item["title"] ?: item["newsTitle"] ?: item["digest"] ?: item["content"])?.toString()?.trim().orEmpty()
@@ -301,6 +305,7 @@ object SkappApi {
                 "source" to (item["source"] ?: item["source_name"] ?: item["src"] ?: ""),
                 "time" to time,
                 "themes" to themes,
+                "boards" to (item["boards"] ?: item["sectors"] ?: item["affected_sectors"] ?: emptyList<Any?>()),
                 "verdict" to (item["verdict"] ?: "insufficient"),
                 "direction" to (item["direction"] ?: item["sentiment"] ?: "insufficient"),
                 "positive_reason" to (item["positive_reason"] ?: item["reason_positive"] ?: item["positive"] ?: "insufficient"),
@@ -337,7 +342,9 @@ object SkappApi {
             digest = root?.optJSONObject("digest")?.toMap() ?: emptyMap(),
             items = items,
             themes = root?.optJSONObject("themes")?.optJSONArray("themes")?.toMapList() ?: emptyList(),
-            impacts = (impact?.optJSONArray("impacts") ?: api?.optJSONArray("impacts"))?.toMapList() ?: emptyList(),
+            impacts = (impact?.optJSONArray("impacts")
+                ?: api?.optJSONArray("impacts")
+                ?: api?.optJSONObject("impact")?.optJSONArray("impacts"))?.toMapList() ?: emptyList(),
             transmission = root?.optJSONObject("transmission")?.optJSONArray("items")?.toMapList() ?: emptyList(),
         )
     }

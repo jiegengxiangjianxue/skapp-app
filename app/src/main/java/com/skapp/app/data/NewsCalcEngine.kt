@@ -24,6 +24,8 @@ data class NewsCalc(
     val sentimentHits: List<String> = emptyList(),
     /** 已写入 GitHub 新闻库的分析影响个股（当前条目无本地实时匹配时展示） */
     val impactCodes: List<String> = emptyList(),
+    val boards: List<String> = emptyList(),
+    val themes: List<String> = emptyList(),
     /** 利好质量判定：真利好 / 利好·防追高套人 / 利空 / 中性 */
     val verdict: String = "",
     val direction: String = "insufficient",
@@ -123,7 +125,31 @@ object NewsCalcEngine {
                 val title = (item["title"] ?: item["digest"])?.toString() ?: ""
                 val (senti, hits) = sentimentOf(title)
                 val storedVerdict = item["verdict"]?.toString()?.takeIf { it.isNotBlank() }
-                val storedCodes = (item["codes"] as? List<*>)?.mapNotNull { it?.toString() } ?: emptyList()
+                val storedBoards = when (val raw = item["boards"] ?: item["sectors"] ?: item["affected_sectors"]) {
+                    is List<*> -> raw.mapNotNull { it?.toString() }
+                    is String -> raw.split(",", "、").filter { it.isNotBlank() }
+                    else -> emptyList()
+                }
+                val storedThemes = when (val raw = item["themes"] ?: item["theme"]) {
+                    is List<*> -> raw.mapNotNull { it?.toString() }
+                    is String -> raw.split(",", "、").filter { it.isNotBlank() }
+                    else -> emptyList()
+                }
+                val localPositiveReason = item["positive_reason"]?.toString()
+                    ?: if (senti == "pos" && hits.isNotEmpty()) "消息命中偏多词：${hits.joinToString("、")}" else null
+                val localNegativeReason = item["negative_reason"]?.toString()
+                    ?: if (senti == "neg" && hits.isNotEmpty()) "消息命中偏空词：${hits.joinToString("、")}" else null
+                val storedCodes = (item["codes"] as? List<*>)?.mapNotNull { value ->
+                    when (value) {
+                        is Map<*, *> -> (value["code"] ?: value["symbol"] ?: value["stock_code"])?.toString()
+                        else -> value?.toString()
+                    }
+                } ?: (item["stocks"] as? List<*>)?.mapNotNull { value ->
+                    when (value) {
+                        is Map<*, *> -> (value["code"] ?: value["symbol"] ?: value["stock_code"])?.toString()
+                        else -> value?.toString()
+                    }
+                } ?: emptyList()
                 val codes = resolveStocks(title, symbols)
                 if (codes.isEmpty()) {
                     return@async NewsCalc(
@@ -133,10 +159,12 @@ object NewsCalcEngine {
                         sentiment = senti,
                         sentimentHits = hits,
                         impactCodes = storedCodes,
+                        boards = storedBoards,
+                        themes = storedThemes,
                         verdict = storedVerdict ?: verdictOf(senti, hits, title, null),
                         direction = item["direction"]?.toString()?.takeIf { it.isNotBlank() } ?: senti,
-                        positiveReason = item["positive_reason"]?.toString(),
-                        negativeReason = item["negative_reason"]?.toString(),
+                        positiveReason = localPositiveReason,
+                        negativeReason = localNegativeReason,
                         imageUrl = imageUrlOf(item),
                         status = "no_stock",
                         note = "标题未提及具体股票，无个股计算",
@@ -181,6 +209,8 @@ object NewsCalcEngine {
                     sentiment = senti,
                     sentimentHits = hits,
                     impactCodes = storedCodes,
+                    boards = storedBoards,
+                    themes = storedThemes,
                     verdict = storedVerdict ?: verdictOf(senti, hits, title, stocks.mapNotNull { it.pctChg }.maxOrNull()),
                     direction = item["direction"]?.toString()?.takeIf { it.isNotBlank() } ?: senti,
                     positiveReason = item["positive_reason"]?.toString(),

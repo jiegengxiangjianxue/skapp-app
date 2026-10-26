@@ -496,23 +496,50 @@ class SkappViewModel : ViewModel() {
                 val code = raw["code"]?.toString() ?: return@mapNotNull null
                 val pct = (raw["pctChg"] as? Number)?.toDouble() ?: return@mapNotNull null
                 val name = raw["name"]?.toString().orEmpty()
-                if (!code.take(3).matches(Regex("600|601|603|605|000|001|002")) || name.contains("ST", true) || pct >= 9.6) return@mapNotNull null
+                if (code.take(3) !in setOf("600", "601", "603", "605", "000", "001", "002") || name.contains("ST", true) || pct >= 9.6) return@mapNotNull null
                 val old = previous[code]?.pctChg
+                val speed = if (old != null) pct - old else (raw["speed"] as? Number)?.toDouble()
+                val mainNet = (raw["mainNet"] as? Number)?.toDouble()
+                val volRatio = (raw["volRatio"] as? Number)?.toDouble()
+                val outlook = when {
+                    speed != null && speed >= 0.8 && (mainNet == null || mainNet > 0) -> "bullish"
+                    speed != null && speed <= -0.8 && mainNet != null && mainNet < 0 -> "bearish"
+                    speed != null && speed > 0.3 -> "watch_up"
+                    speed != null && speed < -0.3 -> "watch_down"
+                    else -> "insufficient"
+                }
+                val reason = when (outlook) {
+                    "bullish" -> "涨速加快${"%.2f".format(speed)}个百分点${if (mainNet != null) "，主力净额${"%.2f".format(mainNet)}" else ""}；仅为行情规则推断，不等于确定上涨"
+                    "bearish" -> "涨速转弱${"%.2f".format(speed)}个百分点，主力净额为负；仅为行情规则推断，不等于确定下跌"
+                    "watch_up" -> "涨速偏强但证据不足，等待板块/消息确认"
+                    "watch_down" -> "涨速偏弱但证据不足，等待板块/消息确认"
+                    else -> "缺少连续快照或资金证据"
+                }
                 com.skapp.app.data.MarketPulseRow(
                     code = code,
                     name = name,
                     price = (raw["price"] as? Number)?.toDouble(),
                     pctChg = pct,
-                    speed = if (old != null) pct - old else null,
-                    volRatio = (raw["volRatio"] as? Number)?.toDouble(),
+                    speed = speed,
+                    volRatio = volRatio,
                     turnover = (raw["turnover"] as? Number)?.toDouble(),
-                    mainNet = (raw["mainNet"] as? Number)?.toDouble(),
+                    mainNet = mainNet,
+                    outlook = outlook,
+                    outlookReason = reason,
                 )
             }.sortedWith(compareByDescending<com.skapp.app.data.MarketPulseRow> { it.speed ?: Double.NEGATIVE_INFINITY }
                 .thenByDescending { it.mainNet ?: Double.NEGATIVE_INFINITY })
                 .take(30)
+            val enriched = rows.mapIndexed { index, row ->
+                if (index >= 15) row else {
+                    val board = runCatching { DataCache.boards(row.code) }.getOrDefault(emptyList())
+                        .mapNotNull { it["name"]?.toString()?.takeIf { name -> name.isNotBlank() } }
+                        .distinct().take(3).joinToString("、").ifBlank { "板块数据不足" }
+                    row.copy(board = board)
+                }
+            }
             _state.value = _state.value.copy(
-                marketPulse = rows,
+                marketPulse = enriched,
                 marketPulseTs = java.time.OffsetDateTime.now().toString(),
             )
         } finally {
@@ -907,23 +934,43 @@ class SkappViewModel : ViewModel() {
             _state.value = _state.value.copy(summaryRefreshing = true, summaryRefreshMessage = "正在刷新盘面、消息和实时推股…")
             var message = "刷新已取消"
             try {
-                val results = supervisorScope {
-                    val summaryD = async { requestResult { refreshSummary() } }
-                    val newsD = async { requestResult { refreshNewsCalcs() } }
-                    val screenD = async {
+                val refreshed = supervisorScope {
+                    val summary = async { requestResult { refreshSummary() } }.await()
+                    val news = async { requestResult { refreshNewsCalcs() } }.await()
+                    val screened = async {
                         requestResult {
                             if (_state.value.screening) throw IllegalStateException("已有实时选股任务正在运行")
                             refreshScreen(mode)
                         }
-                    }
-                    listOf("盘面" to summaryD.await(), "消息" to newsD.await(), "实时推股" to screenD.await())
+                    }.await()
+                    val structured = async { requestResult { SkappApi.fetchStructuredPicks() } }.await()
+                    val close = async { requestResult { SkappApi.fetchCloseReview() } }.await()
+                    val winrate = async { requestResult { SkappApi.fetchWinrateMatrix() } }.await()
+                    listOf(
+                        "盘面" to summary,
+                        "消息" to news,
+                        "实时推股" to screened,
+                        "结构化推股" to structured,
+                        "盘后总结" to close,
+                        "胜率" to winrate,
+                    )
                 }
-                val failures = results.filter { it.second.isFailure }
+                @Suppress("UNCHECKED_CAST")
+                val structuredMap = refreshed[3].second.getOrNull() as? Map<String, com.skapp.app.data.StructuredPickArtifact>
+                val close = refreshed[4].second.getOrNull() as? com.skapp.app.data.CloseReview
+                val winrate = refreshed[5].second.getOrNull() as? com.skapp.app.data.WinrateMatrix
+                _state.value = _state.value.copy(
+                    premarketPicks = structuredMap?.get("premarket") ?: _state.value.premarketPicks,
+                    middayPicks = structuredMap?.get("midday") ?: _state.value.middayPicks,
+                    closeReview = close ?: _state.value.closeReview,
+                    winrateMatrix = winrate ?: _state.value.winrateMatrix,
+                )
+                val failures = refreshed.filter { it.second.isFailure }
                 message = if (failures.isEmpty()) "刷新完成" else {
                     val details = failures.joinToString("；") { (label, result) ->
                         "$label：${result.exceptionOrNull()?.message ?: "数据源不可达"}"
                     }
-                    val prefix = if (failures.size == results.size) "刷新失败" else "部分刷新完成"
+                    val prefix = if (failures.size == refreshed.size) "刷新失败" else "部分刷新完成"
                     "$prefix；$details"
                 }
             } catch (e: CancellationException) {

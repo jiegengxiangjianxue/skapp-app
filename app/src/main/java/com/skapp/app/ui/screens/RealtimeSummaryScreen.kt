@@ -47,6 +47,8 @@ fun RealtimeSummaryScreen(vm: SkappViewModel, state: UiState) {
         item {
             state.summaryRefreshMessage?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = if (it.startsWith("刷新失败")) MaterialTheme.colorScheme.error else Color.Gray) }
         }
+        item { SummaryCard(state.summary) }
+        item { LocalScreenedCard(state.screened, state.screenMsg, vm) }
         item { PickArtifactCard("结构化盘前推股", state.premarketPicks, today, vm) }
         item { PickArtifactCard("午盘推股", state.middayPicks, today, vm) }
         item { CloseReviewCard(state.closeReview, today) }
@@ -61,9 +63,11 @@ private fun PickArtifactCard(title: String, artifact: StructuredPickArtifact, to
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(title, fontWeight = FontWeight.SemiBold)
             Text("生成 ${artifact.generatedAt ?: "暂无数据"} · 计算 ${artifact.calculationTime ?: "暂无数据"}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-            if (!current || artifact.picks.isEmpty()) {
-                Text(if (artifact.reason.isNullOrBlank()) "未到时间或暂无当日数据。" else artifact.reason, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+            if (artifact.picks.isEmpty()) {
+                Text(if (artifact.reason.isNullOrBlank()) "暂无数据：该时段没有可展示推股。" else artifact.reason, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
             } else {
+                if (!current) Text("源日期 ${artifact.date ?: "未知"}，不是今日数据；以下仅作历史参考。", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+
                 Text("引擎：${artifact.engine ?: "暂无数据"} · ${artifact.picks.size} 条", style = MaterialTheme.typography.bodySmall)
                 itemsPreview(artifact.picks, vm)
             }
@@ -102,10 +106,45 @@ private fun CloseReviewCard(review: CloseReview, today: String) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
             Text("盘后总结", fontWeight = FontWeight.SemiBold)
             Text("生成 ${review.generatedAt ?: "暂无数据"} · 状态 ${review.status}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-            if (review.date != today || review.status != "ok") Text(review.reason ?: "本交易日盘后总结未生成或数据不足。", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-            else review.stages.forEach { (name, data) ->
-                val summary = data["summary"] as? Map<*, *>
-                Text("$name：${summary?.get("n") ?: summary?.get("n_requested") ?: "暂无数据"} 条 · 胜率 ${summary?.get("hit_rate_pct") ?: "暂无数据"}", style = MaterialTheme.typography.bodySmall)
+            if (review.status != "ok") Text(review.reason ?: "本交易日盘后总结未生成或数据不足。", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+            else {
+                if (review.date != today) Text("源日期 ${review.date ?: "未知"}，不是今日数据；以下仅作历史参考。", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                review.stages.forEach { (name, data) ->
+                    val summary = data["summary"] as? Map<*, *>
+                    Text("$name：${summary?.get("n") ?: summary?.get("n_requested") ?: "暂无数据"} 条 · 胜率 ${summary?.get("hit_rate_pct") ?: "暂无数据"}", style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SummaryCard(summary: Map<String, Any?>) {
+    Card(colors = CardDefaults.cardColors()) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+            Text("盘面总结", fontWeight = FontWeight.SemiBold)
+            val status = summary["status"]?.toString()
+            val text = summary["text"]?.toString()
+                ?: summary["premarket"]?.toString()
+                ?: summary["reason"]?.toString()
+            Text(if (text.isNullOrBlank()) "暂无数据：盘面总结尚未返回。" else text, style = MaterialTheme.typography.bodySmall, color = if (status == "insufficient") Color.Gray else MaterialTheme.colorScheme.onSurface)
+            Text("时点 ${summary["ts"] ?: "暂无数据"} · 日期 ${summary["date"] ?: "暂无数据"}", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+        }
+    }
+}
+
+@Composable
+private fun LocalScreenedCard(items: List<com.skapp.app.data.LocalScreener.Screened>, message: String?, vm: SkappViewModel) {
+    Card(colors = CardDefaults.cardColors()) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("本地实时推股", fontWeight = FontWeight.SemiBold)
+            if (!message.isNullOrBlank()) Text(message, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+            if (items.isEmpty()) Text("暂无数据：本轮本地深算没有满足条件的候选。", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+            items.take(10).forEach { item ->
+                Row(Modifier.fillMaxWidth().clickable { vm.openDetail(item.code) }.padding(vertical = 3.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("${item.name ?: "暂无名称"} ${item.code} · ${item.centralScore?.let { "%.1f".format(it) } ?: "暂无评分"}", style = MaterialTheme.typography.bodySmall)
+                    Text("详情 ›", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+                }
             }
         }
     }

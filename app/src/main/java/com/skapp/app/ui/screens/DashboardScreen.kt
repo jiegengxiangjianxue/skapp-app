@@ -135,9 +135,14 @@ fun DashboardScreen(vm: SkappViewModel, state: UiState) {
                             Column(Modifier.weight(1f)) {
                                 Text("${row.name} ${row.code}", fontWeight = FontWeight.Medium)
                                 Text(
-                                    "涨幅 ${row.pctChg?.let { "%+.2f%%".format(it) } ?: "暂无数据"} · 涨速 ${row.speed?.let { "%+.2f%%".format(it) } ?: "首轮暂无"}",
+                                    "板块 ${row.board ?: "暂无数据"}",
+                                    style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+                                )
+                                Text(
+                                    "涨幅 ${row.pctChg?.let { "%+.2f%%".format(it) } ?: "暂无数据"} · 涨速 ${row.speed?.let { "%+.2f%%".format(it) } ?: "首轮暂无"} · 判断 ${outlookText(row.outlook)}",
                                     style = MaterialTheme.typography.bodySmall,
                                 )
+                                Text(row.outlookReason ?: "暂无推断依据", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
                             }
                             Text("详情 ›", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodySmall)
                         }
@@ -195,6 +200,14 @@ fun DashboardScreen(vm: SkappViewModel, state: UiState) {
 
         item { Spacer(Modifier.height(80.dp)) }
     }
+}
+
+private fun outlookText(value: String): String = when (value) {
+    "bullish" -> "偏多"
+    "bearish" -> "偏空"
+    "watch_up" -> "观察偏强"
+    "watch_down" -> "观察偏弱"
+    else -> "数据不足"
 }
 
 private fun numOf(v: Any?): Double? = when (v) {

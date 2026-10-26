@@ -161,8 +161,14 @@ private fun NewsCalcInline(n: NewsCalc, vm: SkappViewModel) {
         listOfNotNull(n.source, n.ts, n.verdict.takeIf { it.isNotBlank() }).joinToString(" · ").ifBlank { "实时分析 · 时点暂无" },
         style = MaterialTheme.typography.bodySmall, color = Color.Gray,
     )
-    Text("方向：${n.direction.ifBlank { "insufficient" }} · 理由：${n.note?.takeIf { it.isNotBlank() } ?: "insufficient"}",
-        style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+    Text("方向：${n.direction.ifBlank { "insufficient" }} · 判定：${n.verdict.ifBlank { "insufficient" }}",
+        style = MaterialTheme.typography.bodySmall, color = if (n.direction == "neg" || n.verdict == "利空") DOWN else if (n.direction == "pos" || n.verdict.contains("利好")) UP else Color.Gray)
+    if (n.positiveReason?.isNotBlank() == true) Text("利好理由：${n.positiveReason}", style = MaterialTheme.typography.bodySmall, color = UP)
+    if (n.negativeReason?.isNotBlank() == true) Text("利空理由：${n.negativeReason}", style = MaterialTheme.typography.bodySmall, color = DOWN)
+    if (n.sentimentHits.isNotEmpty()) Text("命中依据：${n.sentimentHits.joinToString("、")}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+    if (n.impactCodes.isNotEmpty() && n.stocks.isEmpty()) Text("影响个股：${n.impactCodes.joinToString("、")}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+    if (n.boards.isNotEmpty()) Text("影响板块：${n.boards.joinToString("、")}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+    if (n.themes.isNotEmpty()) Text("影响题材：${n.themes.joinToString("、")}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
     if (n.stocks.isEmpty()) {
         Text(if (n.status == "no_stock") "该条未提及具体股票，无个股计算。" else "计算中或数据不足。",
             style = MaterialTheme.typography.bodySmall, color = Color.Gray)
