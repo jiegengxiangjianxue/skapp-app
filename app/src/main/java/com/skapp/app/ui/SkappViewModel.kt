@@ -483,6 +483,11 @@ class SkappViewModel : ViewModel() {
         }
     }
 
+    /** 供页面主动触发一次异动扫描（非交易时段也能拿最近一次结果）。 */
+    fun refreshPulse() {
+        viewModelScope.launch { runCatching { refreshMarketPulse() } }
+    }
+
     /** 全市场快照异动榜：交易时段约30秒，规则预筛不拉逐股K线。 */
     fun startMarketPulseLoop() {
         pulseJob?.cancel()

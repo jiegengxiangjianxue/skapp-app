@@ -15,6 +15,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -30,6 +31,11 @@ import com.skapp.app.ui.UiState
 @Composable
 fun RealtimeSummaryScreen(vm: SkappViewModel, state: UiState) {
     val today = java.time.LocalDate.now().toString()
+    // 进页即拉一次本地深算与异动，避免“打开就是空页”
+    LaunchedEffect(Unit) {
+        if (state.screened.isEmpty() && !state.screening) vm.runScreen("all")
+        if (state.marketPulse.isEmpty()) vm.refreshPulse()
+    }
     LazyColumn(
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -50,7 +56,20 @@ fun RealtimeSummaryScreen(vm: SkappViewModel, state: UiState) {
         }
         item { LocalRealtimeSummaryCard(state.summary) }
         item { LocalScreenedCard(state.screened, state.screenMsg, vm) }
-        item { PickArtifactCard("结构化盘前推股", state.premarketPicks, today, vm) }
+        item {
+            val fallback = if (state.premarketPicks.date != today && state.picks.signals.isNotEmpty()) {
+                StructuredPickArtifact(
+                    generatedAt = state.picks.ts,
+                    date = state.picks.date ?: today,
+                    session = "premarket",
+                    engine = "today_picks 兜底",
+                    status = "partial",
+                    reason = "盘前专用产物过期，以下为云端今日引擎候选（非盘前专用模型）",
+                    picks = state.picks.signals,
+                )
+            } else null
+            PickArtifactCard("结构化盘前推股", state.premarketPicks, today, vm, fallback)
+        }
         item { PickArtifactCard("午盘推股", state.middayPicks, today, vm) }
         item { CloseReviewCard(state.closeReview, today) }
         item { WinrateCard(state) }
@@ -58,26 +77,40 @@ fun RealtimeSummaryScreen(vm: SkappViewModel, state: UiState) {
 }
 
 @Composable
-private fun PickArtifactCard(title: String, artifact: StructuredPickArtifact, today: String, vm: SkappViewModel) {
-    val sourceDate = artifact.date ?: artifact.generatedAt?.take(10)
+private fun PickArtifactCard(
+    title: String,
+    artifact: StructuredPickArtifact,
+    today: String,
+    vm: SkappViewModel,
+    fallback: StructuredPickArtifact? = null,
+) {
+    val stale = artifact.date != today || artifact.picks.isEmpty()
+    val shown = if (stale && fallback != null) fallback else artifact
+    val sourceDate = shown.date ?: shown.generatedAt?.take(10)
     val current = sourceDate == today
     val premarket = title.contains("盘前")
     val premarketActive = MarketHours.phase() in setOf(MarketHours.Phase.PRE_OPEN, MarketHours.Phase.AUCTION_OPEN)
-    val visibleForSession = !premarket || premarketActive
+    val visibleForSession = !premarket || premarketActive || (stale && fallback != null)
     Card(colors = CardDefaults.cardColors()) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(title, fontWeight = FontWeight.SemiBold)
-            Text("生成 ${artifact.generatedAt ?: "暂无数据"} · 计算 ${artifact.calculationTime ?: "暂无数据"}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-            if (artifact.picks.isEmpty() || !current || !visibleForSession) {
+            Text("生成 ${shown.generatedAt ?: "暂无数据"} · 计算 ${shown.calculationTime ?: "暂无数据"}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+            if (!stale && shown.reason != null && shown.status != "ok") {
+                Text(shown.reason, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+            }
+            if (shown.picks.isEmpty() || !current || !visibleForSession) {
                 val message = when {
                     !current -> "暂无数据：源日期 ${sourceDate ?: "未知"}，不是当前交易日。"
                     premarket && !premarketActive -> "盘前推股时段已结束；当前请查看本地实时推股或等待午盘推股。"
-                    else -> artifact.reason ?: "暂无数据：该时段没有可展示推股。"
+                    else -> shown.reason ?: "暂无数据：该时段没有可展示推股。"
                 }
                 Text(message, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
             } else {
-                Text("引擎：${artifact.engine ?: "暂无数据"} · ${artifact.picks.size} 条", style = MaterialTheme.typography.bodySmall)
-                itemsPreview(artifact.picks, vm)
+                Text("引擎：${shown.engine ?: "暂无数据"} · ${shown.picks.size} 条", style = MaterialTheme.typography.bodySmall)
+                if (stale) {
+                    Text(shown.reason ?: "原产物过期，已用今日引擎候选回填", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+                }
+                itemsPreview(shown.picks, vm)
             }
         }
     }

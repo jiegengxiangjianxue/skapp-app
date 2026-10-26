@@ -22,6 +22,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -37,6 +38,11 @@ import com.skapp.app.ui.UiState
 @Composable
 fun PoolsScreen(vm: SkappViewModel, state: UiState) {
     var tab by remember { mutableStateOf(0) }
+    // 进页即拉云端池 + 触发一次本地实时深算，避免只看到旧快照
+    LaunchedEffect(Unit) {
+        if (state.pools.isEmpty()) vm.loadPools()
+        if (state.screened.isEmpty() && !state.screening) vm.runScreen("all")
+    }
     val pools = remember(state.pools) {
         val merged = state.pools
             .filterNot { it.id in setOf("composite", "moneyflow") }
