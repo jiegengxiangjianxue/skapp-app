@@ -35,7 +35,8 @@ object KlineApi {
                 connectTimeout = 15000
                 readTimeout = 15000
                 requestMethod = "GET"
-                setRequestProperty("User-Agent", "skapp-android")
+                setRequestProperty("User-Agent", RemoteSources.UA_ANDROID)
+                setRequestProperty("Referer", "https://gu.qq.com/")
             }
             if (conn.responseCode != HttpURLConnection.HTTP_OK) return@withContext emptyList()
             val root = JSONObject(conn.inputStream.bufferedReader().use { it.readText() })

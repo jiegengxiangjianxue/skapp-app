@@ -378,9 +378,20 @@ fun StockDetailSheet(vm: SkappViewModel, state: UiState) {
         // ── 历史资金流 ──
         Card(colors = CardDefaults.cardColors()) {
             Column(Modifier.padding(12.dp)) {
-                Text("历史资金流", fontWeight = FontWeight.SemiBold)
+                Text("资金流", fontWeight = FontWeight.SemiBold)
+                val liveLast = state.fundFlowLive.lastOrNull()
+                val liveMain = (liveLast?.get("main_net") as? Number)?.toDouble()
+                if (liveLast != null) {
+                    Text(
+                        "当日主力净流入 ${liveMain?.let { String.format("%.2f 亿", it / 1e8) } ?: "暂无"} · ${liveLast["time"]}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (liveMain != null && liveMain >= 0) UP else DOWN,
+                    )
+                } else {
+                    Text("当日实时资金流：暂无数据（非交易时段或接口未返回）", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                }
                 Text(
-                    "来源：东财 push2his fflow（兜底 push2delay） · 覆盖：${if (state.fundFlow.isNotEmpty()) "ok" else "unknown"}",
+                    "来源：当日 东财 fflow klt=1（兜底 push2delay）；历史 push2his fflow · 覆盖：${if (state.fundFlow.isNotEmpty()) "ok" else "unknown"}",
                     style = MaterialTheme.typography.bodySmall,
                     color = Color.Gray,
                 )

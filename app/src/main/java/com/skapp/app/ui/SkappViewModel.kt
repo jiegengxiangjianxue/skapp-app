@@ -150,6 +150,8 @@ data class UiState(
     val centralEngineStatus: String = "insufficient",
     val detailAdjust: String = "qfq",
     val fundFlow: List<Map<String, Any?>> = emptyList(),
+    /** 当日分钟级资金流（交易时段实时） */
+    val fundFlowLive: List<Map<String, Any?>> = emptyList(),
     val boardsOf: List<Map<String, Any?>> = emptyList(),
     val minuteTrend: List<Map<String, Any?>> = emptyList(),
     val liveQuote: Quote? = null,
@@ -773,7 +775,10 @@ class SkappViewModel : ViewModel() {
                         val holo = holoD.await()
                         val flow = holo?.moneyflow?.takeIf { it.isNotEmpty() }
                             ?: requestResult { DataCache.fundFlow(code, 60) }.getOrDefault(emptyList())
-                        _state.value = _state.value.copy(fundFlow = flow)
+                        val live = if (MarketHours.isTrading() || MarketHours.isAuction()) {
+                            requestResult { MarketDataClient.fundFlowIntraday(code) }.getOrDefault(emptyList())
+                        } else emptyList()
+                        _state.value = _state.value.copy(fundFlow = flow, fundFlowLive = live)
                     }
                     quoteD.await()
                     cloudD.await()
@@ -813,13 +818,22 @@ class SkappViewModel : ViewModel() {
     private suspend fun refreshDetailLiveNow(code: String) {
         val quote = runCatching { MarketDataClient.quote(code) }.getOrNull() ?: return
         val minute = runCatching { MarketDataClient.minuteTrend(code) }.getOrDefault(emptyList())
-        val bars = mergeLiveBar(_state.value.kline, quote, minute)
+        // 东财/腾讯日K本身包含今日未收盘实时K；拉不到时才用分时+实时价合成。
+        val fetched = runCatching {
+            MarketDataClient.dayKline(code, 250, _state.value.detailAdjust)
+        }.getOrDefault(emptyList())
+        val base = fetched.ifEmpty { _state.value.kline }
+        val bars = mergeLiveBar(base, quote, minute)
         val engine = if (bars.size >= 30) runCatching { LocalEngine.analyze(bars) }.getOrNull() else null
         val central = engine?.let { centralEngine(it) }
+        val liveFlow = if (MarketHours.isTrading() || MarketHours.isAuction()) {
+            runCatching { MarketDataClient.fundFlowIntraday(code) }.getOrDefault(emptyList())
+        } else emptyList()
         _state.value = _state.value.copy(
             liveQuote = quote,
             kline = bars,
             minuteTrend = minute.ifEmpty { _state.value.minuteTrend },
+            fundFlowLive = liveFlow.ifEmpty { _state.value.fundFlowLive },
             localEngine = engine ?: _state.value.localEngine,
             centralEngineScore = central?.score ?: _state.value.centralEngineScore,
             centralEngineResonance = central?.resonance ?: _state.value.centralEngineResonance,

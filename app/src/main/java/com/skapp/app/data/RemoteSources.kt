@@ -9,6 +9,11 @@ object RemoteSources {
 
     const val RAW = "https://raw.githubusercontent.com"
 
+    /** 行情类公开接口使用的 Android 浏览器 UA（如实声明客户端，不做指纹伪装） */
+    const val UA_ANDROID =
+        "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) " +
+            "Chrome/130.0.0.0 Mobile Safari/537.36"
+
     /** A 仓：主供数 + API 树 + AI 问答（主力数据仓 qwerzxcva） */
     const val OWNER_A = "qwerzxcva"
     const val REPO_A = "stocks-ai-view"

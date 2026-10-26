@@ -193,8 +193,8 @@ private class HttpURLConnectionBridge(url: String) {
             connectTimeout = 20000
             readTimeout = 20000
             requestMethod = "GET"
-            setRequestProperty("User-Agent", "Mozilla/5.0 (Android) skapp")
-            setRequestProperty("Referer", "https://quote.eastmoney.com/")
+            setRequestProperty("User-Agent", RemoteSources.UA_ANDROID)
+            setRequestProperty("Referer", "https://wap.eastmoney.com/")
             setRequestProperty("Accept", "application/json")
         }
 

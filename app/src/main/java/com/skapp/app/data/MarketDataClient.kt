@@ -38,8 +38,9 @@ object MarketDataClient {
                 connectTimeout = TIMEOUT
                 readTimeout = TIMEOUT
                 requestMethod = "GET"
-                setRequestProperty("User-Agent", "Mozilla/5.0 (Android) skapp")
+                setRequestProperty("User-Agent", RemoteSources.UA_ANDROID)
                 setRequestProperty("Referer", "https://gu.qq.com/")
+                setRequestProperty("Accept", "*/*")
             }
             if (conn.responseCode != HttpURLConnection.HTTP_OK) return null
             val enc = conn.contentEncoding
@@ -243,6 +244,32 @@ object MarketDataClient {
                     "&lmt=$days"))
                 ?: emptyList()
         }
+
+    /** 当日分钟级资金流（东财 fflow klt=1）；失败返回空，不编造。 */
+    suspend fun fundFlowIntraday(code: String): List<Map<String, Any?>> = withContext(Dispatchers.IO) {
+        val sid = secid(code)
+        fun parse(txt: String?): List<Map<String, Any?>> {
+            if (txt == null) return emptyList()
+            val arr = runCatching {
+                JSONObject(txt).optJSONObject("data")?.optJSONArray("klines")
+            }.getOrNull() ?: return emptyList()
+            return (0 until arr.length()).mapNotNull { i ->
+                val p = arr.optString(i).split(",")
+                if (p.size < 6) null else mapOf<String, Any?>(
+                    "time" to p[0],
+                    "main_net" to p[1].toDoubleOrNull(),
+                    "small_net" to p[2].toDoubleOrNull(),
+                    "mid_net" to p[3].toDoubleOrNull(),
+                    "large_net" to p[4].toDoubleOrNull(),
+                    "super_net" to p[5].toDoubleOrNull(),
+                )
+            }
+        }
+        val q = "fields1=f1,f2,f3,f7&fields2=f51,f52,f53,f54,f55,f56&klt=1&lmt=0&ut=f057cbcbce2a86e2866ab8877db1d059"
+        parse(get("https://push2.eastmoney.com/api/qt/stock/fflow/kline/get?secid=$sid&$q"))
+            ?: parse(get("https://push2delay.eastmoney.com/api/qt/stock/fflow/kline/get?secid=$sid&$q"))
+            ?: emptyList()
+    }
 
     // ── 分时走势（腾讯 minute 主源，东财 trends2 兜底）──────
 
