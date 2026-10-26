@@ -225,6 +225,8 @@ class SkappViewModel : ViewModel() {
     private var pulseJob: Job? = null
     private var detailJob: Job? = null
     private var detailLiveJob: Job? = null
+    private var lastSseEventAt: Long = 0L
+    private var lastEngineAt: Long = 0L
     private var askEngine: AskEngine? = null
     private var stockNames: Map<String, String> = emptyMap()
     private var searchQuery: String = ""
@@ -797,17 +799,66 @@ class SkappViewModel : ViewModel() {
         }
     }
 
-    /** 盘中详情实时刷新：约15秒一次，把当日分时/实时价合成最后一根K并重算中枢引擎。 */
+    /** 盘中详情实时刷新：SSE 秒级推送为主，15秒轮询做兜底。 */
     private fun startDetailLiveLoop(code: String) {
         detailLiveJob?.cancel()
         detailLiveJob = viewModelScope.launch {
+            launch {
+                runCatching {
+                    MarketDataClient.sseQuote(code).collect { quote ->
+                        if (_state.value.detail?.code != code) return@collect
+                        lastSseEventAt = System.currentTimeMillis()
+                        applyLiveQuote(quote)
+                    }
+                }
+            }
             while (isActive) {
                 delay(15_000)
                 if (!MarketHours.isTrading() && !MarketHours.isAuction()) break
                 if (_state.value.detail?.code != code) break
+                // SSE 正常时不重复拉 HTTP；超过10秒没收到推送才降级轮询
+                if (System.currentTimeMillis() - lastSseEventAt < 10_000) continue
                 runCatching { refreshDetailLiveNow(code) }
             }
         }
+    }
+
+    /** SSE 推送落盘：只更新最后一根K和报价，引擎重算限流 5 秒一次。 */
+    private fun applyLiveQuote(quote: Quote) {
+        val now = System.currentTimeMillis()
+        val bars = _state.value.kline
+        val today = java.time.LocalDate.now().toString()
+        val price = quote.price
+        val updated = if (bars.isEmpty() || price == null) bars else {
+            val last = bars.last()
+            if (last.date == today) {
+                bars.dropLast(1) + last.copy(
+                    close = price,
+                    high = maxOf(last.high, price),
+                    low = minOf(last.low, price),
+                )
+            } else {
+                bars + KBar(date = today, open = price, close = price, high = price, low = price, vol = 0.0)
+            }
+        }
+        var engine = _state.value.localEngine
+        var central: CentralEngine? = null
+        if (now - lastEngineAt > 5_000 && updated.size >= 30) {
+            lastEngineAt = now
+            runCatching { LocalEngine.analyze(updated) }.getOrNull()?.let {
+                engine = it
+                central = centralEngine(it)
+            }
+        }
+        _state.value = _state.value.copy(
+            liveQuote = quote,
+            kline = updated,
+            localEngine = engine,
+            centralEngineScore = central?.score ?: _state.value.centralEngineScore,
+            centralEngineResonance = central?.resonance ?: _state.value.centralEngineResonance,
+            centralEngineSummary = central?.summary ?: _state.value.centralEngineSummary,
+            centralEngineStatus = central?.status ?: _state.value.centralEngineStatus,
+        )
     }
 
     fun refreshDetailLive() {

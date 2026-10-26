@@ -4,6 +4,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -124,6 +127,67 @@ object MarketDataClient {
                 ts = null,
             )
         }
+    }
+
+    /**
+     * 东财 SSE 实时推送（wap2 页面实际使用的接口）。
+     * 来源：F12 观察 wap.eastmoney.com 的 XHR，接口为 /api/qt/stock/sse?forcect=1。
+     * 字段口径未在沙箱实测（出口被网关拦），因此全部做容错：解析失败就跳过，
+     * 由上层轮询兜底，不伪造数据。
+     */
+    fun sseQuote(code: String): Flow<Quote> = flow {
+        val url = "https://push2.eastmoney.com/api/qt/stock/sse?secid=${secid(code)}" +
+            "&forcect=1&fltt=2&invt=2" +
+            "&fields=f43,f44,f45,f46,f47,f48,f57,f58,f60,f19,f20,f31,f32,f169,f170" +
+            "&ut=f057cbcbce2a86e2866ab8877db1d059"
+        var conn: HttpURLConnection? = null
+        try {
+            conn = (URL(url).openConnection() as HttpURLConnection).apply {
+                connectTimeout = 10_000
+                readTimeout = 30_000
+                requestMethod = "GET"
+                setRequestProperty("User-Agent", RemoteSources.UA_ANDROID)
+                setRequestProperty("Referer", "https://wap.eastmoney.com/")
+                setRequestProperty("Accept", "text/event-stream")
+                setRequestProperty("Cache-Control", "no-cache")
+            }
+            if (conn.responseCode != HttpURLConnection.HTTP_OK) return@flow
+            conn.inputStream.bufferedReader().useLines { lines ->
+                lines.forEach { line ->
+                    val payload = line.trim().removePrefix("data:").trim()
+                    if (payload.isEmpty() || !payload.startsWith("{")) return@forEach
+                    parseSseQuote(code, payload)?.let { emit(it) }
+                }
+            }
+        } catch (e: Exception) {
+            // 接口不可达/被拦：静默退出，交给轮询兜底
+        } finally {
+            conn?.disconnect()
+        }
+    }.flowOn(Dispatchers.IO)
+
+    private fun parseSseQuote(code: String, payload: String): Quote? {
+        val data = runCatching { JSONObject(payload).optJSONObject("data") }.getOrNull() ?: return null
+        fun n(key: String): Double? = when (val v = data.opt(key)) {
+            is Number -> v.toDouble()
+            is String -> v.toDoubleOrNull()
+            else -> null
+        }
+        val price = n("f43")?.takeIf { it > 0 } ?: return null
+        var pct = n("f170")
+        // fltt=2 本应返回小数；若服务端忽略该参数会返回 ×100，这里做量级修正
+        if (pct != null && kotlin.math.abs(pct) > 50) pct /= 100.0
+        return Quote(
+            code = code,
+            name = data.optString("f58").takeIf { it.isNotBlank() } ?: "",
+            price = price,
+            pctChg = pct,
+            ts = java.time.LocalTime.now().withNano(0).toString(),
+            bid1 = n("f19")?.takeIf { it > 0 },
+            bid1Vol = n("f20"),
+            ask1 = n("f31")?.takeIf { it > 0 },
+            ask1Vol = n("f32"),
+        )
     }
 
     // ── 日 K 线（前复权 qfq / 后复权 hfq）──────────────────
