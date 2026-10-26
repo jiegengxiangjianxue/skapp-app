@@ -4,8 +4,10 @@ name: android-build
 #   2) analysis-gate      云端分析计算产物（市场宽度/新鲜度/清单）自检
 #   3) engine-kotlin      :engine 纯 JVM 模块（算法引擎 + 分析计算），不需要 Android SDK
 #   4) ui-render-gate     :app Kotlin 编译（后端 UI + 密集渲染层类型检查）
-#   5) build              打包 APK（arm64-v8a only）
+#   5) build              打包 APK（arm64-v8a only）并发布到 GitHub Release
 # 产物仅 arm64-v8a（用户要求：不要 x86）。
+# 出包位置：GitHub Release（tag = v<versionName>），不再上传 Actions artifact ——
+#   artifact 要登录才能下载，Release 资产可直接下到手机安装。
 
 on:
   push:
@@ -244,6 +246,8 @@ jobs:
     needs: [ui-render-gate, engine-kotlin]
     runs-on: ubuntu-24.04
     timeout-minutes: 60
+    permissions:
+      contents: write   # 创建 / 更新 GitHub Release 需要
     steps:
       - uses: actions/checkout@v4
 
@@ -320,9 +324,47 @@ jobs:
           "$ANDROID_HOME/build-tools/35.0.0/aapt2" dump badging "$APK" > /tmp/apk-badging.txt
           grep -E "^(package|application-label|native-code)" /tmp/apk-badging.txt | head -5
 
-      - name: Upload APK artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: skapp-debug-apk-arm64
-          path: app/build/outputs/apk/debug/app-arm64-v8a-debug.apk
-          if-no-files-found: error
+      - name: Read version from gradle
+        id: ver
+        run: |
+          set -euo pipefail
+          VERSION="$(grep -oP 'versionName\s*=\s*"\K[^"]+' app/build.gradle.kts | head -1)"
+          CODE="$(grep -oP 'versionCode\s*=\s*\K[0-9]+' app/build.gradle.kts | head -1)"
+          test -n "$VERSION" && test -n "$CODE"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "code=$CODE" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+          echo "asset=skapp-$VERSION-vc$CODE-arm64.apk" >> "$GITHUB_OUTPUT"
+
+      - name: Publish GitHub Release (package lives here, not in artifacts)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.ver.outputs.tag }}"
+          SRC="app/build/outputs/apk/debug/app-arm64-v8a-debug.apk"
+          NAME="${{ steps.ver.outputs.asset }}"
+          SIZE="$(stat -c%s "$SRC")"
+          cp "$SRC" "/tmp/$NAME"
+          NOTES="$(printf '%s\n' \
+            "skapp ${{ steps.ver.outputs.version }} (versionCode ${{ steps.ver.outputs.code }})" \
+            "" \
+            "- ABI: arm64-v8a only (minSdk 26)" \
+            "- Built by ${{ github.workflow }} run [${{ github.run_id }}](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})" \
+            "- Commit: \`$(echo "$GITHUB_SHA" | cut -c1-7)\`" \
+            "- Gates passed: engine-gate -> analysis-gate -> engine-kotlin -> ui-render-gate -> build" \
+            "" \
+            "安装：直接点下面的 $NAME 下载安装；versionCode 随每次更新递增，可覆盖安装。")"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "release $TAG exists -> refresh asset"
+            gh release upload "$TAG" "/tmp/$NAME" --clobber
+          else
+            gh release create "$TAG" "/tmp/$NAME" \
+              --title "skapp ${{ steps.ver.outputs.version }} (vc${{ steps.ver.outputs.code }})" \
+              --notes "$NOTES" \
+              --latest
+          fi
+          gh release view "$TAG" --json tagName,assets \
+            --jq '.tagName, (.assets[] | "\(.name)  \(.size) bytes  \(.url)")'
+          echo "APK size: $SIZE bytes"
