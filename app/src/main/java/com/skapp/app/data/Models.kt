@@ -13,6 +13,18 @@ data class Quote(
     val ts: String? = null,
 )
 
+data class MarketPulseRow(
+    val code: String,
+    val name: String,
+    val price: Double?,
+    val pctChg: Double?,
+    val speed: Double?,
+    val volRatio: Double?,
+    val turnover: Double?,
+    val mainNet: Double?,
+    val snapshotStatus: String = "live",
+)
+
 /** 引擎评分：多来源真实分数，key 为引擎名 */
 data class BundleDetail(
     val status: String = "insufficient",  // ok | insufficient

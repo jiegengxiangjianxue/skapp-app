@@ -113,6 +113,9 @@ data class UiState(
     val error: String? = null,
     val quotes: List<QuoteRow> = emptyList(),
     val quoteTs: String? = null,
+    val marketPulse: List<com.skapp.app.data.MarketPulseRow> = emptyList(),
+    val marketPulseTs: String? = null,
+    val marketPulseLoading: Boolean = false,
     val picks: TodayPicks = TodayPicks(),
     val premarketPicks: com.skapp.app.data.StructuredPickArtifact = com.skapp.app.data.StructuredPickArtifact(session = "premarket"),
     val middayPicks: com.skapp.app.data.StructuredPickArtifact = com.skapp.app.data.StructuredPickArtifact(session = "midday"),
@@ -217,6 +220,7 @@ class SkappViewModel : ViewModel() {
 
     private var quoteJob: Job? = null
     private var newsJob: Job? = null
+    private var pulseJob: Job? = null
     private var detailJob: Job? = null
     private var askEngine: AskEngine? = null
     private var stockNames: Map<String, String> = emptyMap()
@@ -236,6 +240,7 @@ class SkappViewModel : ViewModel() {
         // 不在 init 里 load()：token 要等 loadSavedToken 恢复；此时拉数据会因无鉴权全失败（app 打开全空的根因）
         startQuoteLoop()
         startNewsLoop()
+        startMarketPulseLoop()
     }
 
     /** MainActivity 启动时调用：从 SharedPreferences 恢复 GitCode + GitHub token，并初始化双源路由 */
@@ -466,6 +471,52 @@ class SkappViewModel : ViewModel() {
                     delay(minOf(wait, 10 * 60_000L))
                 }
             }
+        }
+    }
+
+    /** 全市场快照异动榜：交易时段约30秒，规则预筛不拉逐股K线。 */
+    fun startMarketPulseLoop() {
+        pulseJob?.cancel()
+        pulseJob = viewModelScope.launch {
+            while (isActive) {
+                if (!_state.value.marketPulseLoading && (MarketHours.isTrading() || MarketHours.isAuction())) {
+                    runCatching { refreshMarketPulse() }
+                }
+                delay(if (MarketHours.isTrading() || MarketHours.isAuction()) 30_000L else 180_000L)
+            }
+        }
+    }
+
+    private suspend fun refreshMarketPulse() {
+        _state.value = _state.value.copy(marketPulseLoading = true)
+        try {
+            val snapshot = LocalScreener.marketSnapshot(pz = 500)
+            val previous = _state.value.marketPulse.associateBy { it.code }
+            val rows = snapshot.mapNotNull { raw ->
+                val code = raw["code"]?.toString() ?: return@mapNotNull null
+                val pct = (raw["pctChg"] as? Number)?.toDouble() ?: return@mapNotNull null
+                val name = raw["name"]?.toString().orEmpty()
+                if (!code.take(3).matches(Regex("600|601|603|605|000|001|002")) || name.contains("ST", true) || pct >= 9.6) return@mapNotNull null
+                val old = previous[code]?.pctChg
+                com.skapp.app.data.MarketPulseRow(
+                    code = code,
+                    name = name,
+                    price = (raw["price"] as? Number)?.toDouble(),
+                    pctChg = pct,
+                    speed = if (old != null) pct - old else null,
+                    volRatio = (raw["volRatio"] as? Number)?.toDouble(),
+                    turnover = (raw["turnover"] as? Number)?.toDouble(),
+                    mainNet = (raw["mainNet"] as? Number)?.toDouble(),
+                )
+            }.sortedWith(compareByDescending<com.skapp.app.data.MarketPulseRow> { it.speed ?: Double.NEGATIVE_INFINITY }
+                .thenByDescending { it.mainNet ?: Double.NEGATIVE_INFINITY })
+                .take(30)
+            _state.value = _state.value.copy(
+                marketPulse = rows,
+                marketPulseTs = java.time.OffsetDateTime.now().toString(),
+            )
+        } finally {
+            _state.value = _state.value.copy(marketPulseLoading = false)
         }
     }
 

@@ -119,6 +119,34 @@ fun DashboardScreen(vm: SkappViewModel, state: UiState) {
         item { CommentaryCard(state.summary) }
 
         item {
+            if (state.marketPulse.isNotEmpty() || state.marketPulseLoading) {
+                SectionTitle("本地实时异动")
+                Text(
+                    "全市场预筛 · ${state.marketPulseTs ?: "暂无时点"} · 规则归因前置，深度分析需点选个股",
+                    style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+                )
+                if (state.marketPulseLoading) CircularProgressIndicator(modifier = Modifier.height(20.dp), strokeWidth = 2.dp)
+                state.marketPulse.take(10).forEach { row ->
+                    Card(
+                        modifier = Modifier.fillMaxWidth().clickable { vm.openDetail(row.code) },
+                        colors = CardDefaults.cardColors(),
+                    ) {
+                        Row(Modifier.fillMaxWidth().padding(10.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Column(Modifier.weight(1f)) {
+                                Text("${row.name} ${row.code}", fontWeight = FontWeight.Medium)
+                                Text(
+                                    "涨幅 ${row.pctChg?.let { "%+.2f%%".format(it) } ?: "暂无数据"} · 涨速 ${row.speed?.let { "%+.2f%%".format(it) } ?: "首轮暂无"}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                            }
+                            Text("详情 ›", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                }
+            }
+        }
+
+        item {
             DashboardNewsSection(state, vm)
         }
 
