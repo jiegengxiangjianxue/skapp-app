@@ -14,4 +14,5 @@ dependencyResolutionManagement {
 }
 rootProject.name = "skapp"
 include(":engine")
+include(":ui")
 include(":app")

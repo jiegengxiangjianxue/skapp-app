@@ -161,7 +161,11 @@ jobs:
             echo "::error:::engine 出现 Android 依赖，已破坏「引擎可独立构建」的边界"
             exit 1
           fi
-          echo "engine module is Android-free"
+          if grep -q 'project(":ui")' engine/build.gradle.kts ; then
+            echo "::error:::engine 不得依赖 :ui（依赖方向必须是 :app -> :ui -> :engine）"
+            exit 1
+          fi
+          echo "engine module is Android-free and does not depend on :ui"
 
       - name: Compile engine module
         run: ./gradlew :engine:compileKotlin --no-daemon --stacktrace
@@ -225,16 +229,22 @@ jobs:
       - name: Write local.properties
         run: echo "sdk.dir=$RUNNER_TEMP/android-sdk" > local.properties
 
-      - name: Compile UI + render layer (Kotlin type check only)
-        run: ./gradlew :app:compileDebugKotlin --no-daemon --stacktrace
+      - name: Compile UI layer then app shell (Kotlin type check only)
+        run: |
+          set -euo pipefail
+          # 分层编译：:ui 先单独过一遍，界面层报错不会再被包成「APK 构建失败」
+          ./gradlew :ui:compileDebugKotlin --no-daemon --stacktrace
+          ./gradlew :app:compileDebugKotlin --no-daemon --stacktrace
 
       - name: Render layer presence check
         run: |
           set -euo pipefail
           # 密集渲染层（Canvas 图表 + 玻璃拟态）必须存在，防止被误删后「构建成功但页面没图」
-          test -f app/src/main/java/com/skapp/app/ui/screens/StockDetailSheet.kt
-          grep -q "private fun MinuteChart" app/src/main/java/com/skapp/app/ui/screens/StockDetailSheet.kt
-          grep -q "private fun KlineChart" app/src/main/java/com/skapp/app/ui/screens/StockDetailSheet.kt
+          # 2026-10-27 起界面层已独立为 :ui 模块（app/ 只剩 MainActivity + 资源）
+          test -f ui/src/main/java/com/skapp/app/ui/screens/StockDetailSheet.kt
+          grep -q "private fun MinuteChart" ui/src/main/java/com/skapp/app/ui/screens/StockDetailSheet.kt
+          grep -q "private fun KlineChart" ui/src/main/java/com/skapp/app/ui/screens/StockDetailSheet.kt
+          grep -q "private fun LinkageBar" ui/src/main/java/com/skapp/app/ui/screens/StockDetailSheet.kt
           grep -q "minuteTrendRich" engine/src/main/java/com/skapp/app/data/MarketDataClient.kt
           grep -q "lastKlineSource" engine/src/main/java/com/skapp/app/data/MarketDataClient.kt
           echo "render + data layer markers ok"
