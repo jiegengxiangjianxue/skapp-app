@@ -29,6 +29,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.skapp.app.data.SiteBoardClient
@@ -67,6 +68,17 @@ fun PoolsScreen(vm: SkappViewModel, state: UiState) {
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
+        item {
+            val sec = state.sectors
+            if (sec.status != null && sec.status != "ok") {
+                Text(
+                    "板块数据降级：${sec.degradedReason ?: "部分板块成分未更新"}（当日 ${sec.freshBoards} / 过期 ${sec.staleBoards}）",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color(0xFFD29922),
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+                )
+            }
+        }
         item {
         Row(
             Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface)

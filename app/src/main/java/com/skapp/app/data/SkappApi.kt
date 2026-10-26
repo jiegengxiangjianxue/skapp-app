@@ -401,6 +401,10 @@ object SkappApi {
         }
         SectorsSnapshot(
             ts = o.optString("ts").takeIf { it.isNotEmpty() },
+            status = o.optString("status").takeIf { it.isNotEmpty() },
+            degradedReason = o.optString("degraded_reason").takeIf { it.isNotEmpty() && it != "null" },
+            freshBoards = o.optJSONObject("freshness")?.optInt("fresh_boards") ?: 0,
+            staleBoards = o.optJSONObject("freshness")?.optInt("stale_boards") ?: 0,
             industries = boards("industries"),
             concepts = boards("concepts"),
             boardMembers = members,

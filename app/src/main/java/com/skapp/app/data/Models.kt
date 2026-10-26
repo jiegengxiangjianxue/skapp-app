@@ -245,6 +245,10 @@ data class Board(
 
 data class SectorsSnapshot(
     val ts: String? = null,
+    val status: String? = null,
+    val degradedReason: String? = null,
+    val freshBoards: Int = 0,
+    val staleBoards: Int = 0,
     val industries: List<Board> = emptyList(),
     val concepts: List<Board> = emptyList(),
     val boardMembers: Map<String, Map<String, Any?>> = emptyMap(),
