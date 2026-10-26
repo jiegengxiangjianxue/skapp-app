@@ -35,6 +35,7 @@ fun RealtimeSummaryScreen(vm: SkappViewModel, state: UiState) {
     LaunchedEffect(Unit) {
         if (state.screened.isEmpty() && !state.screening) vm.runScreen("all")
         if (state.marketPulse.isEmpty()) vm.refreshPulse()
+        vm.refreshLocalAnalytics()
     }
     LazyColumn(
         modifier = Modifier.fillMaxWidth(),
@@ -55,24 +56,51 @@ fun RealtimeSummaryScreen(vm: SkappViewModel, state: UiState) {
             state.summaryRefreshMessage?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = if (it.startsWith("刷新失败")) MaterialTheme.colorScheme.error else Color.Gray) }
         }
         item { LocalRealtimeSummaryCard(state.summary) }
-        item { LocalScreenedCard(state.screened, state.screenMsg, vm) }
-        item {
-            val fallback = if (state.premarketPicks.date != today && state.picks.signals.isNotEmpty()) {
-                StructuredPickArtifact(
-                    generatedAt = state.picks.ts,
-                    date = state.picks.date ?: today,
-                    session = "premarket",
-                    engine = "today_picks 兜底",
-                    status = "partial",
-                    reason = "盘前专用产物过期，以下为云端今日引擎候选（非盘前专用模型）",
-                    picks = state.picks.signals,
-                )
-            } else null
-            PickArtifactCard("结构化盘前推股", state.premarketPicks, today, vm, fallback)
-        }
+        item { PickArtifactCard("盘前推股", state.premarketPicks, today, vm) }
         item { PickArtifactCard("午盘推股", state.middayPicks, today, vm) }
+        item { TomorrowPicksCard(state, vm) }
         item { CloseReviewCard(state.closeReview, today) }
         item { WinrateCard(state) }
+    }
+}
+
+/** 明日推股：本地引擎候选（次日视角），不依赖云端尚未提供的明日产物。 */
+@Composable
+private fun TomorrowPicksCard(state: UiState, vm: SkappViewModel) {
+    Card(colors = CardDefaults.cardColors()) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+            Text("明日推股", fontWeight = FontWeight.SemiBold)
+            Text(
+                "本地引擎计算 · ${state.screened.size} 个候选（次日观察）",
+                style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+            )
+            if (state.screened.isEmpty()) {
+                Text(
+                    state.screenMsg ?: "暂无数据：本地深算尚未产出候选。",
+                    style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+                )
+                Text(
+                    "重新筛选",
+                    Modifier.clickable { vm.runScreen("all", true) },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            } else {
+                state.screened.take(10).forEach { item ->
+                    Row(
+                        Modifier.fillMaxWidth().clickable { vm.openDetail(item.code) }.padding(vertical = 3.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Text(
+                            "${item.name?.takeIf { it.isNotBlank() } ?: "暂无名称"} ${item.code} · " +
+                                (item.centralScore?.let { "%.1f".format(it) } ?: "暂无评分"),
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        Text("详情 ›", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -177,23 +205,6 @@ private fun LocalRealtimeSummaryCard(summary: Map<String, Any?>) {
                     "时点 ${summary["ts"] ?: "暂无数据"} · 来源 本地行情/消息/深算",
                     style = MaterialTheme.typography.labelSmall, color = Color.Gray,
                 )
-            }
-        }
-    }
-}
-
-@Composable
-private fun LocalScreenedCard(items: List<com.skapp.app.data.LocalScreener.Screened>, message: String?, vm: SkappViewModel) {
-    Card(colors = CardDefaults.cardColors()) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text("本地实时推股", fontWeight = FontWeight.SemiBold)
-            if (!message.isNullOrBlank()) Text(message, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-            if (items.isEmpty()) Text("暂无数据：本轮本地深算没有满足条件的候选。", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-            items.take(10).forEach { item ->
-                Row(Modifier.fillMaxWidth().clickable { vm.openDetail(item.code) }.padding(vertical = 3.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text("${item.name ?: "暂无名称"} ${item.code} · ${item.centralScore?.let { "%.1f".format(it) } ?: "暂无评分"}", style = MaterialTheme.typography.bodySmall)
-                    Text("详情 ›", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
-                }
             }
         }
     }

@@ -26,6 +26,10 @@ data class NewsCalc(
     val impactCodes: List<String> = emptyList(),
     val boards: List<String> = emptyList(),
     val themes: List<String> = emptyList(),
+    /** 命中板块的当日涨跌幅（板块维度分析） */
+    val boardChg: Map<String, Double?> = emptyMap(),
+    /** 命中板块平均涨跌幅：判断消息情绪与板块是否共振 */
+    val boardMomentum: Double? = null,
     /** 利好质量判定：真利好 / 利好·防追高套人 / 利空 / 中性 */
     val verdict: String = "",
     val direction: String = "insufficient",
@@ -119,6 +123,8 @@ object NewsCalcEngine {
         items: List<Map<String, Any?>>,
         symbols: List<SymbolEntry>,
         klineCount: Int = 120,
+        boards: List<Pair<String, Double?>> = emptyList(),
+        boardMembers: Map<String, List<String>> = emptyMap(),
     ): List<NewsCalc> = coroutineScope {
         items.map { item ->
             async(Dispatchers.IO) {
@@ -158,7 +164,22 @@ object NewsCalcEngine {
                     .map { it.filter(Char::isDigit).takeLast(6) }
                     .filter { it.length == 6 }
                     .distinct()
-                if (codes.isEmpty()) {
+                // ── 板块维度：消息命中的板块 + 板块当日动量 + 板块内个股 ──
+                val matchedBoards = boards
+                    .filter { (name, _) -> name.length >= 2 && analysisText.contains(name) }
+                    .map { it.first }
+                    .distinct()
+                    .take(4)
+                val boardChg = matchedBoards.associateWith { name ->
+                    boards.firstOrNull { it.first == name }?.second
+                }
+                val boardMomentum = boardChg.values.filterNotNull().takeIf { it.isNotEmpty() }
+                    ?.average()
+                val boardCodes = matchedBoards
+                    .flatMap { boardMembers[it].orEmpty() }
+                    .distinct()
+                val codesAll = (codes + boardCodes).distinct()
+                if (codesAll.isEmpty()) {
                     return@async NewsCalc(
                         newsTitle = title,
                         source = (item["source_name"] ?: item["source"])?.toString(),
@@ -166,18 +187,23 @@ object NewsCalcEngine {
                         sentiment = senti,
                         sentimentHits = hits,
                         impactCodes = storedCodes,
-                        boards = storedBoards,
+                        boards = (storedBoards + matchedBoards).distinct(),
                         themes = storedThemes,
+                        boardChg = boardChg,
+                        boardMomentum = boardMomentum,
                         verdict = storedVerdict ?: verdictOf(senti, hits, title, null),
                         direction = item["direction"]?.toString()?.takeIf { it.isNotBlank() } ?: senti,
                         positiveReason = localPositiveReason,
                         negativeReason = localNegativeReason,
                         imageUrl = imageUrlOf(item),
-                        status = "no_stock",
-                        note = "标题未提及具体股票，无个股计算",
+                        status = if (matchedBoards.isEmpty()) "no_stock" else "board_only",
+                        note = if (matchedBoards.isEmpty()) "标题未提及具体股票与板块，无本地计算"
+                        else "命中板块 ${matchedBoards.joinToString("、")}" +
+                            (boardMomentum?.let { "（板块均涨 ${"%.2f".format(it)}%）" } ?: "（板块涨幅暂无数据）") +
+                            "，板块内个股 ${boardCodes.size} 只待盘中确认",
                     )
                 }
-                val stocks = codes.map { code ->
+                val stocks = codesAll.map { code ->
                     // 实时报价 + 本地引擎（不用云端快照）
                     val q = runCatching { DataCache.quote(code) }.getOrNull()
                     val bars = runCatching { DataCache.kline(code, "qfq", klineCount) }.getOrDefault(emptyList())

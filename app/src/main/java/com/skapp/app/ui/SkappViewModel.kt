@@ -127,6 +127,8 @@ data class UiState(
     val sectors: SectorsSnapshot = SectorsSnapshot(),
     /** 数据源台账（登记/可用/已接执行器/缺口/不可用） */
     val dataSources: com.skapp.app.data.DataSourcesSnapshot = com.skapp.app.data.DataSourcesSnapshot(),
+    /** 多池上次拉取时间（毫秒）：避免重复拉取，同时支持强制刷新 */
+    val poolsLoadedAt: Long = 0L,
     /** 引擎产出聚合（engines_feed：regime/cycle/anomaly/price_level/orchestrator） */
     val engineFeeds: com.skapp.app.data.EngineFeed.EngineFeeds? = null,
     val symbols: List<SymbolEntry> = emptyList(),
@@ -1029,7 +1031,17 @@ class SkappViewModel : ViewModel() {
                     dedupCount = (items.size - merged.size).coerceAtLeast(0),
                 ),
             )
-            val calcs = NewsCalcEngine.compute(merged, symbols).map { calc ->
+            // 板块上下文：消息分析需要结合板块动量与板块内个股
+            val sec = _state.value.sectors
+            val boardList = (sec.industries + sec.concepts)
+                .mapNotNull { b -> b.name?.takeIf { it.isNotBlank() }?.let { it to b.chg1d } }
+            val boardMembers = sec.boardMembers.mapNotNull { (_, m) ->
+                val name = (m["name"] as? String) ?: return@mapNotNull null
+                val members = (m["members"] as? List<*>).orEmpty()
+                    .mapNotNull { row -> (row as? Map<*, *>)?.get("code")?.toString() }
+                if (members.isEmpty()) null else name to members
+            }.toMap()
+            val calcs = NewsCalcEngine.compute(merged, symbols, boards = boardList, boardMembers = boardMembers).map { calc ->
                 val source = merged.firstOrNull { it["title"] == calc.newsTitle }
                 calc.copy(
                     source = calc.source ?: source?.get("source")?.toString()?.takeIf { it.isNotBlank() },
@@ -1048,13 +1060,20 @@ class SkappViewModel : ViewModel() {
         }
     }
 
-    /** 多池选股：云端池 + 实时补价 + 本地引擎实时池。 */
-    fun loadPools() {
+    /** 多池选股：云端池 + 实时补价（本地实时池已按要求移除）。force=true 时忽略间隔强制重拉。 */
+    fun loadPools(force: Boolean = true) {
+        val last = _state.value.poolsLoadedAt
+        val now = System.currentTimeMillis()
+        if (!force && now - last < 60_000L) return
         viewModelScope.launch {
             _state.value = _state.value.copy(poolsLoading = true)
             val ps = runCatching { SiteBoardClient.pools() }.getOrElse { emptyList() }
             val enriched = enrichPoolsWithLiveQuotes(ps)
-            _state.value = _state.value.copy(poolsLoading = false, pools = localPool() + enriched)
+            _state.value = _state.value.copy(
+                poolsLoading = false,
+                pools = enriched,
+                poolsLoadedAt = System.currentTimeMillis(),
+            )
         }
     }
 
@@ -1089,34 +1108,103 @@ class SkappViewModel : ViewModel() {
         }
     }
 
-    /** 本地实时池：直接来自本轮本地深算，价格/K线/资金/消息均为本地实时计算。 */
-    private fun localPool(): List<SiteBoardClient.Pool> {
-        val screened = _state.value.screened
-        val ts = _state.value.quoteTs ?: java.time.OffsetDateTime.now().toString()
-        val items = screened.take(20).map { row ->
-            SiteBoardClient.PoolItem(
-                code = row.code,
-                name = row.name,
-                score = row.centralScore,
-                price = row.price,
-                pctChg = row.pctChg,
-                extra = mapOf(
-                    "engine" to "local_screener",
-                    "resonance" to row.resonanceRatio,
-                    "reason" to (row.centralSummary ?: row.reason),
-                    "calculation_time" to ts,
+    // ─────────────────────────────────────────────────────────────
+    // 本地计算：盘后总结 + 推股胜率（云端只给原料，结论本地算）
+    // ─────────────────────────────────────────────────────────────
+    fun refreshLocalAnalytics() {
+        viewModelScope.launch {
+            runCatching { computeLocalCloseReview() }
+            runCatching { computeLocalWinrate() }
+        }
+    }
+
+    private fun analyticsCodes(limit: Int): List<String> =
+        (_state.value.picks.signals.map { it.code } + _state.value.screened.map { it.code })
+            .filter { it.length == 6 }.distinct().take(limit)
+
+    /** 盘后总结：推股池当日实际涨跌（本地 K 线计算）。 */
+    private suspend fun computeLocalCloseReview() {
+        val codes = analyticsCodes(20)
+        if (codes.isEmpty()) return
+        val today = java.time.LocalDate.now().toString()
+        val pcts = ArrayList<Pair<String, Double>>()
+        for (code in codes) {
+            val bars = runCatching { DataCache.kline(code, "qfq", 10) }.getOrNull() ?: continue
+            if (bars.size < 2) continue
+            val last = bars.last()
+            val prev = bars[bars.size - 2]
+            if (prev.close <= 0.0) continue
+            if (last.date.take(10) != today) continue   // 只用当日收盘/实时 K
+            pcts.add(code to (last.close / prev.close - 1.0) * 100.0)
+        }
+        if (pcts.isEmpty()) return
+        val wins = pcts.count { it.second > 0 }
+        val avg = pcts.map { it.second }.average()
+        val best = pcts.maxByOrNull { it.second }
+        val worst = pcts.minByOrNull { it.second }
+        _state.value = _state.value.copy(
+            closeReview = com.skapp.app.data.CloseReview(
+                generatedAt = java.time.OffsetDateTime.now().toString(),
+                date = today,
+                status = "ok",
+                reason = "本地计算：推股池当日表现（本地日K）",
+                stages = mapOf(
+                    "本地推股表现" to mapOf(
+                        "summary" to mapOf(
+                            "n" to pcts.size,
+                            "hit_rate_pct" to "%.1f".format(wins * 100.0 / pcts.size),
+                            "avg_pct" to "%.2f".format(avg),
+                            "best" to (best?.let { "${it.first} ${"%.2f".format(it.second)}%" } ?: "暂无数据"),
+                            "worst" to (worst?.let { "${it.first} ${"%.2f".format(it.second)}%" } ?: "暂无数据"),
+                            "source" to "local_kline",
+                        )
+                    )
                 ),
             )
+        )
+    }
+
+    /** 推股胜率：本地回测（MA5 上穿 MA20 信号，统计未来 5/10/20 日胜率）。 */
+    private suspend fun computeLocalWinrate() {
+        val codes = analyticsCodes(12)
+        if (codes.isEmpty()) return
+        val horizons = listOf(5, 10, 20)
+        val buckets = horizons.associateWith { ArrayList<Double>() }
+        var signals = 0
+        for (code in codes) {
+            val bars = runCatching { DataCache.kline(code, "qfq", 250) }.getOrNull() ?: continue
+            if (bars.size < 60) continue
+            val closes = bars.map { it.close }
+            for (i in 20 until closes.size) {
+                val ma5 = closes.subList(i - 4, i + 1).average()
+                val ma5p = closes.subList(i - 5, i).average()
+                val ma20 = closes.subList(i - 19, i + 1).average()
+                val ma20p = closes.subList(i - 20, i).average()
+                if (ma5p <= ma20p && ma5 > ma20) {
+                    signals++
+                    for (h in horizons) {
+                        val fwd = closes.getOrNull(i + h) ?: continue
+                        buckets.getValue(h).add((fwd / closes[i] - 1.0) * 100.0)
+                    }
+                }
+            }
         }
-        return listOf(
-            SiteBoardClient.Pool(
-                id = "local_live",
-                name = "本地实时",
-                subtitle = "本地 K线+资金+消息实时深算",
-                items = items,
-                ts = ts,
-                status = if (items.isEmpty()) "insufficient" else "ok",
-                reason = if (items.isEmpty()) "本轮本地深算尚无候选，可在实时总结刷新" else null,
+        if (signals == 0) return
+        val horizonsMap = horizons.associate { h ->
+            val list = buckets.getValue(h)
+            h.toString() to mapOf<String, Any?>(
+                "overall" to if (list.isEmpty()) null else "%.1f".format(list.count { it > 0 } * 100.0 / list.size),
+                "avg_ret_pct" to if (list.isEmpty()) null else "%.2f".format(list.average()),
+                "n" to list.size,
+            )
+        }
+        val today = java.time.LocalDate.now().toString()
+        _state.value = _state.value.copy(
+            winrateMatrix = com.skapp.app.data.WinrateMatrix(
+                ts = java.time.OffsetDateTime.now().toString(),
+                sourceTs = today,
+                source = "本地回测：MA5 上穿 MA20（样本 ${codes.size} 只 / 信号 $signals 次）",
+                horizons = horizonsMap,
             )
         )
     }
@@ -1145,7 +1233,7 @@ class SkappViewModel : ViewModel() {
         viewModelScope.launch {
             val poolsD = async {
                 val raw = runCatching { SiteBoardClient.pools() }.getOrElse { emptyList() }
-                localPool() + enrichPoolsWithLiveQuotes(raw)
+                enrichPoolsWithLiveQuotes(raw)
             }
             val feedsD = async { runCatching { loadEngineFeeds() }.getOrNull() }
             _state.value = _state.value.copy(

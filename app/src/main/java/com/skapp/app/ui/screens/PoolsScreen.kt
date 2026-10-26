@@ -39,10 +39,9 @@ import com.skapp.app.ui.UiState
 @Composable
 fun PoolsScreen(vm: SkappViewModel, state: UiState) {
     var tab by remember { mutableStateOf(0) }
-    // 进页即拉云端池 + 触发一次本地实时深算，避免只看到旧快照
+    // 进页即强制拉云端池（不依赖“首次为空才拉”，避免收盘后一直看旧数据）
     LaunchedEffect(Unit) {
-        if (state.pools.isEmpty()) vm.loadPools()
-        if (state.screened.isEmpty() && !state.screening) vm.runScreen("all")
+        vm.loadPools(force = true)
     }
     val pools = remember(state.pools) {
         val merged = state.pools

@@ -167,10 +167,24 @@ private fun NewsCalcInline(n: NewsCalc, vm: SkappViewModel) {
     if (n.negativeReason?.isNotBlank() == true && n.negativeReason != "insufficient") Text("利空理由：${n.negativeReason}", style = MaterialTheme.typography.bodySmall, color = DOWN)
     if (n.sentimentHits.isNotEmpty()) Text("命中依据：${n.sentimentHits.joinToString("、")}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
     if (n.impactCodes.isNotEmpty() && n.stocks.isEmpty()) Text("影响个股：${n.impactCodes.joinToString("、")}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
-    if (n.boards.isNotEmpty()) Text("影响板块：${n.boards.joinToString("、")}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+    if (n.boards.isNotEmpty()) {
+        val detail = n.boards.joinToString("、") { name ->
+            val chg = n.boardChg[name]
+            if (chg == null) name else "$name ${"%+.2f".format(chg)}%"
+        }
+        Text("影响板块：$detail", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+        n.boardMomentum?.let { m ->
+            val tag = when {
+                m >= 1.5 -> "板块共振走强（均涨 ${"%+.2f".format(m)}%）"
+                m <= -1.5 -> "板块整体走弱（均跌 ${"%+.2f".format(m)}%），利好需防高开低走"
+                else -> "板块分化（均涨 ${"%+.2f".format(m)}%）"
+            }
+            Text("板块研判：$tag", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+        }
+    }
     if (n.themes.isNotEmpty()) Text("影响题材：${n.themes.joinToString("、")}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
     if (n.stocks.isEmpty()) {
-        Text(if (n.status == "no_stock") "该条未提及具体股票，无个股计算。" else "计算中或数据不足。",
+        Text(if (n.status == "no_stock") "该条未提及具体股票，无个股计算。" else if (n.status == "board_only") (n.note ?: "仅命中板块，个股待确认。") else "计算中或数据不足。",
             style = MaterialTheme.typography.bodySmall, color = Color.Gray)
     } else {
         n.stocks.forEach { stock ->
