@@ -1,6 +1,7 @@
 package com.skapp.app.ui.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.*
@@ -56,20 +57,20 @@ fun EnginesScreen(vm: SkappViewModel, state: UiState) {
                 .padding(padding)
                 .padding(horizontal = 12.dp),
         ) {
-            if (loading) {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator()
-                }
-            } else if (error != null) {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text("数据加载失败: $error", color = Color.Red)
-                }
-            } else if (feeds == null) {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text("暂无引擎数据", color = Color.Gray)
-                }
-            } else {
-                LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                // 本地实时选股置顶（用户要求：本地在上、云端在下）
+                item { LocalScreenSection(state, vm) }
+                if (loading) {
+                    item {
+                        Box(Modifier.fillMaxWidth().height(120.dp), contentAlignment = Alignment.Center) {
+                            CircularProgressIndicator()
+                        }
+                    }
+                } else if (error != null) {
+                    item { Text("云端引擎产物加载失败: $error", color = Color.Red) }
+                } else if (feeds == null) {
+                    item { Text("暂无云端引擎数据", color = Color.Gray) }
+                } else {
                     feeds?.let { f ->
                         item { FeedHeader(f) }
                         item { EngineV5Section(f.engineV5, excludeCodes = state.screened.map { it.code.takeLast(6) }.toSet()) }
@@ -79,6 +80,57 @@ fun EnginesScreen(vm: SkappViewModel, state: UiState) {
                         item { MarketPhaseSection(f.marketPhase) }
                         item { DecisionSection(f.decision) }
                         item { MissingInfo(f.missing) }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 本地实时选股（置顶）：设备直连行情 + 中枢引擎算出的候选，不走云端快照。
+ * 云端引擎产物一律排在本区块之后。
+ */
+@Composable
+private fun LocalScreenSection(state: UiState, vm: SkappViewModel) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+    ) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("本地实时选股", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                Text(
+                    "重算",
+                    Modifier.clickable { vm.runScreen("all", true) }.padding(horizontal = 6.dp),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
+            Text(
+                "本地引擎 · ${state.screened.size} 个候选 · 时点 ${state.screenedAt?.replace("T", " ")?.take(19) ?: "尚未计算"}",
+                style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+            )
+            when {
+                state.screening -> Text(state.screenMsg ?: "正在本地全市场深算…", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                state.screened.isEmpty() -> Text(
+                    state.screenMsg ?: "暂无数据：本地深算尚未产出候选，点「重算」开始。",
+                    style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+                )
+                else -> state.screened.take(15).forEach { row ->
+                    Row(
+                        Modifier.fillMaxWidth().clickable { vm.openDetail(row.code) }.padding(vertical = 2.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Text(
+                            "${row.name ?: row.code} ${row.code}",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        Text(
+                            row.centralScore?.let { String.format("%.1f", it) } ?: "暂无评分",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
                     }
                 }
             }

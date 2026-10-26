@@ -5,6 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -58,6 +59,7 @@ import com.skapp.app.ui.UiState
 private val UP = Color(0xFFF85149)
 private val DOWN = Color(0xFF3FB950)
 private val BLUE = Color(0xFF58A6FF)
+private val ORANGE = Color(0xFFE3B341)
 
 /**
  * 个股详情（本地引擎 + 多源数据）：
@@ -172,12 +174,29 @@ fun StockDetailSheet(vm: SkappViewModel, state: UiState) {
                             color = MaterialTheme.colorScheme.primary,
                             style = MaterialTheme.typography.labelSmall,
                         )
-                        AdjustChip("不复权", state.detailAdjust == "none") { vm.switchAdjust("none") }
-                        AdjustChip("前复权", state.detailAdjust == "qfq") { vm.switchAdjust("qfq") }
-                        AdjustChip("后复权", state.detailAdjust == "hfq") { vm.switchAdjust("hfq") }
-                        AdjustChip("不复权", state.detailAdjust == "none") { vm.switchAdjust("none") }
                     }
                 }
+                // 复权切换单独一行、三项等分。
+                // 之前这一行里多写了一个「不复权」（共四项），把「后复权」挤出了屏幕，
+                // 用户看到的就是「后复权不见了 / 切了没反应」。
+                Row(
+                    Modifier.fillMaxWidth().padding(top = 6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    AdjustChip("不复权", state.detailAdjust == "none", Modifier.weight(1f)) { vm.switchAdjust("none") }
+                    AdjustChip("前复权", state.detailAdjust == "qfq", Modifier.weight(1f)) { vm.switchAdjust("qfq") }
+                    AdjustChip("后复权", state.detailAdjust == "hfq", Modifier.weight(1f)) { vm.switchAdjust("hfq") }
+                }
+                Text(
+                    "当前口径：" + when (state.detailAdjust) {
+                        "hfq" -> "后复权"
+                        "qfq" -> "前复权"
+                        else -> "不复权"
+                    } + "　数据源：" + (state.klineSource ?: "未生效（接口未返回，未用其他口径顶替）"),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (state.klineSource != null) Color.Gray else MaterialTheme.colorScheme.error,
+                )
                 Spacer(Modifier.height(6.dp))
                 if (state.kline.isEmpty()) {
                     Text("暂无数据：日 K 接口未返回（腾讯/东财均不可达）。", color = Color.Gray)
@@ -267,17 +286,53 @@ fun StockDetailSheet(vm: SkappViewModel, state: UiState) {
             }
         }
 
-        // ── 分时（盘中/盘后）──
-        if (state.minuteTrend.isNotEmpty()) {
-            Card(colors = CardDefaults.cardColors()) {
-                Column(Modifier.padding(12.dp)) {
+        // ── 分时（盘中/盘后都展示当日完整分时）──
+        Card(colors = CardDefaults.cardColors()) {
+            Column(Modifier.padding(12.dp)) {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
                     Text("分时走势", fontWeight = FontWeight.SemiBold)
-                    Spacer(Modifier.height(6.dp))
-                    MinuteChart(state.minuteTrend, Modifier.fillMaxWidth().height(140.dp))
                     Text(
-                        "共 ${state.minuteTrend.size} 个 tick　来源：腾讯 minute / 东财 trends2",
+                        state.minuteDate?.let { "交易日 $it" } ?: "交易日未知",
+                        style = MaterialTheme.typography.labelSmall, color = Color.Gray,
+                    )
+                }
+                Spacer(Modifier.height(6.dp))
+                if (state.minuteTrend.size < 2) {
+                    Text(
+                        "暂无分时数据：腾讯 minute/query 与东财 trends2 均未返回有效 tick；不伪造曲线。",
+                        style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+                    )
+                } else {
+                    MinuteChart(
+                        points = state.minuteTrend,
+                        preClose = state.minutePreClose,
+                        Modifier.fillMaxWidth().height(240.dp),
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    val pre = state.minutePreClose
+                    val lastPrice = (state.minuteTrend.lastOrNull()?.get("price") as? Number)?.toDouble()
+                    val lastAvg = (state.minuteTrend.lastOrNull()?.get("avg") as? Number)?.toDouble()
+                    val chg = if (pre != null && pre > 0 && lastPrice != null) (lastPrice - pre) / pre * 100 else null
+                    Text(
+                        "昨收 ${pre?.let { String.format("%.2f", it) } ?: "暂无"}"
+                            + "　最新 ${lastPrice?.let { String.format("%.2f", it) } ?: "暂无"}"
+                            + "　涨跌 ${chg?.let { String.format("%+.2f%%", it) } ?: "暂无"}"
+                            + "　均价 ${lastAvg?.let { String.format("%.2f", it) } ?: "暂无"}",
                         style = MaterialTheme.typography.bodySmall,
-                        color = Color.Gray,
+                        color = when {
+                            chg == null -> Color.Gray
+                            chg > 0 -> UP
+                            chg < 0 -> DOWN
+                            else -> Color.Gray
+                        },
+                    )
+                    Text(
+                        "源：${state.minuteSource ?: "未知"} · ${state.minuteTrend.size} 个 tick · 长按/拖动查看任意时刻；红线上方=涨、下方=跌，橙线为均价",
+                        style = MaterialTheme.typography.labelSmall, color = Color.Gray,
                     )
                 }
             }
@@ -540,17 +595,18 @@ private fun EngineRow(e: EngineScore) {
 }
 
 @Composable
-private fun AdjustChip(text: String, selected: Boolean, onClick: () -> Unit) {
+private fun AdjustChip(text: String, selected: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
     Card(
-        modifier = Modifier.clickable { onClick() },
+        modifier = modifier.clickable { onClick() },
         colors = CardDefaults.cardColors(),
     ) {
         Text(
             text,
-            Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+            Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
             color = if (selected) MaterialTheme.colorScheme.primary else Color.Gray,
             style = MaterialTheme.typography.bodySmall,
             fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
         )
     }
 }
@@ -733,22 +789,187 @@ private fun axisDateLabel(date: String, withYear: Boolean): String = when {
     else -> date
 }
 
-/** 分时图 */
-@Composable
-private fun MinuteChart(points: List<Map<String, Any?>>, modifier: Modifier = Modifier) {
-    Canvas(modifier) {
-        val vals = points.mapNotNull { (it["price"] as? Number)?.toDouble() }
-        if (vals.size < 2) return@Canvas
-        val min = vals.min(); val max = vals.max()
-        val range = (max - min).takeIf { it > 0 } ?: 1.0
-        val stepX = size.width / (vals.size - 1).toFloat()
-        val path = Path()
-        vals.forEachIndexed { i, v ->
-            val x = i * stepX
-            val y = (size.height - ((v - min) / range) * size.height).toFloat()
-            if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
+/** 分时横坐标：交易分钟数（09:30=0、11:30=120、13:00=120、15:00=240），午休不开缺口。 */
+private fun minuteAxis(t: String): Float {
+    val hh = t.take(2).toIntOrNull() ?: return 0f
+    val mm = t.drop(2).take(2).toIntOrNull() ?: return 0f
+    val m = hh * 60 + mm
+    return when {
+        m <= 690 -> 0f
+        m <= 690 + 120 -> (m - 690).toFloat()
+        m < 780 -> 120f
+        else -> (120 + (m - 780)).coerceAtMost(240).toFloat()
+    }
+}
+
+private fun minuteTimeLabel(t: String): String =
+    if (t.length >= 4) "${t.take(2)}:${t.drop(2).take(2)}" else t
+
+private fun minutePickIndex(x: Float, width: Float, times: List<String>): Int {
+    if (width <= 0f || times.isEmpty()) return 0
+    val axis = (x / width * 240f).coerceIn(0f, 240f)
+    var best = 0
+    var bestD = Float.MAX_VALUE
+    times.forEachIndexed { i, t ->
+        val d = kotlin.math.abs(minuteAxis(t) - axis)
+        if (d < bestD) {
+            bestD = d
+            best = i
         }
-        drawPath(path, color = BLUE, style = Stroke(width = 2.5f))
+    }
+    return best
+}
+
+/**
+ * 分时图（A 股标准形态）：
+ *   以昨收为基准的上下对称坐标 + 昨收虚线；价格线（涨红跌绿）+ 均价线（橙）；
+ *   下方成交量柱；左侧价格刻度、右侧涨跌幅刻度；底部时间轴；长按/拖动十字线读数。
+ */
+@Composable
+private fun MinuteChart(
+    points: List<Map<String, Any?>>,
+    preClose: Double?,
+    modifier: Modifier = Modifier,
+) {
+    val prices = remember(points) { points.mapNotNull { (it["price"] as? Number)?.toDouble() } }
+    if (prices.size < 2) {
+        Box(modifier, contentAlignment = Alignment.Center) { Text("暂无分时数据", color = Color.Gray) }
+        return
+    }
+    val times = remember(points) { points.map { it["time"]?.toString() ?: "" } }
+    val avgs = remember(points) { points.map { (it["avg"] as? Number)?.toDouble() } }
+    val cumVols = remember(points) { points.map { (it["vol"] as? Number)?.toDouble() ?: 0.0 } }
+    val volSteps = remember(points) {
+        cumVols.mapIndexed { i, v -> if (i == 0) v else (v - cumVols[i - 1]).coerceAtLeast(0.0) }
+    }
+    var selIdx by remember(points) { mutableStateOf(prices.lastIndex) }
+    val idx = selIdx.coerceIn(0, prices.lastIndex)
+    val selPrice = prices[idx]
+    val base = preClose ?: prices.first()
+    val selChg = if (base > 0) (selPrice - base) / base * 100 else null
+    val selAvg = avgs.getOrNull(idx)
+
+    // 以昨收为中心的对称区间：分时图惯例，涨跌幅上下等幅
+    val dev = maxOf(
+        prices.maxOf { kotlin.math.abs(it - base) },
+        avgs.filterNotNull().maxOfOrNull { kotlin.math.abs(it - base) } ?: 0.0,
+    ).takeIf { it > 1e-9 } ?: 1.0
+    val hi = base + dev
+    val lo = base - dev
+    val maxVol = volSteps.maxOrNull()?.takeIf { it > 0 } ?: 1.0
+
+    Column(modifier) {
+        // 选中点读数（默认最后一根，始终可见）
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(minuteTimeLabel(times.getOrNull(idx) ?: ""), style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+            Text(
+                String.format("%.2f", selPrice),
+                style = MaterialTheme.typography.bodySmall,
+                fontWeight = FontWeight.Bold,
+                color = if (selChg != null && selChg < 0) DOWN else UP,
+            )
+            Text(
+                selChg?.let { String.format("%+.2f%%", it) } ?: "—",
+                style = MaterialTheme.typography.bodySmall,
+                color = if (selChg != null && selChg < 0) DOWN else UP,
+            )
+            Text(
+                selAvg?.let { String.format("均价 %.2f", it) } ?: "均价 —",
+                style = MaterialTheme.typography.bodySmall, color = ORANGE,
+            )
+        }
+        Spacer(Modifier.height(2.dp))
+        Canvas(
+            Modifier.fillMaxWidth().weight(1f)
+                .pointerInput(points) {
+                    detectTapGestures { off ->
+                        selIdx = minutePickIndex(off.x, size.width.toFloat(), times)
+                    }
+                }
+                .pointerInput(points) {
+                    detectDragGestures(
+                        onDragStart = { off -> selIdx = minutePickIndex(off.x, size.width.toFloat(), times) },
+                        onDrag = { change, _ ->
+                            selIdx = minutePickIndex(change.position.x, size.width.toFloat(), times)
+                        },
+                    )
+                }
+        ) {
+            val priceH = size.height * 0.72f
+            val volTop = priceH + 6f
+            val volH = (size.height - volTop).coerceAtLeast(1f)
+
+            fun xx(t: String) = minuteAxis(t) / 240f * size.width
+            fun yy(v: Double) = (priceH - ((v - lo) / (hi - lo)).toFloat() * priceH)
+
+            // 网格：昨收虚线 + 上下限参考线
+            val dash = androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(7f, 7f))
+            drawLine(
+                Color.Gray.copy(alpha = 0.55f), Offset(0f, yy(base)), Offset(size.width, yy(base)),
+                strokeWidth = 1.2f, pathEffect = dash,
+            )
+            drawLine(Color.Gray.copy(alpha = 0.2f), Offset(0f, 0f), Offset(size.width, 0f), strokeWidth = 1f)
+
+            // 成交量柱（单分钟增量）
+            val barW = (size.width / 240f * 0.9f).coerceAtLeast(1f)
+            volSteps.forEachIndexed { i, v ->
+                val x = xx(times.getOrNull(i) ?: "")
+                val h = (v / maxVol * volH).toFloat()
+                drawRect(
+                    color = (if (i == 0) UP else if (prices[i] >= prices[i - 1]) UP else DOWN).copy(alpha = 0.6f),
+                    topLeft = Offset(x - barW / 2f, volTop + volH - h),
+                    size = androidx.compose.ui.geometry.Size(barW, h),
+                )
+            }
+
+            // 价格线 + 均价线
+            val lineColor = if (selPrice < base) DOWN else UP
+            val pricePath = Path()
+            val avgPath = Path()
+            prices.forEachIndexed { i, v ->
+                val x = xx(times.getOrNull(i) ?: "")
+                val y = yy(v)
+                if (i == 0) pricePath.moveTo(x, y) else pricePath.lineTo(x, y)
+                avgs.getOrNull(i)?.let { a ->
+                    val ay = yy(a)
+                    if (i == 0) avgPath.moveTo(x, ay) else avgPath.lineTo(x, ay)
+                }
+            }
+            drawPath(avgPath, color = ORANGE, style = Stroke(width = 1.4f))
+            drawPath(pricePath, color = lineColor, style = Stroke(width = 2.2f))
+
+            // 十字线 + 选中点
+            val cx = xx(times.getOrNull(idx) ?: "")
+            drawLine(Color.Gray.copy(alpha = 0.8f), Offset(cx, 0f), Offset(cx, size.height), strokeWidth = 1f)
+            drawLine(Color.Gray.copy(alpha = 0.8f), Offset(0f, yy(selPrice)), Offset(size.width, yy(selPrice)), strokeWidth = 1f)
+            drawCircle(lineColor, radius = 4f, center = Offset(cx, yy(selPrice)))
+
+            // 坐标文字：左侧价格、右侧涨跌幅
+            val paint = android.graphics.Paint().apply {
+                isAntiAlias = true
+                textSize = 20f
+                color = 0xFF8B949E.toInt()
+            }
+            val nc = drawContext.canvas.nativeCanvas
+            paint.textAlign = android.graphics.Paint.Align.LEFT
+            nc.drawText(String.format("%.2f", hi), 2f, 20f, paint)
+            nc.drawText(String.format("%.2f", base), 2f, yy(base) - 4f, paint)
+            nc.drawText(String.format("%.2f", lo), 2f, priceH - 4f, paint)
+            paint.textAlign = android.graphics.Paint.Align.RIGHT
+            nc.drawText(String.format("%+.2f%%", dev / base * 100), size.width - 2f, 20f, paint)
+            nc.drawText("0.00%", size.width - 2f, yy(base) - 4f, paint)
+            nc.drawText(String.format("%.2f%%", -dev / base * 100), size.width - 2f, priceH - 4f, paint)
+        }
+        // 时间轴（首/中/末 + 午休分界）
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            listOf("09:30", "10:30", "11:30/13:00", "14:00", "15:00").forEach {
+                Text(it, style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+            }
+        }
     }
 }
 

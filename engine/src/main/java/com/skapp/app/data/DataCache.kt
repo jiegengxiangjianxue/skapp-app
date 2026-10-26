@@ -93,11 +93,16 @@ object DataCache {
         return r
     }
 
-    suspend fun minute(code: String, force: Boolean = false): List<Map<String, Any?>> {
-        val key = "minute:$code"
-        if (!force) get<List<Map<String, Any?>>>(key)?.let { return it }
-        val m = MarketDataClient.minuteTrend(code)
-        put(key, m, MINUTE_TTL_MS)
+    suspend fun minute(code: String, force: Boolean = false): List<Map<String, Any?>> =
+        minuteRich(code, force).points
+
+    /** 分时（含昨收/交易日/来源）。盘中 60s TTL，余下时段 10 分钟。 */
+    suspend fun minuteRich(code: String, force: Boolean = false): MarketDataClient.MinuteTrendData {
+        val key = "minute_rich:$code"
+        if (!force) get<MarketDataClient.MinuteTrendData>(key)?.let { return it }
+        val m = MarketDataClient.minuteTrendRich(code)
+        val ttl = if (MarketHours.isTrading() || MarketHours.isAuction()) MINUTE_TTL_MS else 10 * 60_000L
+        if (m.points.isNotEmpty()) put(key, m, ttl)
         return m
     }
 

@@ -192,9 +192,21 @@ object MarketDataClient {
 
     // ── 日 K 线（前复权 qfq / 后复权 hfq）──────────────────
 
+    /** 最近一次日 K 拉取实际生效的来源与复权口径（供 UI 标注用，不做持久化）。 */
+    @Volatile
+    var lastKlineSource: String? = null
+        private set
+
     /**
-     * @param adjust "qfq" 前复权 / "hfq" 后复权 / "" 不复权
-     * @return 按日期升序
+     * 日 K 线。复权口径严格按请求返回，绝不拿别的口径顶替。
+     *
+     * 源顺序（实测结论 2026-10-26）：
+     *   hfq 后复权 → 东财 push2his fqt=2 为主源（实测返回真后复权价，如 600519 收 8389）；
+     *                腾讯 fqkline hfq 只在东财失败时兜底（腾讯侧常被 WAF 拦且 hfq 数组常缺失）。
+     *   qfq 前复权 / 不复权 → 腾讯 fqkline 为主源，东财 fqt=1/0 兜底。
+     *
+     * @param adjust "qfq" 前复权 / "hfq" 后复权 / "none" 或 "" 不复权
+     * @return 按日期升序；两个源都失败时返回空表（UI 显示暂无，不伪造）
      */
     suspend fun dayKline(
         code: String,
@@ -202,55 +214,78 @@ object MarketDataClient {
         adjust: String = "qfq",
     ): List<KBar> = withContext(Dispatchers.IO) {
         val tx = txCode(code)
-        // 1) 腾讯 fqkline: param=<code>,day,,,<count>,qfq|hfq
-        val tencentAdj = if (adjust == "hfq") "hfq" else if (adjust == "qfq") "qfq" else ""
-        val tUrl = if (tencentAdj.isEmpty()) {
-            "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=$tx,day,,,$count,"
-        } else {
-            "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=$tx,day,,,$count,$tencentAdj"
-        }
-        getJson(tUrl)?.let { root ->
-            val node = root.optJSONObject("data")?.optJSONObject(tx)
-            if (node != null) {
-                val key = when (tencentAdj) {
-                    "qfq" -> "qfqday"
-                    "hfq" -> "hfqday"
-                    else -> "day"
-                }
-                val arr = node.optJSONArray(key)
-                    ?: node.optJSONArray(if (tencentAdj == "qfq") "day" else "qfqday")
-                if (arr != null && arr.length() > 0) {
-                    return@withContext parseBars(arr)
-                }
+        val order = if (adjust == "hfq") listOf("eastmoney", "tencent")
+        else listOf("tencent", "eastmoney")
+        for (src in order) {
+            val bars = when (src) {
+                "tencent" -> tencentKline(tx, count, adjust)
+                else -> eastmoneyKline(code, count, adjust)
             }
-            null
-        }?.let { return@withContext it }
-        // 2) 东财 push2his: fqt=1 前复权 / 2 后复权 / 0 不复权
+            if (bars.size >= 2) {
+                lastKlineSource = when (src) {
+                    "tencent" -> "腾讯 fqkline " + when (adjust) {
+                        "hfq" -> "hfq"
+                        "qfq" -> "qfq"
+                        else -> "不复权"
+                    }
+                    else -> "东财 push2his fqt=" + when (adjust) {
+                        "hfq" -> "2（后复权）"
+                        "qfq" -> "1（前复权）"
+                        else -> "0（不复权）"
+                    }
+                }
+                return@withContext bars
+            }
+        }
+        lastKlineSource = null
+        emptyList()
+    }
+
+    /** 腾讯日 K。严格按请求口径取数组：hfq 只认 hfqday，不拿 qfqday/day 顶替。 */
+    private fun tencentKline(tx: String, count: Int, adjust: String): List<KBar> {
+        val adj = when (adjust) {
+            "hfq" -> "hfq"
+            "qfq" -> "qfq"
+            else -> ""
+        }
+        val url = "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=$tx,day,,,$count,$adj"
+        val node = getJson(url)?.optJSONObject("data")?.optJSONObject(tx) ?: return emptyList()
+        val arr = node.optJSONArray(
+            when (adj) {
+                "qfq" -> "qfqday"
+                "hfq" -> "hfqday"
+                else -> "day"
+            }
+        ) ?: return emptyList()
+        return parseBars(arr)
+    }
+
+    /** 东财日 K：fqt=1 前复权 / 2 后复权 / 0 不复权。 */
+    private fun eastmoneyKline(code: String, count: Int, adjust: String): List<KBar> {
         val fqt = if (adjust == "hfq") 2 else if (adjust == "qfq") 1 else 0
-        getJson(
+        val d = getJson(
             "https://push2his.eastmoney.com/api/qt/stock/kline/get?secid=${secid(code)}" +
                 "&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57,f58" +
                 "&klt=101&fqt=$fqt&end=20500101&lmt=$count"
-        )?.let { d ->
-            val klines = d.optJSONObject("data")?.optJSONArray("klines")
-            if (klines != null && klines.length() > 0) {
-                // "date,open,close,high,low,volume,amount,amplitude,pct,chg,turnover"
-                val out = ArrayList<KBar>()
-                for (i in 0 until klines.length()) {
-                    val p = klines.optString(i).split(",")
-                    if (p.size < 6) continue
-                    out += KBar(
-                        date = p[0],
-                        open = p[1].toDoubleOrNull() ?: continue,
-                        close = p[2].toDoubleOrNull() ?: continue,
-                        high = p[3].toDoubleOrNull() ?: continue,
-                        low = p[4].toDoubleOrNull() ?: continue,
-                        vol = p[5].toDoubleOrNull() ?: 0.0,
-                    )
-                }
-                out
-            } else null
-        } ?: emptyList()
+        ) ?: return emptyList()
+        val klines = d.optJSONObject("data")?.optJSONArray("klines") ?: return emptyList()
+        // "date,open,close,high,low,volume,amount,amplitude,pct,chg,turnover"
+        val out = ArrayList<KBar>()
+        for (i in 0 until klines.length()) {
+            val p = klines.optString(i).split(",")
+            if (p.size < 6) continue
+            val open = p[1].toDoubleOrNull() ?: continue
+            val close = p[2].toDoubleOrNull() ?: continue
+            out += KBar(
+                date = p[0],
+                open = open,
+                close = close,
+                high = p[3].toDoubleOrNull() ?: close,
+                low = p[4].toDoubleOrNull() ?: close,
+                vol = p[5].toDoubleOrNull() ?: 0.0,
+            )
+        }
+        return out
     }
 
     private fun parseBars(arr: JSONArray): List<KBar> {
@@ -337,40 +372,88 @@ object MarketDataClient {
 
     // ── 分时走势（腾讯 minute 主源，东财 trends2 兜底）──────
 
-    suspend fun minuteTrend(code: String): List<Map<String, Any?>> = withContext(Dispatchers.IO) {
+    /**
+     * 分时数据（含绘分时图必需的元数据）。
+     *
+     * 腾讯 minute/query 每个 tick 形如 `"0930 1325.40 905 119948700.00"`：
+     *   时间(时分) / 当前价 / **累计成交量(手)** / **累计成交额(元)**；
+     * 昨日收盘在 `data.<code>.qt.<code>[4]`（字段 3 是现价、5 是今开）。
+     * 盘后仍返回当日全量分时（实测 20:00 仍拿到 267 个 tick），所以非交易时段也应当请求。
+     */
+    data class MinuteTrendData(
+        val date: String?,
+        val preClose: Double?,
+        val points: List<Map<String, Any?>>,
+        val source: String,
+    )
+
+    suspend fun minuteTrendRich(code: String): MinuteTrendData = withContext(Dispatchers.IO) {
         val tx = txCode(code)
         getJson("https://web.ifzq.gtimg.cn/appstock/app/minute/query?code=$tx")?.let { d ->
-            val arr = d.optJSONObject("data")?.optJSONObject(tx)?.optJSONObject("data")?.optJSONArray("data")
-            if (arr != null && arr.length() > 0) {
-                return@withContext (0 until arr.length()).mapNotNull { i ->
+            val node = d.optJSONObject("data")?.optJSONObject(tx)
+            val inner = node?.optJSONObject("data")
+            val arr = inner?.optJSONArray("data")
+            if (arr != null && arr.length() > 1) {
+                val rawDate = inner.optString("date")
+                val date = if (rawDate.length == 8)
+                    "${rawDate.take(4)}-${rawDate.substring(4, 6)}-${rawDate.takeLast(2)}" else null
+                // qt 段：索引 3=现价 4=昨收 5=今开
+                val qt = node.optJSONObject("qt")?.optJSONArray(tx)
+                val preClose = qt?.optString(4)?.toDoubleOrNull()?.takeIf { it > 0 }
+                var cumAmt = 0.0
+                val pts = (0 until arr.length()).mapNotNull { i ->
                     val p = arr.optString(i).split(" ")
-                    if (p.size < 3) null
-                    else mapOf<String, Any?>(
+                    if (p.size < 3) return@mapNotNull null
+                    val price = p[1].toDoubleOrNull() ?: return@mapNotNull null
+                    val cumVolLots = p[2].toDoubleOrNull() ?: 0.0
+                    p.getOrNull(3)?.toDoubleOrNull()?.let { if (it > 0) cumAmt = it }
+                    val cumShares = cumVolLots * 100.0
+                    val avg = if (cumShares > 0 && cumAmt > 0) cumAmt / cumShares else price
+                    mapOf<String, Any?>(
                         "time" to p[0],
-                        "price" to p[1].toDoubleOrNull(),
-                        "vol" to p[2].toDoubleOrNull(),
+                        "price" to price,
+                        "vol" to cumVolLots,
+                        "amount" to cumAmt,
+                        "avg" to avg,
                     )
+                }
+                if (pts.size > 1) {
+                    return@withContext MinuteTrendData(date, preClose, pts, "腾讯 minute/query")
                 }
             }
-            null
-        }?.let { return@withContext it }
-        // 东财 trends2: "时间,开盘,收盘,最高,最低,成交量,成交额,最新价"
-        // fields2 顺序: f51时间,f52开盘,f53收盘,f54最高,f55最低,f56成交量,f57成交额,f58均价
-        getJson("https://push2his.eastmoney.com/api/qt/stock/trends2/get?secid=${secid(code)}" +
-                "&fields1=f1,f2,f3,f4,f5,f6,f7,f8&fields2=f51,f52,f53,f54,f55,f56,f57,f58&iscr=0&ndays=1")
-            ?.optJSONObject("data")?.optJSONArray("trends")
-            ?.let { arr ->
-                (0 until arr.length()).mapNotNull { i ->
-                    val p = arr.optString(i).split(",")
-                    if (p.size < 6) null
-                    else mapOf<String, Any?>(
-                        "time" to p[0],
-                        "price" to p[2].toDoubleOrNull(),
-                        "vol" to p[5].toDoubleOrNull(),
-                    )
-                }
-            } ?: emptyList()
+        }
+        // 东财 trends2 兜底：f51 时间, f53 收, f56 累计量, f57 累计额, f58 均价
+        getJson(
+            "https://push2his.eastmoney.com/api/qt/stock/trends2/get?secid=${secid(code)}" +
+                "&fields1=f1,f2,f3,f4,f5,f6,f7,f8&fields2=f51,f52,f53,f54,f55,f56,f57,f58&iscr=0&ndays=1"
+        )?.optJSONObject("data")?.let { dd ->
+            val arr = dd.optJSONArray("trends") ?: return@let
+            val preClose = dd.opt("preClose")?.toString()?.toDoubleOrNull()
+                ?: dd.opt("prePrice")?.toString()?.toDoubleOrNull()
+            var day: String? = null
+            val pts = (0 until arr.length()).mapNotNull { i ->
+                val p = arr.optString(i).split(",")
+                if (p.size < 6) return@mapNotNull null
+                val price = p[2].toDoubleOrNull() ?: return@mapNotNull null
+                val stamp = p[0]                       // "2026-10-26 09:30"
+                if (day == null) day = stamp.take(10).takeIf { it.length == 10 }
+                mapOf<String, Any?>(
+                    "time" to stamp.takeLast(5).replace(":", ""),
+                    "price" to price,
+                    "vol" to (p[5].toDoubleOrNull() ?: 0.0) / 100.0,
+                    "amount" to (p.getOrNull(6)?.toDoubleOrNull() ?: 0.0),
+                    "avg" to (p.getOrNull(7)?.toDoubleOrNull() ?: price),
+                )
+            }
+            if (pts.size > 1) {
+                return@withContext MinuteTrendData(day, preClose, pts, "东财 trends2")
+            }
+        }
+        MinuteTrendData(null, null, emptyList(), "none")
     }
+
+    /** 兼容旧调用：只要 tick 列表。 */
+    suspend fun minuteTrend(code: String): List<Map<String, Any?>> = minuteTrendRich(code).points
 
     // ── 全球股市指数（东财 + 新浪）─────────────────────────
 

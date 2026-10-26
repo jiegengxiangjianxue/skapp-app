@@ -1,16 +1,23 @@
 name: android-build
-# skapp Android 构建：固定使用 x86_64 runner，供 Google build-tools/aapt2 运行。
+# skapp 构建 —— 按层分段构建，任何一层不过闸就不进入下一层：
+#   1) engine-gate        云端算法/引擎仓（Python）编译与注册校验
+#   2) analysis-gate      云端分析计算产物（市场宽度/新鲜度/清单）自检
+#   3) engine-kotlin      :engine 纯 JVM 模块（算法引擎 + 分析计算），不需要 Android SDK
+#   4) ui-render-gate     :app Kotlin 编译（后端 UI + 密集渲染层类型检查）
+#   5) build              打包 APK（arm64-v8a only）
 # 产物仅 arm64-v8a（用户要求：不要 x86）。
+
 on:
   push:
     branches: [main]
     paths:
       - 'app/**'
+      - 'engine/**'
       - 'gradle/**'
       - 'build.gradle.kts'
       - 'settings.gradle.kts'
       - 'gradle.properties'
-      - '.github/workflows/android-build.yml'
+      - '.github/**'
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -19,8 +26,7 @@ permissions:
   contents: read
 
 jobs:
-  # ── 第一步：算法/引擎/链路构建与自检（云端仓库 stocks-ai-view）──────────
-  # 引擎不过闸就不构建软件，避免“App 编过了但引擎链路是坏的”。
+  # ── 1. 云端算法/引擎/链路构建与自检（云端仓库 stocks-ai-view）──────────────
   engine-gate:
     runs-on: ubuntu-24.04
     timeout-minutes: 25
@@ -29,7 +35,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: qwerzxcva/stocks-ai-view
-          path: engine
+          path: engine-src
           fetch-depth: 1
 
       - name: Set up Python
@@ -40,13 +46,13 @@ jobs:
       - name: Compile all engine scripts
         run: |
           set -euo pipefail
-          cd engine
+          cd engine-src
           python3 -m compileall -q scripts
 
       - name: Import engine chain (fetchers registered)
         run: |
           set -euo pipefail
-          cd engine
+          cd engine-src
           python3 - <<'PYCODE'
           import sys
           sys.path.insert(0, "scripts")
@@ -59,23 +65,183 @@ jobs:
       - name: Validate data artifacts schema
         run: |
           set -euo pipefail
-          cd engine
+          cd engine-src
           python3 - <<'PYCODE'
-          import json
+          import json, os
           for path, keys in (
               ("data/api/sources.json", ("total", "with_fetcher", "items")),
               ("data/api/sectors_health.json", ("verdict", "counts")),
           ):
+              assert os.path.exists(path), f"{path} 缺失"
               d = json.load(open(path, encoding="utf-8"))
               missing = [k for k in keys if k not in d]
               assert not missing, f"{path} 缺字段 {missing}"
               print(path, "ok")
           PYCODE
 
-  build:
-    # Google 的 build-tools/aapt2 只发布 x86_64 二进制，arm64 runner 上无法运行。
-    # 构建机架构与 APK ABI 无关；app/build.gradle.kts 已限定只生成 arm64-v8a。
+  # ── 2. 分析计算层自检（纯计算脚本，不发网络请求）────────────────────────
+  analysis-gate:
     needs: engine-gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout engine (stocks-ai-view)
+        uses: actions/checkout@v4
+        with:
+          repository: qwerzxcva/stocks-ai-view
+          path: engine-src
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Market breadth accumulator smoke (dry-run, no network)
+        run: |
+          set -euo pipefail
+          cd engine-src
+          python3 -m compileall -q scripts/build_market_breadth.py
+          python3 scripts/build_market_breadth.py --dry-run
+
+      - name: Analysis artifacts schema (breadth / manifest / api index)
+        run: |
+          set -euo pipefail
+          cd engine-src
+          python3 - <<'PYCODE'
+          import json, os
+
+          def load(p):
+              assert os.path.exists(p), f"{p} 缺失"
+              return json.load(open(p, encoding="utf-8"))
+
+          # 每日市场宽度历史：必须是数组、按日期升序、字段齐全
+          hist = load("data/market_breadth_history.json")
+          assert isinstance(hist, list) and hist, "market_breadth_history 必须是非空数组"
+          dates = [r["date"] for r in hist]
+          assert dates == sorted(dates), "market_breadth_history 未按日期升序"
+          for r in hist:
+              for k in ("date", "limit_up", "limit_down", "advance", "decline", "source"):
+                  assert k in r, f"market_breadth_history 缺字段 {k}"
+          print("market_breadth_history ok:", len(hist), "days, last =", dates[-1])
+
+          api = load("data/api/market_breadth.json")
+          for k in ("latest", "history", "coverage", "caliber"):
+              assert k in api, f"api/market_breadth.json 缺字段 {k}"
+          print("api/market_breadth.json ok, coverage =", api["coverage"].get("days"))
+
+          man = load("data/analysis_manifest.json")
+          for k in ("ts", "trading_date", "groups"):
+              assert k in man, f"analysis_manifest 缺字段 {k}"
+          print("analysis_manifest ok, stale_count =", man.get("stale_count"))
+          PYCODE
+
+  # ── 3. :engine 纯 JVM 模块（算法引擎 + 分析计算），不需要 Android SDK ────
+  engine-kotlin:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Guard - engine module must stay Android-free
+        run: |
+          set -euo pipefail
+          if grep -rn "^import android\.\|^import androidx\." engine/src/ ; then
+            echo "::error:::engine 出现 Android 依赖，已破坏「引擎可独立构建」的边界"
+            exit 1
+          fi
+          echo "engine module is Android-free"
+
+      - name: Compile engine module
+        run: ./gradlew :engine:compileKotlin --no-daemon --stacktrace
+
+  # ── 4. 后端 UI + 密集渲染层（:app Kotlin 编译，只做类型检查不打包）────────
+  ui-render-gate:
+    needs: [engine-kotlin, analysis-gate]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify x86_64 runner
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = "x86_64"
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Cache Android SDK
+        id: sdk-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ runner.temp }}/android-sdk
+            ~/.android
+          key: android-sdk-${{ runner.os }}-${{ runner.arch }}-api35-build-tools35.0.0-cmdline11076708-v1
+
+      - name: Configure Android SDK environment
+        run: |
+          set -euo pipefail
+          SDK="$RUNNER_TEMP/android-sdk"
+          echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
+          echo "$SDK/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+          echo "$SDK/platform-tools" >> "$GITHUB_PATH"
+          echo "$SDK/build-tools/35.0.0" >> "$GITHUB_PATH"
+
+      - name: Install Android SDK
+        if: steps.sdk-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          SDK="$RUNNER_TEMP/android-sdk"
+          mkdir -p "$SDK/cmdline-tools"
+          curl -fsSL -o /tmp/cmdline.zip \
+            https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+          rm -rf /tmp/cmdline
+          unzip -q /tmp/cmdline.zip -d /tmp/cmdline
+          mv /tmp/cmdline/cmdline-tools "$SDK/cmdline-tools/latest"
+          yes | "$SDK/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null 2>&1 || true
+          "$SDK/cmdline-tools/latest/bin/sdkmanager" --install \
+            "platforms;android-35" "build-tools;35.0.0" "platform-tools"
+
+      - name: Write local.properties
+        run: echo "sdk.dir=$RUNNER_TEMP/android-sdk" > local.properties
+
+      - name: Compile UI + render layer (Kotlin type check only)
+        run: ./gradlew :app:compileDebugKotlin --no-daemon --stacktrace
+
+      - name: Render layer presence check
+        run: |
+          set -euo pipefail
+          # 密集渲染层（Canvas 图表 + 玻璃拟态）必须存在，防止被误删后「构建成功但页面没图」
+          test -f app/src/main/java/com/skapp/app/ui/screens/StockDetailSheet.kt
+          grep -q "private fun MinuteChart" app/src/main/java/com/skapp/app/ui/screens/StockDetailSheet.kt
+          grep -q "private fun KlineChart" app/src/main/java/com/skapp/app/ui/screens/StockDetailSheet.kt
+          grep -q "minuteTrendRich" engine/src/main/java/com/skapp/app/data/MarketDataClient.kt
+          grep -q "lastKlineSource" engine/src/main/java/com/skapp/app/data/MarketDataClient.kt
+          echo "render + data layer markers ok"
+
+  # ── 5. 打包 ───────────────────────────────────────────────────────────
+  build:
+    # Google 的 build-tools/aapt2 只发布 x86_64 二进制。
+    # 构建机架构与 APK ABI 无关；app/build.gradle.kts 已限定只生成 arm64-v8a。
+    needs: [ui-render-gate, engine-kotlin]
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -152,7 +318,7 @@ jobs:
             echo "no native libs (pure Kotlin/Compose)"
           fi
           "$ANDROID_HOME/build-tools/35.0.0/aapt2" dump badging "$APK" > /tmp/apk-badging.txt
-          sed -n '1,5p' /tmp/apk-badging.txt
+          grep -E "^(package|application-label|native-code)" /tmp/apk-badging.txt | head -5
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4

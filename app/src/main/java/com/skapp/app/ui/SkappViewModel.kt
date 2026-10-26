@@ -158,6 +158,12 @@ data class UiState(
     val fundFlowLive: List<Map<String, Any?>> = emptyList(),
     val boardsOf: List<Map<String, Any?>> = emptyList(),
     val minuteTrend: List<Map<String, Any?>> = emptyList(),
+    /** 分时图元数据：所属交易日 / 昨收 / 实际数据源（分时图基准线与涨幅计算必需） */
+    val minuteDate: String? = null,
+    val minutePreClose: Double? = null,
+    val minuteSource: String? = null,
+    /** 日 K 实际生效的复权口径与来源，如「东财 push2his fqt=2（后复权）」 */
+    val klineSource: String? = null,
     val liveQuote: Quote? = null,
     /** 推股列表的实时报价快照（code -> Quote），避免显示过期的本地快照价 */
     val pickQuotes: Map<String, Quote> = emptyMap(),
@@ -177,6 +183,8 @@ data class UiState(
     /** 本地实时选股结果 */
     val screened: List<LocalScreener.Screened> = emptyList(),
     val screening: Boolean = false,
+    /** 本地深算完成时点（ISO），用于判定候选项是否已过期 */
+    val screenedAt: String? = null,
     val screenMsg: String? = null,
     /** 当前扫描模式：score 达标池 / all 全分析池 / limitup 涨停扫描（同模式结果缓存复用） */
     val scanMode: String = "",
@@ -718,6 +726,10 @@ class SkappViewModel : ViewModel() {
                 fundFlow = emptyList(),
                 boardsOf = emptyList(),
                 minuteTrend = emptyList(),
+                minuteDate = null,
+                minutePreClose = null,
+                minuteSource = null,
+                klineSource = null,
             )
             try {
                 supervisorScope {
@@ -764,18 +776,34 @@ class SkappViewModel : ViewModel() {
                         _state.value = _state.value.copy(boardsOf = boards)
                     }
                     val minuteD = async {
-                        if (MarketHours.isTrading() || MarketHours.isAuction() ||
-                            MarketHours.phase() == MarketHours.Phase.AFTER_HOURS) {
-                            val minute = requestResult { DataCache.minute(code) }.getOrDefault(emptyList())
-                            _state.value = _state.value.copy(minuteTrend = minute)
+                        // 盘后腾讯 minute/query 仍返回当日全量分时（实测 20:00 仍有 267 个 tick），
+                        // 所以任何时段都请求一次；只有交易/竞价时段才由 detailLiveLoop 继续轮询。
+                        val rich = requestResult { DataCache.minuteRich(code) }.getOrNull()
+                        val fallbackPre = _state.value.liveQuote?.let { q ->
+                            val p = q.price
+                            val pc = q.pctChg
+                            if (p != null && pc != null && pc > -100.0) p / (1.0 + pc / 100.0) else null
                         }
+                        _state.value = _state.value.copy(
+                            minuteTrend = rich?.points ?: emptyList(),
+                            minuteDate = rich?.date,
+                            minutePreClose = rich?.preClose ?: fallbackPre,
+                            minuteSource = rich?.source?.takeIf { it != "none" },
+                        )
                     }
                     val historyD = async {
                         val holo = holoD.await()
                         _state.value = _state.value.copy(holo = holo?.takeIf { it.covered })
-                        val bars = holo?.kline?.takeIf { it.size >= 30 }
+                        // 只有「前复权」才允许用云端 holo 的固定口径 K 线；
+                        // 切到后复权/不复权必须真去拉对应口径，否则会出现「点了后复权图没变」。
+                        val holoBars = holo?.kline?.takeIf { it.size >= 30 && adjust == "qfq" }
+                        val bars = holoBars
                             ?: requestResult { DataCache.kline(code, adjust, 250) }.getOrDefault(emptyList())
-                        _state.value = _state.value.copy(kline = bars)
+                        _state.value = _state.value.copy(
+                            kline = bars,
+                            klineSource = if (holoBars != null) "云端 holo bundle（前复权口径）"
+                            else MarketDataClient.lastKlineSource,
+                        )
                         val engine = requestResult {
                             withContext(Dispatchers.Default) { DataCache.engine(code, adjust, bars) }
                         }.getOrNull()
@@ -1260,47 +1288,59 @@ class SkappViewModel : ViewModel() {
     fun refreshRealtimeSummary(mode: String = "score") {
         if (_state.value.summaryRefreshing) return
         viewModelScope.launch {
-            _state.value = _state.value.copy(summaryRefreshing = true, summaryRefreshMessage = "正在刷新盘面、消息和实时推股…")
+            _state.value = _state.value.copy(
+                summaryRefreshing = true,
+                summaryRefreshMessage = "正在刷新盘面、消息与结构化推股…",
+            )
             var message = "刷新已取消"
+            var fastOk = 0
+            var fastTotal = 0
             try {
+                // ── 快通道：盘面 / 消息 / 云端结构化推股 / 盘后 / 胜率（秒级~数秒）──
+                // 本地全市场深算（几十秒~数分钟）故意拆到后面，不阻塞这里，
+                // 否则用户看到的永远是长时间转圈 / 整次刷新“失败”。
                 val refreshed = supervisorScope {
                     val summaryD = async { requestResult { refreshSummary() } }
                     val newsD = async { requestResult { refreshNewsCalcs() } }
-                    val screenedD = async {
-                        requestResult {
-                            if (_state.value.screening) throw IllegalStateException("已有实时选股任务正在运行")
-                            refreshScreen(mode)
-                        }
-                    }
                     val structuredD = async { requestResult { SkappApi.fetchStructuredPicks() } }
                     val closeD = async { requestResult { SkappApi.fetchCloseReview() } }
                     val winrateD = async { requestResult { SkappApi.fetchWinrateMatrix() } }
                     listOf(
                         "盘面" to summaryD.await(),
                         "消息" to newsD.await(),
-                        "实时推股" to screenedD.await(),
                         "结构化推股" to structuredD.await(),
                         "盘后总结" to closeD.await(),
                         "胜率" to winrateD.await(),
                     )
                 }
                 @Suppress("UNCHECKED_CAST")
-                val structuredMap = refreshed[3].second.getOrNull() as? Map<String, com.skapp.app.data.StructuredPickArtifact>
-                val close = refreshed[4].second.getOrNull() as? com.skapp.app.data.CloseReview
-                val winrate = refreshed[5].second.getOrNull() as? com.skapp.app.data.WinrateMatrix
+                val structuredMap = refreshed[2].second.getOrNull() as? Map<String, com.skapp.app.data.StructuredPickArtifact>
+                val close = refreshed[3].second.getOrNull() as? com.skapp.app.data.CloseReview
+                val winrate = refreshed[4].second.getOrNull() as? com.skapp.app.data.WinrateMatrix
                 _state.value = _state.value.copy(
                     premarketPicks = structuredMap?.get("premarket") ?: _state.value.premarketPicks,
                     middayPicks = structuredMap?.get("midday") ?: _state.value.middayPicks,
                     closeReview = close ?: _state.value.closeReview,
                     winrateMatrix = winrate ?: _state.value.winrateMatrix,
                 )
+                fastTotal = refreshed.size
+                fastOk = refreshed.count { it.second.isSuccess }
                 val failures = refreshed.filter { it.second.isFailure }
-                message = if (failures.isEmpty()) "刷新完成" else {
+                message = if (failures.isEmpty()) "刷新完成（$fastOk/$fastTotal 项就绪），本地全市场深算进行中…" else {
                     val details = failures.joinToString("；") { (label, result) ->
                         "$label：${result.exceptionOrNull()?.message ?: "数据源不可达"}"
                     }
                     val prefix = if (failures.size == refreshed.size) "刷新失败" else "部分刷新完成"
-                    "$prefix；$details"
+                    "$prefix（$fastOk/$fastTotal）；$details"
+                }
+                // 快通道结果先放开 UI 转圈，让用户立即看到数据
+                _state.value = _state.value.copy(summaryRefreshing = false, summaryRefreshMessage = message)
+
+                // ── 慢通道：本地全市场实时选股（不阻塞上面的展示）──
+                if (!_state.value.screening) {
+                    val screenOk = runCatching { refreshScreen(mode) }.isSuccess
+                    message = message + if (screenOk) "；本地深算完成：${_state.value.screened.size} 个候选"
+                    else "；本地深算失败：${_state.value.screenMsg ?: "行情接口不可达"}"
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -1324,7 +1364,12 @@ class SkappViewModel : ViewModel() {
             _state.value = _state.value.copy(summary = cloud!!)
             return
         }
-        // 云端产物不可达/过期时，用本地实时行情、消息与本地深算生成总结，不伪造数字。
+        // 云端产物不可达/过期时，用本地实时行情、消息与本地深算生成总结。
+        // 关键：marketPulse 过去只在交易/竞价时段刷新，导致盘后总结永远 insufficient、
+        // 用户点刷新一直“失败”。这里在构建总结前补拉一次全市场快照（盘后也能拿到）。
+        if (_state.value.marketPulse.isEmpty()) {
+            runCatching { refreshMarketPulse() }
+        }
         val local = buildLocalSummary()
         _state.value = _state.value.copy(summary = local)
         if (local["status"]?.toString() != "ok") {
@@ -1612,6 +1657,7 @@ $ctx
             _state.value = _state.value.copy(
                 screened = res,
                 scanMode = mode,
+                screenedAt = java.time.OffsetDateTime.now().toString(),
                 screenMsg = if (res.isEmpty()) "预筛后无满足条件的股票" else null,
             )
         } catch (e: CancellationException) {

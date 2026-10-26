@@ -55,10 +55,11 @@ fun RealtimeSummaryScreen(vm: SkappViewModel, state: UiState) {
         item {
             state.summaryRefreshMessage?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = if (it.startsWith("刷新失败")) MaterialTheme.colorScheme.error else Color.Gray) }
         }
-        item { LocalRealtimeSummaryCard(state.summary) }
-        item { PickArtifactCard("盘前推股", state.premarketPicks, today, vm) }
-        item { PickArtifactCard("午盘推股", state.middayPicks, today, vm) }
+        item { SummaryTextCard(state.summary) }
+        // 本地部分置顶：本地深算候选（次日视角）排在所有云端产物之前
         item { TomorrowPicksCard(state, vm) }
+        item { PickArtifactCard("盘前推股（云端）", state.premarketPicks, today, vm) }
+        item { PickArtifactCard("午盘推股（云端）", state.middayPicks, today, vm) }
         item { CloseReviewCard(state.closeReview, today) }
         item { WinrateCard(state) }
     }
@@ -70,10 +71,32 @@ private fun TomorrowPicksCard(state: UiState, vm: SkappViewModel) {
     Card(colors = CardDefaults.cardColors()) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
             Text("明日推股", fontWeight = FontWeight.SemiBold)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text(
+                    "本地引擎计算 · ${state.screened.size} 个候选（次日观察）",
+                    style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+                )
+                Text(
+                    "重算",
+                    Modifier.clickable { vm.runScreen("all", true) }.padding(horizontal = 6.dp),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
+            val at = state.screenedAt ?: ""
+            val atLabel = if (at.length >= 16) at.replace("T", " ").take(19) else "尚未计算"
+            val staleMinutes = if (at.isBlank()) null else runCatching {
+                java.time.Duration.between(java.time.OffsetDateTime.parse(at), java.time.OffsetDateTime.now())
+                    .toMinutes()
+            }.getOrNull()
             Text(
-                "本地引擎计算 · ${state.screened.size} 个候选（次日观察）",
-                style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+                "计算时点 $atLabel" + (staleMinutes?.let { "（${it} 分钟前）" } ?: ""),
+                style = MaterialTheme.typography.labelSmall,
+                color = if (staleMinutes != null && staleMinutes > 30) MaterialTheme.colorScheme.error else Color.Gray,
             )
+            if (state.screening) {
+                Text(state.screenMsg ?: "正在本地全市场深算…", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+            }
             if (state.screened.isEmpty()) {
                 Text(
                     state.screenMsg ?: "暂无数据：本地深算尚未产出候选。",
@@ -188,21 +211,36 @@ private fun CloseReviewCard(review: CloseReview, today: String) {
 }
 
 @Composable
-private fun LocalRealtimeSummaryCard(summary: Map<String, Any?>) {
-    val isLocal = summary["source"]?.toString() == "local_realtime"
+private fun SummaryTextCard(summary: Map<String, Any?>) {
+    val source = summary["source"]?.toString()
+    val isLocal = source == "local_realtime"
+    val ok = summary["status"]?.toString() == "ok"
     Card(colors = CardDefaults.cardColors()) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-            Text("实时盘面（本地计算）", fontWeight = FontWeight.SemiBold)
-            if (!isLocal) {
-                Text("暂无本地实时总结：盘前分析请看板页面。", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("实时总结", fontWeight = FontWeight.SemiBold)
+                Text(
+                    when {
+                        isLocal -> "本地实时计算"
+                        source != null -> "云端 $source"
+                        else -> "暂无来源"
+                    },
+                    style = MaterialTheme.typography.labelSmall, color = Color.Gray,
+                )
+            }
+            if (!ok) {
+                Text(
+                    summary["reason"]?.toString() ?: "暂无数据：本地行情/消息/深算均未就绪，点上方「刷新」重试。",
+                    style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+                )
             } else {
                 val text = summary["text"]?.toString()
                 Text(
-                    if (text.isNullOrBlank()) "暂无数据：本地实时数据未就绪。" else text,
+                    if (text.isNullOrBlank()) "暂无数据：总结正文为空。" else text,
                     style = MaterialTheme.typography.bodySmall,
                 )
                 Text(
-                    "时点 ${summary["ts"] ?: "暂无数据"} · 来源 本地行情/消息/深算",
+                    "时点 ${summary["ts"] ?: "暂无"} · 交易日 ${summary["date"] ?: "暂无"}",
                     style = MaterialTheme.typography.labelSmall, color = Color.Gray,
                 )
             }
