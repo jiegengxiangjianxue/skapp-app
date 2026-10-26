@@ -162,30 +162,11 @@ fun DashboardScreen(vm: SkappViewModel, state: UiState) {
         // ── 个股查（panel-stock）：搜索入口 ──
         item { StockSearchCard(vm, state) }
 
-        // ── 指数与全球市场（A 股 + 全球，原两区已并入）──
-        item {
-            if (state.aShareIndices.isNotEmpty() || state.globalIndices.isNotEmpty()) {
-                SectionTitle("指数与全球市场")
-                (state.aShareIndices + state.globalIndices).forEach { g ->
-                    val pct = (g["pctChg"] as? Number)?.toDouble()
-                    val price = (g["price"] as? Number)?.toDouble()
-                    Card(colors = CardDefaults.cardColors()) {
-                        Row(Modifier.fillMaxWidth().padding(12.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text((g["name"] ?: g["code"])?.toString() ?: "—",
-                                fontWeight = FontWeight.Medium)
-                            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                Text(price?.let { String.format("%.2f", it) } ?: "—",
-                                    style = MaterialTheme.typography.bodySmall)
-                                Text(pct?.let { String.format("%+.2f%%", it) } ?: "—",
-                                    color = if ((pct ?: 0.0) >= 0) UP else DOWN,
-                                    style = MaterialTheme.typography.bodySmall)
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        // ── 选股跟踪：今日推股 vs 实时报价（表格化，可点进详情）──
+        item { PickTrackingSection(state, vm) }
+
+        // ── 指数与全球市场：表格化，支持按幅度排序 ──
+        item { IndexTableSection(state) }
 
         // ── 市场状态机（进攻/防守）──
         state.marketState?.let { ms ->
@@ -363,6 +344,193 @@ private fun MarketStateCard(ms: com.skapp.app.data.MarketState) {
                 "${ms.state} · E=${String.format("%.1f", ms.E)} · agreement=${String.format("%.0f", ms.agreement * 100)}%",
                 style = MaterialTheme.typography.bodySmall, color = Color.Gray,
             )
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────
+// 表格化区块：排序状态 + 选股跟踪 + 指数与全球市场
+// ─────────────────────────────────────────────────────────────
+
+private enum class PctSort { NONE, DESC, ASC }
+
+private fun nextSort(s: PctSort): PctSort = when (s) {
+    PctSort.NONE -> PctSort.DESC
+    PctSort.DESC -> PctSort.ASC
+    PctSort.ASC -> PctSort.NONE
+}
+
+private fun sortLabel(s: PctSort): String = when (s) {
+    PctSort.NONE -> "幅度：默认"
+    PctSort.DESC -> "幅度：↓"
+    PctSort.ASC -> "幅度：↑"
+}
+
+@Composable
+private fun IndexTableSection(state: UiState) {
+    val a = state.aShareIndices
+    val g = state.globalIndices
+    if (a.isEmpty() && g.isEmpty()) {
+        EmptyNote("暂无数据：指数与全球市场尚未返回。")
+        return
+    }
+    var sort by remember { mutableStateOf(PctSort.NONE) }
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(
+            Modifier.fillMaxWidth().padding(top = 4.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            SectionTitle("指数与全球市场")
+            Text(
+                sortLabel(sort),
+                Modifier.clickable { sort = nextSort(sort) },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.primary,
+            )
+        }
+        if (a.isNotEmpty()) IndexTable("A 股指数", a, sort)
+        if (g.isNotEmpty()) IndexTable("全球市场", g, sort)
+        Text(
+            "涨跌口径为当日涨跌幅；点右上角切换排序。全球市场仅供参考，不入选股池。",
+            style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+        )
+    }
+}
+
+@Composable
+private fun IndexTable(title: String, rows: List<Map<String, Any?>>, sort: PctSort) {
+    val sorted = when (sort) {
+        PctSort.NONE -> rows
+        PctSort.DESC -> rows.sortedByDescending { numOf(it["pctChg"]) ?: Double.NEGATIVE_INFINITY }
+        PctSort.ASC -> rows.sortedBy { numOf(it["pctChg"]) ?: Double.POSITIVE_INFINITY }
+    }
+    Card(colors = CardDefaults.cardColors()) {
+        Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text(title, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
+                Text("${rows.size} 项", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+            }
+            Row(Modifier.fillMaxWidth().padding(top = 2.dp)) {
+                Text("名称", HeadCell, Modifier.weight(2.2f))
+                Text("最新", HeadCell, Modifier.weight(1.3f))
+                Text("涨跌", HeadCell, Modifier.weight(1.1f))
+                Text("幅度", HeadCell, Modifier.weight(1.2f))
+            }
+            HorizontalDivider()
+            sorted.forEach { item ->
+                val name = (item["name"] ?: item["code"])?.toString() ?: "—"
+                val code = item["code"]?.toString()
+                val pct = numOf(item["pctChg"])
+                val price = numOf(item["price"])
+                val chg = numOf(item["chg"])
+                val color = pct?.let { if (it >= 0) UP else DOWN } ?: Color.Gray
+                Row(Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
+                    Column(Modifier.weight(2.2f)) {
+                        Text(name, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
+                        if (code != null && code != name) Text(code, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                    }
+                    Text(
+                        price?.let { String.format("%.2f", it) } ?: "—",
+                        style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1.3f),
+                    )
+                    Text(
+                        chg?.let { String.format("%+.2f", it) } ?: "—",
+                        style = MaterialTheme.typography.bodySmall, color = color, modifier = Modifier.weight(1.1f),
+                    )
+                    Text(
+                        pct?.let { String.format("%+.2f%%", it) } ?: "—",
+                        style = MaterialTheme.typography.bodySmall, color = color, modifier = Modifier.weight(1.2f),
+                    )
+                }
+            }
+        }
+    }
+}
+
+private val HeadCell = androidx.compose.ui.text.TextStyle(fontSize = 11.sp, color = Color.Gray)
+
+/** 选股跟踪：今日推股信号价 vs 实时报价（state.pickQuotes），可点进详情。 */
+@Composable
+private fun PickTrackingSection(state: UiState, vm: SkappViewModel) {
+    val picks = state.picks
+    val rows = picks.signals.ifEmpty { picks.values }
+    if (rows.isEmpty()) {
+        EmptyNote("选股跟踪：今日尚无推股信号（上游未产出或非交易日）。")
+        return
+    }
+    val ts = picks.ts ?: picks.date
+    val liveCount = rows.count { state.pickQuotes[it.code]?.price != null }
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            SectionTitle("选股跟踪")
+            Text(
+                "实时 $liveCount/${rows.size}",
+                style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+            )
+        }
+        Card(colors = CardDefaults.cardColors()) {
+            Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    "信号时点 ${ts ?: "暂无"} · 实时价来自腾讯行情" + if (liveCount == 0) "（休市或未取到，显示信号价）" else "",
+                    style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+                )
+                Row(Modifier.fillMaxWidth().padding(top = 2.dp)) {
+                    Text("名称", HeadCell, Modifier.weight(2.2f))
+                    Text("现价", HeadCell, Modifier.weight(1.2f))
+                    Text("涨跌", HeadCell, Modifier.weight(1.1f))
+                    Text("信号价", HeadCell, Modifier.weight(1.2f))
+                    Text("较信号", HeadCell, Modifier.weight(1.2f))
+                }
+                HorizontalDivider()
+                rows.forEach { s ->
+                    val q = state.pickQuotes[s.code]
+                    val livePrice = q?.price
+                    val livePct = q?.pctChg
+                    val refPrice = s.price
+                    val diff = if (livePrice != null && refPrice != null && refPrice != 0.0) {
+                        (livePrice - refPrice) / refPrice * 100
+                    } else null
+                    val color = livePct?.let { if (it >= 0) UP else DOWN } ?: Color.Gray
+                    Row(
+                        Modifier.fillMaxWidth().clickable { vm.openDetail(s.code) }.padding(vertical = 3.dp),
+                    ) {
+                        Column(Modifier.weight(2.2f)) {
+                            Text(
+                                s.name ?: s.code,
+                                style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium,
+                            )
+                            Text(
+                                listOfNotNull(s.code, s.score?.let { String.format("分 %.1f", it) }).joinToString(" · "),
+                                style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+                            )
+                        }
+                        Text(
+                            (livePrice ?: refPrice)?.let { String.format("%.2f", it) } ?: "—",
+                            style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1.2f),
+                        )
+                        Text(
+                            livePct?.let { String.format("%+.2f%%", it) }
+                                ?: s.pctChg?.let { String.format("%+.2f%%", it) } ?: "—",
+                            style = MaterialTheme.typography.bodySmall, color = color, modifier = Modifier.weight(1.1f),
+                        )
+                        Text(
+                            refPrice?.let { String.format("%.2f", it) } ?: "—",
+                            style = MaterialTheme.typography.bodySmall, color = Color.Gray, modifier = Modifier.weight(1.2f),
+                        )
+                        Text(
+                            diff?.let { String.format("%+.2f%%", it) } ?: "—",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = diff?.let { if (it >= 0) UP else DOWN } ?: Color.Gray,
+                            modifier = Modifier.weight(1.2f),
+                        )
+                    }
+                }
+                Text(
+                    "点任意行看详情；「较信号」= 现价相对信号价的变动，用于判断是否已追高。",
+                    style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+                )
+            }
         }
     }
 }

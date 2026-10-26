@@ -122,6 +122,9 @@ data class UiState(
     val closeReview: com.skapp.app.data.CloseReview = com.skapp.app.data.CloseReview(),
     val winrateMatrix: com.skapp.app.data.WinrateMatrix = com.skapp.app.data.WinrateMatrix(),
     val decision: Decision = Decision(),
+    /** 聪明钱信号（宽基 ETF 份额跟踪）；live 序列不足 20 天时 ready=false，仅展示不调仓 */
+    val smartMoney: com.skapp.app.data.SmartMoney.Signal? = null,
+    val smartMoneyLoading: Boolean = false,
     val market: MarketSnapshot = MarketSnapshot(),
     val news: NewsSnapshot = NewsSnapshot(),
     val sectors: SectorsSnapshot = SectorsSnapshot(),
@@ -339,6 +342,7 @@ class SkappViewModel : ViewModel() {
             val poolsD = async { requestResult { SiteBoardClient.pools() }.getOrDefault(emptyList()) }
             val boardD = async { requestResult { SiteBoardClient.board() }.getOrDefault(emptyMap()) }
             val themeD = async { requestResult { SiteBoardClient.themeReport() }.getOrNull() }
+            val smartD = async { runCatching { com.skapp.app.data.SmartMoney.fetch() }.getOrNull() }
 
             val symbols = symbolsD.await()
             val names = namesD.await()
@@ -351,6 +355,7 @@ class SkappViewModel : ViewModel() {
                 closeReview = closeReviewD.await(),
                 winrateMatrix = winrateD.await(),
                 decision = decisionD.await(),
+                smartMoney = smartD.await(),
                 market = marketD.await(),
                 news = newsD.await(),
                 sectors = sectorsD.await(),
@@ -367,6 +372,7 @@ class SkappViewModel : ViewModel() {
             loadBanProb()
             refreshQuotes()
             refreshPickQuotes()   // 推股/决策列表补实时报价（覆盖快照价）
+            refreshPoolReprice()  // 池子成分本地实时重算（首屏先用云端快照，随即覆盖）
             loadIndices()
             loadMarketState()
         }
@@ -374,6 +380,15 @@ class SkappViewModel : ViewModel() {
 
     /** 云端引擎产物（qwerzxcva/stocks-ai-view），供 EnginesScreen 使用 */
     suspend fun loadEngineFeeds(): EngineFeed.EngineFeeds = EngineFeed.loadAll()
+
+    /** 聪明钱信号（ETF 份额）单独刷新：决策页右上「刷新」与下拉都走这里 */
+    fun loadSmartMoney() {
+        viewModelScope.launch {
+            _state.value = _state.value.copy(smartMoneyLoading = true)
+            val s = runCatching { com.skapp.app.data.SmartMoney.fetch() }.getOrNull()
+            _state.value = _state.value.copy(smartMoney = s ?: _state.value.smartMoney, smartMoneyLoading = false)
+        }
+    }
 
     /** 市场状态计算 */
     fun loadMarketState() {
@@ -1111,7 +1126,7 @@ class SkappViewModel : ViewModel() {
         viewModelScope.launch {
             _state.value = _state.value.copy(poolsLoading = true)
             val ps = runCatching { SiteBoardClient.pools() }.getOrElse { emptyList() }
-            val enriched = enrichPoolsWithLiveQuotes(ps)
+            val enriched = runCatching { SiteBoardClient.repriceLive(ps) }.getOrDefault(ps)
             _state.value = _state.value.copy(
                 poolsLoading = false,
                 pools = enriched,
@@ -1120,34 +1135,14 @@ class SkappViewModel : ViewModel() {
         }
     }
 
-    /** 用实时报价覆盖云端池里的旧价，并标出补价时间；非交易时段保留快照价。 */
-    private suspend fun enrichPoolsWithLiveQuotes(pools: List<SiteBoardClient.Pool>): List<SiteBoardClient.Pool> {
-        // 收盘后也要补价：否则池子会一直显示云端快照里的旧价/旧涨跌（用户反馈“推荐池还是老样子”）
-        val codes = pools.flatMap { pool -> pool.items.mapNotNull { SkappApi.normalize(it.code) } }
-            .distinct()
-            .take(300)
-        if (codes.isEmpty()) return pools
-        val quotes = runCatching {
-            SkappApi.fetchQuotes(codes.map { SkappApi.prefixed(it) })
-        }.getOrDefault(emptyMap())
-        if (quotes.isEmpty()) return pools
-        val byCode = quotes.entries.mapNotNull { (key, value) ->
-            SkappApi.normalize(key)?.let { it to value }
-        }.toMap()
-        val now = java.time.OffsetDateTime.now().toString()
-        return pools.map { pool ->
-            pool.copy(items = pool.items.map { item ->
-                val code = SkappApi.normalize(item.code) ?: return@map item
-                val quote = byCode[code] ?: return@map item
-                item.copy(
-                    price = quote.price ?: item.price,
-                    pctChg = quote.pctChg ?: item.pctChg,
-                    extra = item.extra + mapOf(
-                        "live_price_ts" to (quote.ts ?: now),
-                        "live_source" to "tencent_quote",
-                    ),
-                )
-            })
+    /** 首屏先用云端快照把页面渲染出来，随后立刻用设备直连行情覆盖池子价格（不阻塞首屏）。
+     *  与 loadPools 共用同一实现 SiteBoardClient.repriceLive，不再另写一份补价逻辑。 */
+    fun refreshPoolReprice() {
+        viewModelScope.launch {
+            val cur = _state.value.pools
+            if (cur.isEmpty()) return@launch
+            val live = runCatching { SiteBoardClient.repriceLive(cur) }.getOrNull() ?: return@launch
+            _state.value = _state.value.copy(pools = live)
         }
     }
 

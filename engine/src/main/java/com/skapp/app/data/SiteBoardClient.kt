@@ -642,6 +642,62 @@ object SiteBoardClient {
             ?.let(SkappApi::normalize)
     }
 
+    /**
+     * 池子成分本地实时重算（2026-10-27）。
+     *
+     * 问题：pools() 只读云端静态产物，每条成分的价格/涨跌幅是**云端生成那一刻**的快照；
+     * 盘中看子里的价格早就跑掉了，用户只能看到过期的价。
+     * 做法：池子拉到后，把里面出现的所有代码一次性丢给设备直连行情（腾讯批量，20 一批）重定价格，
+     * 原云端价保留到 extra["_cloud_price"] 便于对账，不丢历史。
+     *
+     * 红线：涨幅≥9.6% 标 is_limit_up=true（涨停不进推荐，只观望）；拿不到报价的分别标注 stale，
+     * 不用任何默认值/估值凑数。
+     */
+    suspend fun repriceLive(pools: List<Pool>): List<Pool> = coroutineScope {
+        val allCodes = pools.flatMap { p -> p.items.mapNotNull { canonicalCode(it.code) } }.distinct()
+        if (allCodes.isEmpty()) return@coroutineScope pools
+        val quotes = runCatching { SkappApi.fetchQuotes(allCodes.map { SkappApi.prefixed(it) }) }
+            .getOrDefault(emptyMap())
+        if (quotes.isEmpty()) return@coroutineScope pools
+        val byNorm = HashMap<String, Quote>()
+        quotes.forEach { (k, v) -> SkappApi.normalize(k)?.let { n -> byNorm[n] = v } }
+        val liveTs = quotes.values.mapNotNull { it.ts }.maxOrNull()
+        pools.map { pool ->
+            var repriced = 0
+            var limitUp = 0
+            val items = pool.items.map { item ->
+                val code = canonicalCode(item.code) ?: return@map item
+                val q = byNorm[code] ?: return@map item
+                val livePrice = q.price
+                val livePct = q.pctChg
+                if (livePrice == null && livePct == null) return@map item
+                repriced++
+                val isLimitUp = (livePct ?: 0.0) >= 9.6
+                if (isLimitUp) limitUp++
+                val extra = LinkedHashMap<String, Any?>(item.extra)
+                if (item.price != null) extra["_cloud_price"] = item.price
+                if (item.pctChg != null) extra["_cloud_pct"] = item.pctChg
+                extra["reprice"] = "local-live"
+                extra["live_ts"] = q.ts
+                if (isLimitUp) extra["is_limit_up"] = true
+                item.copy(
+                    price = livePrice ?: item.price,
+                    pctChg = livePct ?: item.pctChg,
+                    extra = extra,
+                )
+            }
+            val kpis = LinkedHashMap<String, Any?>(pool.kpis)
+            kpis["本地实时重算"] = "$repriced/${pool.items.size}"
+            if (limitUp > 0) kpis["涨停不推荐"] = limitUp
+            // 实时时点单独记：pool.ts 仍是云端生成时点，不拿实时时点冒充云端产物时点
+            if (liveTs != null) kpis["本地实时时点"] = liveTs
+            pool.copy(
+                items = items,
+                kpis = kpis,
+            )
+        }
+    }
+
     private fun JSONArray.toMapList(): List<Map<String, Any?>> =
         (0 until length()).mapNotNull { i -> optJSONObject(i)?.toMap() }
 
