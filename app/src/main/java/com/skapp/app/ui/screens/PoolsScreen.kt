@@ -250,18 +250,34 @@ private fun PoolRow(item: SiteBoardClient.PoolItem, onClick: () -> Unit) {
                     color = if (it >= 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.tertiary) }
             }
         }
-        val extras = item.extra.entries.filter { (key, value) -> key !in HIDDEN_FIELDS && value != null }
+        val shownExtras = item.extra.entries
+            .mapNotNull { (key, value) -> if (key in HIDDEN_FIELDS) null else safeExtraText(value)?.let { "$key $it" } }
             .take(3)
-        if (extras.isNotEmpty()) {
-            Text(extras.joinToString("  ") { (key, value) -> "${fieldLabel(key)} ${value ?: "暂无数据"}" },
+        if (shownExtras.isNotEmpty()) {
+            Text(shownExtras.joinToString("  "),
                 style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(start = 10.dp, end = 10.dp, bottom = 6.dp))
         }
     }
 }
 
+
+/** 只放行短标量；Map/List/Python repr/超长串一律不渲染（旧版把 board_members 原文直接打印出来了）。 */
+private fun safeExtraText(value: Any?): String? {
+    if (value == null) return null
+    if (value is Map<*, *> || value is Iterable<*> || value is Array<*>) return null
+    if (value is Boolean) return if (value) "是" else "否"
+    val text = value.toString().trim()
+    if (text.isEmpty() || text.length > 32) return null
+    if (text.startsWith("{") || text.startsWith("[") || text.contains("PoolItem(") ||
+        text.contains("=") && text.contains(",") || text.contains("\n")
+    ) return null
+    return text
+}
+
 private val HIDDEN_FIELDS = setOf("code", "name", "symbol", "s", "n", "stock_name", "board_name", "sector_code",
-    "title", "score", "composite", "strength", "total_score", "price", "close", "p", "pctChg", "chg_pct", "pct", "chg", "ret_pct")
+    "title", "score", "composite", "strength", "total_score", "price", "close", "p", "pctChg", "chg_pct", "pct", "chg", "ret_pct",
+    "raw", "votes", "board_members", "members", "items", "engine", "why", "extra", "live_source")
 
 private fun normalizedPoolKey(item: SiteBoardClient.PoolItem): String {
     val code = item.code.trim().lowercase(java.util.Locale.ROOT)

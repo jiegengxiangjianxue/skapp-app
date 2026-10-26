@@ -747,7 +747,20 @@ class SkappViewModel : ViewModel() {
                         }
                     }
                     val boardsD = async {
-                        val boards = requestResult { DataCache.boards(code) }.getOrDefault(emptyList())
+                        var boards = requestResult { DataCache.boards(code) }.getOrDefault(emptyList())
+                        if (boards.isEmpty()) {
+                            // 东财 stock/get 常被拦：用云端板块成员反查（本地计算），避免“暂无数据”
+                            val suffix = code.takeLast(6)
+                            boards = _state.value.sectors.boardMembers.entries.mapNotNull { (bk, m) ->
+                                val name = (m["name"] as? String)?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                                val hit = (m["members"] as? List<*>).orEmpty().any { row ->
+                                    ((row as? Map<*, *>)?.get("code")?.toString()?.takeLast(6)) == suffix
+                                }
+                                if (!hit) null else mapOf<String, Any?>(
+                                    "name" to name, "code" to bk, "source" to "cloud_board_members",
+                                )
+                            }
+                        }
                         _state.value = _state.value.copy(boardsOf = boards)
                     }
                     val minuteD = async {
@@ -1079,7 +1092,7 @@ class SkappViewModel : ViewModel() {
 
     /** 用实时报价覆盖云端池里的旧价，并标出补价时间；非交易时段保留快照价。 */
     private suspend fun enrichPoolsWithLiveQuotes(pools: List<SiteBoardClient.Pool>): List<SiteBoardClient.Pool> {
-        if (!MarketHours.isTrading() && !MarketHours.isAuction()) return pools
+        // 收盘后也要补价：否则池子会一直显示云端快照里的旧价/旧涨跌（用户反馈“推荐池还是老样子”）
         val codes = pools.flatMap { pool -> pool.items.mapNotNull { SkappApi.normalize(it.code) } }
             .distinct()
             .take(300)

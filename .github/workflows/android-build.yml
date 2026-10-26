@@ -19,9 +19,63 @@ permissions:
   contents: read
 
 jobs:
+  # ── 第一步：算法/引擎/链路构建与自检（云端仓库 stocks-ai-view）──────────
+  # 引擎不过闸就不构建软件，避免“App 编过了但引擎链路是坏的”。
+  engine-gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Checkout engine (stocks-ai-view)
+        uses: actions/checkout@v4
+        with:
+          repository: qwerzxcva/stocks-ai-view
+          path: engine
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Compile all engine scripts
+        run: |
+          set -euo pipefail
+          cd engine
+          python3 -m compileall -q scripts
+
+      - name: Import engine chain (fetchers registered)
+        run: |
+          set -euo pipefail
+          cd engine
+          python3 - <<'PYCODE'
+          import sys
+          sys.path.insert(0, "scripts")
+          import collect_all_sources as cas
+          total = sum(len(v) for v in cas.FETCHERS.values())
+          print("fetchers registered:", total)
+          assert total >= 100, "fetcher 注册数异常"
+          PYCODE
+
+      - name: Validate data artifacts schema
+        run: |
+          set -euo pipefail
+          cd engine
+          python3 - <<'PYCODE'
+          import json
+          for path, keys in (
+              ("data/api/sources.json", ("total", "with_fetcher", "items")),
+              ("data/api/sectors_health.json", ("verdict", "counts")),
+          ):
+              d = json.load(open(path, encoding="utf-8"))
+              missing = [k for k in keys if k not in d]
+              assert not missing, f"{path} 缺字段 {missing}"
+              print(path, "ok")
+          PYCODE
+
   build:
     # Google 的 build-tools/aapt2 只发布 x86_64 二进制，arm64 runner 上无法运行。
     # 构建机架构与 APK ABI 无关；app/build.gradle.kts 已限定只生成 arm64-v8a。
+    needs: engine-gate
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:

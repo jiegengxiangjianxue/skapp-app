@@ -3,6 +3,8 @@ package com.skapp.app.ui.screens
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -169,6 +171,7 @@ fun StockDetailSheet(vm: SkappViewModel, state: UiState) {
                             color = MaterialTheme.colorScheme.primary,
                             style = MaterialTheme.typography.labelSmall,
                         )
+                        AdjustChip("不复权", state.detailAdjust == "none") { vm.switchAdjust("none") }
                         AdjustChip("前复权", state.detailAdjust == "qfq") { vm.switchAdjust("qfq") }
                         AdjustChip("后复权", state.detailAdjust == "hfq") { vm.switchAdjust("hfq") }
                         AdjustChip("不复权", state.detailAdjust == "none") { vm.switchAdjust("none") }
@@ -614,7 +617,7 @@ private fun KlineChart(bars: List<KBar>, modifier: Modifier = Modifier) {
             Text("收 ${String.format("%.2f", sel.close)}", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
             selChg?.let {
                 Text(
-                    String.format("%+.2f%%", it),
+                    "涨跌 " + String.format("%+.2f%%", it),
                     style = MaterialTheme.typography.bodySmall,
                     color = if (it > 0) UP else if (it < 0) DOWN else Color.Gray,
                 )
@@ -626,9 +629,22 @@ private fun KlineChart(bars: List<KBar>, modifier: Modifier = Modifier) {
                 .fillMaxWidth()
                 .height(160.dp)
                 .pointerInput(bars.size) {
-                    detectTapGestures { off ->
+                    // 长按/拖动/点击都可选中某根K线（用户反馈：长按无反应、看不到时间）
+                    fun pick(x: Float, width: Float) {
                         val n = bars.size
-                        selIdx = ((off.x / size.width) * (n - 1)).toInt().coerceIn(0, n - 1)
+                        if (width <= 0f || n == 0) return
+                        selIdx = ((x / width) * (n - 1)).toInt().coerceIn(0, n - 1)
+                    }
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        pick(down.position.x, size.width.toFloat())
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            val change = event.changes.firstOrNull() ?: break
+                            pick(change.position.x, size.width.toFloat())
+                            change.consume()
+                            if (!change.pressed) break
+                        }
                     }
                 },
         ) {
