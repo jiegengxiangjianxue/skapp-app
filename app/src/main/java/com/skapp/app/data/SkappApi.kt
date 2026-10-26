@@ -313,7 +313,16 @@ object SkappApi {
                 "status" to (item["status"] ?: "insufficient"),
             )
         }
-        val items = rawItems.map(::canonical)
+        val prioritized = rawItems.sortedByDescending { item ->
+            listOf("stocks", "affected_stocks", "codes").any { key ->
+                when (val value = item[key]) {
+                    is List<*> -> value.isNotEmpty()
+                    is String -> value.isNotBlank()
+                    else -> false
+                }
+            }
+        }
+        val items = prioritized.map(::canonical)
             .filter { (it["title"] as? String)?.isNotBlank() == true }
             .distinctBy { item ->
                 val id = item["id"]?.toString().orEmpty()
@@ -570,6 +579,7 @@ object SkappApi {
         } ?: emptyMap()
         return WinrateMatrix(
             ts = root.optString("ts").takeIf { it.isNotBlank() },
+            sourceTs = root.optString("source_ts").takeIf { it.isNotBlank() },
             source = root.optString("source").takeIf { it.isNotBlank() },
             horizons = horizons,
         )

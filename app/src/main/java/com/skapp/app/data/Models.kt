@@ -115,6 +115,7 @@ data class CloseReview(
 
 data class WinrateMatrix(
     val ts: String? = null,
+    val sourceTs: String? = null,
     val source: String? = null,
     val horizons: Map<String, Map<String, Any?>> = emptyMap(),
 )
