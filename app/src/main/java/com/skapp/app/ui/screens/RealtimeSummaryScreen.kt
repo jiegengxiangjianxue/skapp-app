@@ -48,7 +48,6 @@ fun RealtimeSummaryScreen(vm: SkappViewModel, state: UiState) {
         item {
             state.summaryRefreshMessage?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = if (it.startsWith("刷新失败")) MaterialTheme.colorScheme.error else Color.Gray) }
         }
-        item { SummaryCard(state.summary) }
         item { LocalScreenedCard(state.screened, state.screenMsg, vm) }
         item { PickArtifactCard("结构化盘前推股", state.premarketPicks, today, vm) }
         item { PickArtifactCard("午盘推股", state.middayPicks, today, vm) }
@@ -122,21 +121,6 @@ private fun CloseReviewCard(review: CloseReview, today: String) {
                     Text("$name：${summary?.get("n") ?: summary?.get("n_requested") ?: "暂无数据"} 条 · 胜率 ${summary?.get("hit_rate_pct") ?: "暂无数据"}", style = MaterialTheme.typography.bodySmall)
                 }
             }
-        }
-    }
-}
-
-@Composable
-private fun SummaryCard(summary: Map<String, Any?>) {
-    Card(colors = CardDefaults.cardColors()) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-            Text("盘面总结", fontWeight = FontWeight.SemiBold)
-            val status = summary["status"]?.toString()
-            val text = summary["text"]?.toString()
-                ?: summary["premarket"]?.toString()
-                ?: summary["reason"]?.toString()
-            Text(if (text.isNullOrBlank()) "暂无数据：盘面总结尚未返回。" else text, style = MaterialTheme.typography.bodySmall, color = if (status == "insufficient") Color.Gray else MaterialTheme.colorScheme.onSurface)
-            Text("时点 ${summary["ts"] ?: "暂无数据"} · 日期 ${summary["date"] ?: "暂无数据"}", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
         }
     }
 }

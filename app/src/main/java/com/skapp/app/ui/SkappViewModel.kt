@@ -951,24 +951,24 @@ class SkappViewModel : ViewModel() {
             var message = "刷新已取消"
             try {
                 val refreshed = supervisorScope {
-                    val summary = async { requestResult { refreshSummary() } }.await()
-                    val news = async { requestResult { refreshNewsCalcs() } }.await()
-                    val screened = async {
+                    val summaryD = async { requestResult { refreshSummary() } }
+                    val newsD = async { requestResult { refreshNewsCalcs() } }
+                    val screenedD = async {
                         requestResult {
                             if (_state.value.screening) throw IllegalStateException("已有实时选股任务正在运行")
                             refreshScreen(mode)
                         }
-                    }.await()
-                    val structured = async { requestResult { SkappApi.fetchStructuredPicks() } }.await()
-                    val close = async { requestResult { SkappApi.fetchCloseReview() } }.await()
-                    val winrate = async { requestResult { SkappApi.fetchWinrateMatrix() } }.await()
+                    }
+                    val structuredD = async { requestResult { SkappApi.fetchStructuredPicks() } }
+                    val closeD = async { requestResult { SkappApi.fetchCloseReview() } }
+                    val winrateD = async { requestResult { SkappApi.fetchWinrateMatrix() } }
                     listOf(
-                        "盘面" to summary,
-                        "消息" to news,
-                        "实时推股" to screened,
-                        "结构化推股" to structured,
-                        "盘后总结" to close,
-                        "胜率" to winrate,
+                        "盘面" to summaryD.await(),
+                        "消息" to newsD.await(),
+                        "实时推股" to screenedD.await(),
+                        "结构化推股" to structuredD.await(),
+                        "盘后总结" to closeD.await(),
+                        "胜率" to winrateD.await(),
                     )
                 }
                 @Suppress("UNCHECKED_CAST")
