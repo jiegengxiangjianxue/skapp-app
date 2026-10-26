@@ -412,10 +412,10 @@ private fun IndexTable(title: String, rows: List<Map<String, Any?>>, sort: PctSo
                 Text("${rows.size} 项", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
             }
             Row(Modifier.fillMaxWidth().padding(top = 2.dp)) {
-                Text("名称", HeadCell, Modifier.weight(2.2f))
-                Text("最新", HeadCell, Modifier.weight(1.3f))
-                Text("涨跌", HeadCell, Modifier.weight(1.1f))
-                Text("幅度", HeadCell, Modifier.weight(1.2f))
+                Text("名称", modifier = Modifier.weight(2.2f), style = HeadCell)
+                Text("最新", modifier = Modifier.weight(1.3f), style = HeadCell)
+                Text("涨跌", modifier = Modifier.weight(1.1f), style = HeadCell)
+                Text("幅度", modifier = Modifier.weight(1.2f), style = HeadCell)
             }
             HorizontalDivider()
             sorted.forEach { item ->
@@ -476,11 +476,11 @@ private fun PickTrackingSection(state: UiState, vm: SkappViewModel) {
                     style = MaterialTheme.typography.bodySmall, color = Color.Gray,
                 )
                 Row(Modifier.fillMaxWidth().padding(top = 2.dp)) {
-                    Text("名称", HeadCell, Modifier.weight(2.2f))
-                    Text("现价", HeadCell, Modifier.weight(1.2f))
-                    Text("涨跌", HeadCell, Modifier.weight(1.1f))
-                    Text("信号价", HeadCell, Modifier.weight(1.2f))
-                    Text("较信号", HeadCell, Modifier.weight(1.2f))
+                    Text("名称", modifier = Modifier.weight(2.2f), style = HeadCell)
+                    Text("现价", modifier = Modifier.weight(1.2f), style = HeadCell)
+                    Text("涨跌", modifier = Modifier.weight(1.1f), style = HeadCell)
+                    Text("信号价", modifier = Modifier.weight(1.2f), style = HeadCell)
+                    Text("较信号", modifier = Modifier.weight(1.2f), style = HeadCell)
                 }
                 HorizontalDivider()
                 rows.forEach { s ->

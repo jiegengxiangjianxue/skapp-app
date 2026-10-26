@@ -140,6 +140,9 @@ data class UiState(
     val detailLoading: Boolean = false,
     val kline: List<KBar> = emptyList(),
     val klineLoading: Boolean = false,
+    /** 十关键位（端侧引擎 KeyLevels）与实时回本率（RecoupCalc），随 K 线一起算 */
+    val keyLevels: com.skapp.app.data.KeyLevels.Levels? = null,
+    val recoup: com.skapp.app.data.RecoupCalc.Result? = null,
     val askQuestion: String = "",
     val askAnswer: String? = null,
     val askLoading: Boolean = false,
@@ -747,6 +750,8 @@ class SkappViewModel : ViewModel() {
                 minutePreClose = null,
                 minuteSource = null,
                 klineSource = null,
+                keyLevels = null,
+                recoup = null,
             )
             try {
                 supervisorScope {
@@ -820,6 +825,13 @@ class SkappViewModel : ViewModel() {
                             kline = bars,
                             klineSource = if (holoBars != null) "云端 holo bundle（前复权口径）"
                             else MarketDataClient.lastKlineSource,
+                            // 端侧关键位/回本率：K 线到手即算，不依赖云端；样本不足时引擎自己返回 null
+                            keyLevels = runCatching {
+                                withContext(Dispatchers.Default) { com.skapp.app.data.KeyLevels.compute(bars) }
+                            }.getOrNull(),
+                            recoup = runCatching {
+                                withContext(Dispatchers.Default) { com.skapp.app.data.RecoupCalc.compute(bars) }
+                            }.getOrNull(),
                         )
                         val engine = requestResult {
                             withContext(Dispatchers.Default) { DataCache.engine(code, adjust, bars) }
@@ -1277,7 +1289,7 @@ class SkappViewModel : ViewModel() {
         viewModelScope.launch {
             val poolsD = async {
                 val raw = runCatching { SiteBoardClient.pools() }.getOrElse { emptyList() }
-                enrichPoolsWithLiveQuotes(raw)
+                runCatching { SiteBoardClient.repriceLive(raw) }.getOrDefault(raw)
             }
             val feedsD = async { runCatching { loadEngineFeeds() }.getOrNull() }
             _state.value = _state.value.copy(

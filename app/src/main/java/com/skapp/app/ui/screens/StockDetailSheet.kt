@@ -71,6 +71,11 @@ fun StockDetailSheet(vm: SkappViewModel, state: UiState) {
     val d = state.detail
     // 控制图表显示区间；state.kline 已含全历史，这里只裁剪展示，无需改 ViewModel
     var klineCount by remember { mutableStateOf(320) }
+    // 三图共享的选中态：提在 StockDetailSheet 顶层而不是各自图内部，
+    // 是因为要让「K 线选的某天 = 资金流高亮的某天」和「分时选的某分钟」互相驱动，
+    // 状态若留在每个图内部，跨图就无法读取彼此的选择。
+    var selectedDate by remember { mutableStateOf<String?>(null) }   // K 线 / 资金流共享的日期
+    var selectedMinute by remember { mutableStateOf<String?>(null) } // 分时选中的分钟（如 0935）
     Column(Modifier.fillMaxSize()) {
         Row(
             Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface).padding(horizontal = 12.dp, vertical = 4.dp),
@@ -224,7 +229,12 @@ fun StockDetailSheet(vm: SkappViewModel, state: UiState) {
                     }
                     Spacer(Modifier.height(6.dp))
                     val visibleBars = state.kline.takeLast(klineCount)
-                    KlineChart(visibleBars, Modifier.fillMaxWidth().height(200.dp))
+                    KlineChart(
+                        bars = visibleBars,
+                        selectedDate = selectedDate,
+                        onSelectDate = { selectedDate = it },
+                        modifier = Modifier.fillMaxWidth().height(200.dp),
+                    )
                     Spacer(Modifier.height(4.dp))
                     val first = visibleBars.first()
                     val last = visibleBars.last()
@@ -286,6 +296,16 @@ fun StockDetailSheet(vm: SkappViewModel, state: UiState) {
             }
         }
 
+        // ── 三图联动信息条（K 线 / 资金流 / 分时 同一时点的读数汇总）──
+        LinkageBar(
+            selectedDate = selectedDate,
+            selectedMinute = selectedMinute,
+            bars = state.kline.takeLast(klineCount),
+            flows = state.fundFlow,
+            minutePoints = state.minuteTrend,
+            preClose = state.minutePreClose,
+        )
+
         // ── 分时（盘中/盘后都展示当日完整分时）──
         Card(colors = CardDefaults.cardColors()) {
             Column(Modifier.padding(12.dp)) {
@@ -310,7 +330,9 @@ fun StockDetailSheet(vm: SkappViewModel, state: UiState) {
                     MinuteChart(
                         points = state.minuteTrend,
                         preClose = state.minutePreClose,
-                        Modifier.fillMaxWidth().height(240.dp),
+                        selectedTime = selectedMinute,
+                        onSelectTime = { selectedMinute = it },
+                        modifier = Modifier.fillMaxWidth().height(240.dp),
                     )
                     Spacer(Modifier.height(4.dp))
                     val pre = state.minutePreClose
@@ -422,6 +444,79 @@ fun StockDetailSheet(vm: SkappViewModel, state: UiState) {
             }
         }
 
+        // ── 十关键位 + 回本率（端侧引擎，随 K 线本地算，不依赖云端）──
+        val kl = state.keyLevels
+        val rc = state.recoup
+        if (kl != null || rc != null) {
+            SectionCard("十关键位与回本率（本地计算）") {
+                Column {
+                    if (kl != null) {
+                        Text(
+                            "现价 ${String.format("%.2f", kl.cur)} · ${kl.trade}",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        val cells = listOf(
+                            "阻力位" to kl.resistance, "压力位" to kl.pressure, "承压位" to kl.bearPressure,
+                            "反弹位" to kl.rebound, "筹码位" to kl.chip, "资金位" to kl.moneyCost,
+                            "回调位" to kl.pullback, "支撑位" to kl.support, "抄底位" to kl.dipBuy,
+                        )
+                        cells.chunked(3).forEach { rowCells ->
+                            Row(
+                                Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                rowCells.forEach { (label, value) ->
+                                    Column(Modifier.weight(1f)) {
+                                        Text(label, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                                        Text(
+                                            String.format("%.2f", value),
+                                            style = MaterialTheme.typography.bodySmall,
+                                            fontWeight = FontWeight.Medium,
+                                        )
+                                    }
+                                }
+                                repeat(3 - rowCells.size) { Spacer(Modifier.weight(1f)) }
+                            }
+                        }
+                        if (kl.ladderBelow.isNotEmpty() || kl.ladderAbove.isNotEmpty()) {
+                            Text(
+                                "台阶下方：" + kl.ladderBelow.take(3).joinToString(" / ") { String.format("%.0f", it) } +
+                                    " · 上方：" + kl.ladderAbove.take(3).joinToString(" / ") { String.format("%.0f", it) },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color.Gray,
+                            )
+                        }
+                    }
+                    if (rc != null) {
+                        if (kl != null) {
+                            HorizontalDivider()
+                            Spacer(Modifier.height(4.dp))
+                        }
+                        Text(
+                            "回本率（口径：任意历史日买入，22/60 交易日内最高价≥买入价）",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color.Gray,
+                        )
+                        Text(
+                            "22 日 " + (rc.recoup22?.let { String.format("%.1f%%", it) } ?: "—") +
+                                "　·　60 日 " + (rc.recoup60?.let { String.format("%.1f%%", it) } ?: "—") +
+                                "　·　均最高涨幅 " + (rc.avgMaxGain22?.let { String.format("%.2f%%", it) } ?: "—") +
+                                "　·　一年位置 " + (rc.posInYear?.let { String.format("%.0f%%", it) } ?: "—"),
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.Medium,
+                        )
+                        Text(
+                            "样本 ${rc.sample} · 门槛 " +
+                                if (com.skapp.app.data.RecoupCalc.gatePass(rc)) "通过" else "不通过（回本率<70% 或 高位且最高涨幅<2%）",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (com.skapp.app.data.RecoupCalc.gatePass(rc)) Color(0xFF3FB950) else Color(0xFFD29922),
+                        )
+                    }
+                }
+            }
+        }
+
         // ── 技术参数 ──
         SectionCard("技术参数") {
             val t = d.detail?.technical
@@ -460,7 +555,12 @@ fun StockDetailSheet(vm: SkappViewModel, state: UiState) {
                     Text("暂无数据：资金流接口未返回。", color = Color.Gray)
                 } else {
                     val shown = flows.takeLast(30)
-                    FundFlowChart(shown, Modifier.fillMaxWidth().height(170.dp))
+                    FundFlowChart(
+                        flows = shown,
+                        selectedDate = selectedDate,
+                        onSelectDate = { selectedDate = it },
+                        modifier = Modifier.fillMaxWidth().height(170.dp),
+                    )
                     val sumMain = shown.mapNotNull { (it["main"] as? Number)?.toDouble() }.sum()
                     Text(
                         "近 ${shown.size} 日主力净额合计 ${String.format("%.2f 亿", sumMain / 1e8)}（红=净流入，绿=净流出，柱顶为当日金额）",
@@ -643,10 +743,18 @@ private fun SectionCard(title: String, content: @Composable () -> Unit) {
 
 /**
  * 日 K 图：K 线蜡烛（开高低收）+ MA5/MA20 叠加 + 稀疏日期轴 + 十字线点选。
- * 默认选中最后一根，因此「最新日期 + 收盘价」始终可见；点按或左右拖动可查看任意一天的 OHLC。
+ * 默认展示最后一根，因此「最新日期 + 收盘价」始终可见；点按或左右拖动可查看任意一天的 OHLC。
+ *
+ * 联动：选中日期由顶层传入（与资金流共享），外部改 selectedDate 时十字线跟到同一天；
+ * 用户点选时通过 onSelectDate 回报，使资金流能高亮同一天的柱子。
  */
 @Composable
-private fun KlineChart(bars: List<KBar>, modifier: Modifier = Modifier) {
+private fun KlineChart(
+    bars: List<KBar>,
+    selectedDate: String?,
+    onSelectDate: (String?) -> Unit,
+    modifier: Modifier = Modifier,
+) {
     if (bars.size < 2) {
         Box(modifier, contentAlignment = Alignment.Center) {
             Text("暂无数据", color = Color.Gray)
@@ -657,8 +765,13 @@ private fun KlineChart(bars: List<KBar>, modifier: Modifier = Modifier) {
     val maxP = bars.maxOf { it.high }
     val range = (maxP - minP).takeIf { it > 0 } ?: 1.0
     var selIdx by remember(bars) { mutableStateOf(bars.lastIndex) }
-    val sel = bars.getOrNull(selIdx) ?: bars.last()
-    val prevClose = bars.getOrNull(selIdx - 1)?.close
+    // 外部选中日期（来自资金流点柱）优先于图内索引：找不到该日期（不在可见区间）时沿用图内索引，不闪回
+    val extIdx = remember(bars, selectedDate) {
+        selectedDate?.let { d -> bars.indexOfFirst { it.date == d } } ?: -1
+    }
+    val effIdx = if (extIdx >= 0) extIdx else selIdx.coerceIn(0, bars.lastIndex)
+    val sel = bars.getOrNull(effIdx) ?: bars.last()
+    val prevClose = bars.getOrNull(effIdx - 1)?.close
     val selChg = prevClose?.let { if (it > 0) (sel.close - it) / it * 100 else null }
 
     Column(modifier) {
@@ -691,7 +804,10 @@ private fun KlineChart(bars: List<KBar>, modifier: Modifier = Modifier) {
                     fun pick(x: Float, width: Float) {
                         val n = bars.size
                         if (width <= 0f || n == 0) return
-                        selIdx = ((x / width) * (n - 1)).toInt().coerceIn(0, n - 1)
+                        val i = ((x / width) * (n - 1)).toInt().coerceIn(0, n - 1)
+                        selIdx = i
+                        // 上报选中日期：资金流据此高亮同一根柱子（松手不再回调 null，保持选中不闪回）
+                        onSelectDate(bars[i].date)
                     }
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
@@ -748,8 +864,8 @@ private fun KlineChart(bars: List<KBar>, modifier: Modifier = Modifier) {
                 if (started) drawPath(path, color = col, style = Stroke(width = 1.6f))
             }
 
-            // 十字线：选中条竖线 + 水平收盘线
-            val sx = selIdx * step
+            // 十字线：选中条竖线 + 水平收盘线（选中条即联动日期对应的那根）
+            val sx = effIdx * step
             drawLine(
                 color = Color.White.copy(alpha = 0.55f),
                 start = Offset(sx, 0f),
@@ -778,6 +894,93 @@ private fun KlineChart(bars: List<KBar>, modifier: Modifier = Modifier) {
                     axisDateLabel(bars[i].date, withYear),
                     style = MaterialTheme.typography.bodySmall,
                     color = Color.Gray,
+                )
+            }
+        }
+    }
+}
+
+/**
+ * 三图联动信息条：把「K 线选中的某天」「资金流选中的某天」「分时选中的某分钟」的读数汇到一处。
+ *
+ * 为什么要联动：三张图是同一只股的不同维度（日 K 价格、日级主力资金、分钟级价格），
+ * 以前各自维护选中索引，用户看到「K 线某天大涨」却无法立刻知道那天主力是流入还是流出；
+ * 把选中态提到 StockDetailSheet 顶层后，任一图点选都能驱动其余两图与这条条，来回对照不用记数字。
+ * 取不到的字段一律显示「—」，不插值也不编造。
+ */
+@Composable
+private fun LinkageBar(
+    selectedDate: String?,
+    selectedMinute: String?,
+    bars: List<KBar>,
+    flows: List<Map<String, Any?>>,
+    minutePoints: List<Map<String, Any?>>,
+    preClose: Double?,
+) {
+    val bar = remember(bars, selectedDate) {
+        selectedDate?.let { d -> bars.firstOrNull { it.date == d } }
+    }
+    val flow = remember(flows, selectedDate) {
+        selectedDate?.let { d -> flows.firstOrNull { it["date"]?.toString() == d } }
+    }
+    val main = (flow?.get("main") as? Number)?.toDouble()
+    val mpt = remember(minutePoints, selectedMinute) {
+        selectedMinute?.let { t -> minutePoints.firstOrNull { (it["time"] ?: it["t"])?.toString() == t } }
+    }
+    val mPrice = (mpt?.get("price") as? Number)?.toDouble()
+    val mAvg = (mpt?.get("avg") as? Number)?.toDouble()
+    val mChg = if (preClose != null && preClose > 0 && mPrice != null) (mPrice - preClose) / preClose * 100 else null
+
+    Card(colors = CardDefaults.cardColors()) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("三图联动", fontWeight = FontWeight.SemiBold)
+            if (selectedDate == null && selectedMinute == null) {
+                Text(
+                    "长按图表查看同一天/同一分钟的联动数据（K 线长按/拖动选日、资金流点柱选日、分时点选选分钟）",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.Gray,
+                )
+                return@Column
+            }
+            selectedDate?.let { d ->
+                Text(d, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)
+                Text(
+                    "K线 " + (bar?.let {
+                        "开 ${String.format("%.2f", it.open)}" +
+                            " 高 ${String.format("%.2f", it.high)}" +
+                            " 低 ${String.format("%.2f", it.low)}" +
+                            " 收 ${String.format("%.2f", it.close)}"
+                    } ?: "—（不在当前 K 线区间）"),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (bar == null) Color.Gray else Color.Unspecified,
+                )
+                Text(
+                    "资金流 主力净额 " + (main?.let { fundFlowText(it) } ?: "—（该日无资金流数据）"),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = when {
+                        main == null -> Color.Gray
+                        main >= 0 -> UP
+                        else -> DOWN
+                    },
+                )
+            }
+            selectedMinute?.let { t ->
+                Text(
+                    "分时 ${minuteTimeLabel(t)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    fontWeight = FontWeight.Bold,
+                )
+                Text(
+                    "价格 " + (mPrice?.let { String.format("%.2f", it) } ?: "—") +
+                        "　涨跌 " + (mChg?.let { String.format("%+.2f%%", it) } ?: "—") +
+                        "　均价 " + (mAvg?.let { String.format("%.2f", it) } ?: "—"),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = when {
+                        mChg == null -> Color.Gray
+                        mChg > 0 -> UP
+                        mChg < 0 -> DOWN
+                        else -> Color.Gray
+                    },
                 )
             }
         }
@@ -826,11 +1029,16 @@ private fun minutePickIndex(x: Float, width: Float, times: List<String>): Int {
  * 分时图（A 股标准形态）：
  *   以昨收为基准的上下对称坐标 + 昨收虚线；价格线（涨红跌绿）+ 均价线（橙）；
  *   下方成交量柱；左侧价格刻度、右侧涨跌幅刻度；底部时间轴；长按/拖动十字线读数。
+ *
+ * 联动：选中分钟由顶层传入/回报（selectedTime 即点位里的 time 字段，如 "0935"），
+ * 这样联动信息条能与分时图显示同一个分钟的价/均价。
  */
 @Composable
 private fun MinuteChart(
     points: List<Map<String, Any?>>,
     preClose: Double?,
+    selectedTime: String?,
+    onSelectTime: (String?) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val prices = remember(points) { points.mapNotNull { (it["price"] as? Number)?.toDouble() } }
@@ -845,7 +1053,11 @@ private fun MinuteChart(
         cumVols.mapIndexed { i, v -> if (i == 0) v else (v - cumVols[i - 1]).coerceAtLeast(0.0) }
     }
     var selIdx by remember(points) { mutableStateOf(prices.lastIndex) }
-    val idx = selIdx.coerceIn(0, prices.lastIndex)
+    // 外部选中分钟优先（与联动条双向一致）；找不到（如换股/换日）则沿用图内索引
+    val extMinuteIdx = remember(times, selectedTime) {
+        selectedTime?.let { t -> times.indexOfFirst { it == t } } ?: -1
+    }
+    val idx = (if (extMinuteIdx >= 0) extMinuteIdx else selIdx).coerceIn(0, prices.lastIndex)
     val selPrice = prices[idx]
     val base = preClose ?: prices.first()
     val selChg = if (base > 0) (selPrice - base) / base * 100 else null
@@ -889,14 +1101,22 @@ private fun MinuteChart(
             Modifier.fillMaxWidth().weight(1f)
                 .pointerInput(points) {
                     detectTapGestures { off ->
-                        selIdx = minutePickIndex(off.x, size.width.toFloat(), times)
+                        val i = minutePickIndex(off.x, size.width.toFloat(), times)
+                        selIdx = i
+                        times.getOrNull(i)?.let { t -> onSelectTime(t) }
                     }
                 }
                 .pointerInput(points) {
                     detectDragGestures(
-                        onDragStart = { off -> selIdx = minutePickIndex(off.x, size.width.toFloat(), times) },
+                        onDragStart = { off ->
+                            val i = minutePickIndex(off.x, size.width.toFloat(), times)
+                            selIdx = i
+                            times.getOrNull(i)?.let { t -> onSelectTime(t) }
+                        },
                         onDrag = { change, _ ->
-                            selIdx = minutePickIndex(change.position.x, size.width.toFloat(), times)
+                            val i = minutePickIndex(change.position.x, size.width.toFloat(), times)
+                            selIdx = i
+                            times.getOrNull(i)?.let { t -> onSelectTime(t) }
                         },
                     )
                 }
@@ -975,12 +1195,49 @@ private fun MinuteChart(
     }
 }
 
-/** 资金流柱状图：柱体直接标注当日金额 + 底部时间轴（不再把数字单独列成一块）。 */
+/**
+ * 资金流柱状图：柱体直接标注当日金额 + 底部时间轴（不再把数字单独列成一块）。
+ * 联动：selectedDate 与 K 线共享，同一天的柱子加亮白边；点击/长按/拖动柱子把日期回报给顶层。
+ */
 @Composable
-private fun FundFlowChart(flows: List<Map<String, Any?>>, modifier: Modifier = Modifier) {
-    val vals = flows.mapNotNull { (it["main"] as? Number)?.toDouble() }
-    val dates = flows.map { it["date"]?.toString()?.takeLast(5) ?: "" }
-    Canvas(modifier) {
+private fun FundFlowChart(
+    flows: List<Map<String, Any?>>,
+    selectedDate: String?,
+    onSelectDate: (String?) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    // 金额与日期成对取，避开两个列表因缺值而错位；fullDates 保留完整日期（yyyy-MM-dd）用于与 K 线比对
+    val pairs = remember(flows) {
+        flows.mapNotNull { f ->
+            val v = (f["main"] as? Number)?.toDouble() ?: return@mapNotNull null
+            Pair(f["date"]?.toString(), v)
+        }
+    }
+    val vals = pairs.map { it.second }
+    val fullDates = pairs.map { it.first }
+    val dates = fullDates.map { it?.takeLast(5) ?: "" }
+    Canvas(
+        modifier.pointerInput(pairs.size) {
+            // 柱子横向均分，点哪根选哪天（长按/拖动同样生效）
+            fun hit(x: Float) {
+                if (vals.isEmpty() || size.width <= 0) return
+                val bwf = size.width.toFloat() / vals.size
+                val i = (x / bwf).toInt().coerceIn(0, vals.lastIndex)
+                fullDates.getOrNull(i)?.let { d -> onSelectDate(d) }
+            }
+            awaitEachGesture {
+                val down = awaitFirstDown(requireUnconsumed = false)
+                hit(down.position.x)
+                while (true) {
+                    val ev = awaitPointerEvent()
+                    val ch = ev.changes.firstOrNull() ?: break
+                    hit(ch.position.x)
+                    ch.consume()
+                    if (!ch.pressed) break
+                }
+            }
+        }
+    ) {
         if (vals.isEmpty()) return@Canvas
         val maxAbs = maxOf(vals.maxOf { kotlin.math.abs(it) }, 1.0)
         val bw = size.width / vals.size
@@ -992,10 +1249,17 @@ private fun FundFlowChart(flows: List<Map<String, Any?>>, modifier: Modifier = M
         vals.forEachIndexed { i, v ->
             val h = (kotlin.math.abs(v) / maxAbs * half).toFloat()
             val x = i * bw
-            if (v >= 0) {
-                drawRect(UP, topLeft = Offset(x, midY - h), size = androidx.compose.ui.geometry.Size(bw * 0.8f, h))
-            } else {
-                drawRect(DOWN, topLeft = Offset(x, midY), size = androidx.compose.ui.geometry.Size(bw * 0.8f, h))
+            val rectTopLeft = if (v >= 0) Offset(x, midY - h) else Offset(x, midY)
+            val rectSize = androidx.compose.ui.geometry.Size(bw * 0.8f, h)
+            drawRect(if (v >= 0) UP else DOWN, topLeft = rectTopLeft, size = rectSize)
+            // 联动高亮：与选中日期相同的柱子加白色描边，K 线选中的那天在这里一眼能定位
+            if (selectedDate != null && fullDates.getOrNull(i) == selectedDate) {
+                drawRect(
+                    Color.White.copy(alpha = 0.9f),
+                    topLeft = rectTopLeft,
+                    size = rectSize,
+                    style = Stroke(width = 2.5f),
+                )
             }
         }
         drawLine(Color.Gray.copy(alpha = 0.6f), Offset(0f, midY), Offset(size.width, midY), strokeWidth = 1f)
