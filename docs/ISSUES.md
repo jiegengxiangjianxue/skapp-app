@@ -73,6 +73,30 @@
 | 启动全空（真根因） | ✅ 2026-10-24 | init 里 load() 早于 token 恢复 → 改为 loadSavedToken→load→warmUpAll |
 
 ## 待办（下一轮）
-- 看板：继续细化全球异动/选股跟踪表格交互（主要数据区已接入）
-- 聪明钱仓位信号（ETF 份额）接入决策/仓位建议（live 序列满 20 天后）
-- skapp vs skapp-app 双仓归并核查
+- ~~看板：继续细化全球异动/选股跟踪表格交互~~ → ✅ 2026-10-27
+- ~~聪明钱仓位信号（ETF 份额）接入决策/仓位建议~~ → ✅ 2026-10-27（接入完成，信号仍等 20 个交易日）
+- ~~skapp vs skapp-app 双仓归并核查~~ → ✅ 2026-10-27（已核查并执行归档）
+- 聪明钱信号成熟度：live 序列 2026-10-24 起累积，需到 ~20 个交易日后云端才会给出仓位百分位；在此之前决策页只展示可核验的日/5 日份额变动并明确写「不参与仓位调整」
+- breadth 直方图对照字段（limit_up_hist）不可回填：东财涨跌分布接口忽略 date=，只能从 2026-10-27 起往前为「池口径」补数
+
+## 2026-10-27 本轮（1.8.0 / versionCode 10）
+
+| 事项 | 状态 | 说明 |
+|---|---|---|
+| 看板表格交互细化 | ✅ | 指数与全球市场改真表格（共享表头、按幅度三态排序、A股/全球分卡、时点与口径说明）；新增「选股跟踪」表（现价/涨跌/信号价/较信号，点行进详情，休市回落信号价并写明） |
+| 聪明钱 ETF 份额接入决策 | ✅ | 新增 engine/SmartMoney.kt 解析 etf_shares.json；Signal.capAdjust() 只在云端信号成熟（≥20 交易日且有仓位百分位）时 ±10pp 调档，否则返回原因不动仓位；DecisionScreen 新增份额表 + 成熟度横幅；仓位建议改结构化展示（label/cap/reason） |
+| ETF 采集掉篮子 | ✅ | 根因：kline 单次失败即 continue，把已拿到的 live 快照一起丢掉 → 10-24 只有 2 只入库、live 仅 1 天。现 K 线失败仍用 live 建行、K 线 3 次退避重试、东财 ulist 缺项由腾讯补齐、工作日 3 个采集时点（同日按日期去重幂等） |
+| 双仓归并 | ✅ 核查 + 执行 | 实测 skapp 是 skapp-app 10-22 快照（13 文件逐字节相同、28 个更旧、public 泄露私有源码）。已把独有且有价值的 KeyLevels.kt / RecoupCalc.kt 迁入 :engine 并接入详情页；skapp 已转 private + archived（可 unarchive 恢复） |
+| 详情页三图联动 | ✅ | K 线选中日期 → 资金流同日柱子高亮；分时选中分钟 → 联动信息条；选中态提升到 sheet 顶层（图内状态跨图读不到） |
+| 池子成分本地实时重算 | ✅ | 统一到 SiteBoardClient.repriceLive()：成分价全量设备直连重定，云端价存 extra._cloud_price，涨幅≥9.6% 标 is_limit_up 并计数（不推荐），删掉 VM 里重复的 enrichPoolsWithLiveQuotes |
+| 涨停口径对齐 | ✅ | build_market_now.py 主值改东财涨停/跌停池 tc，直方图降级 limit_up_hist/limit_down_hist；breadth 改读 hist 键、删「主值缺失静默用直方图顶替」、删 seal_rate 混合口径误报、差异阈值 30%→10%、重写 caliber_caveat 并写明切换日 2026-10-27 |
+| market_breadth 历史回填 | ✅ 脚本+入口 | 新增 `--backfill-from/--backfill-to` 与 breadth-backfill.yml；实测回填 2026-10-23 得 zt=82/dt=6/zb=12，与 git 快照 market_now 三项全符；回填记录 advance/amount/hist 一律 null 并带 notes，且不得覆盖 market_now 主记录 |
+| :ui 模块拆分 | ✅ | 新增 :ui Android library（18 屏 + VM + 4 个 Android 侧 client），:app 只剩 MainActivity + 资源；依赖方向 :app→:ui→:engine；拆分前提已核验：ui 包对 R.* 零引用；CI 改为先 :ui 后 :app 分层编译，engine-gate 加「:engine 不得依赖 :ui」守卫 |
+| 凭据卫生 | ✅ | 两个本地仓库 .git/config 的内嵌明文 PAT 已清除，推送改用 `git -c http.extraheader` 从 tokens.json 现取；skapp 公开面已关闭 |
+| 出包位置 | ✅ | APK 不再进 Actions artifact，改为 GitHub Release（tag v<versionName>，同版本重跑覆盖资产）；安装包名 skapp-<version>-vc<code>-arm64.apk |
+
+本轮新增/保留待办：
+- ETF 份额 live 序列凑满 20 个交易日（客观需要时间，采集已加固）
+- breadth：±10% 直方图口径、advance/decline/amount 无历史接口，不可回填
+- ST 5% 涨停在直方图口径下必然漏计（已降级为对照字段，主值不受影响）
+
