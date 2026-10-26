@@ -34,7 +34,7 @@ object MarketDataClient {
 
     private const val TIMEOUT = 15000
 
-    private fun get(url: String, charset: String = "utf-8"): String? {
+    private fun get(url: String, charset: String = "utf-8", referer: String = "https://gu.qq.com/"): String? {
         var conn: HttpURLConnection? = null
         return try {
             conn = (URL(url).openConnection() as HttpURLConnection).apply {
@@ -42,7 +42,7 @@ object MarketDataClient {
                 readTimeout = TIMEOUT
                 requestMethod = "GET"
                 setRequestProperty("User-Agent", RemoteSources.UA_ANDROID)
-                setRequestProperty("Referer", "https://gu.qq.com/")
+                setRequestProperty("Referer", referer)
                 setRequestProperty("Accept", "*/*")
             }
             if (conn.responseCode != HttpURLConnection.HTTP_OK) return null
@@ -61,6 +61,24 @@ object MarketDataClient {
 
     private fun getJson(url: String): JSONObject? =
         get(url)?.let { runCatching { JSONObject(it) }.getOrNull() }
+
+    /**
+     * 东财接口：HTTPS 在部分网络（含本机容器、部分运营商）会被连接重置，
+     * 实测同一路径 HTTP 明文可正常返回。因此 HTTPS 失败后立刻回退 HTTP，
+     * 而不是把「拿不到」报成「没有数据」。
+     */
+    /** 同 getJsonEm，返回原始文本（东财资金流接口用）。 */
+    private fun getEm(url: String): String? {
+        get(url)?.let { return it }
+        if (url.startsWith("https://")) return get("http://" + url.removePrefix("https://"))
+        return null
+    }
+
+    private fun getJsonEm(url: String): JSONObject? {
+        getJson(url)?.let { return it }
+        if (url.startsWith("https://")) return getJson("http://" + url.removePrefix("https://"))
+        return null
+    }
 
     // ── 代码格式 ────────────────────────────────────────────
 
@@ -103,7 +121,7 @@ object MarketDataClient {
             )
         }?.let { return@withContext it }
         // 2) 东财
-        getJson("https://push2.eastmoney.com/api/qt/stock/get?secid=${secid(code)}&fields=f43,f44,f45,f46,f57,f58,f169,f170,f86")
+        getJsonEm("https://push2.eastmoney.com/api/qt/stock/get?secid=${secid(code)}&fields=f43,f44,f45,f46,f57,f58,f169,f170,f86")
             ?.takeIf { it.optLong("rc") != null }
             ?.let { d ->
                 val data = d.optJSONObject("data") ?: return@let null
@@ -214,11 +232,14 @@ object MarketDataClient {
         adjust: String = "qfq",
     ): List<KBar> = withContext(Dispatchers.IO) {
         val tx = txCode(code)
-        val order = if (adjust == "hfq") listOf("eastmoney", "tencent")
-        else listOf("tencent", "eastmoney")
+        // 后复权：东财 fqt=2 为主 → 同花顺 02 档（非东财系交叉验证）→ 腾讯 hfq。
+        // 三家复权基准日不同，绝对价不可比，但任一家单源内部一致即可用于画图；UI 会标明实际用的哪家。
+        val order = if (adjust == "hfq") listOf("eastmoney", "ths", "tencent")
+        else listOf("tencent", "eastmoney", "ths")
         for (src in order) {
             val bars = when (src) {
                 "tencent" -> tencentKline(tx, count, adjust)
+                "ths" -> thsKline(code, count, adjust)
                 else -> eastmoneyKline(code, count, adjust)
             }
             if (bars.size >= 2) {
@@ -227,6 +248,11 @@ object MarketDataClient {
                         "hfq" -> "hfq"
                         "qfq" -> "qfq"
                         else -> "不复权"
+                    }
+                    "ths" -> "同花顺 v6/line " + when (adjust) {
+                        "hfq" -> "02（后复权）"
+                        "qfq" -> "01（前复权）"
+                        else -> "00（不复权）"
                     }
                     else -> "东财 push2his fqt=" + when (adjust) {
                         "hfq" -> "2（后复权）"
@@ -260,10 +286,57 @@ object MarketDataClient {
         return parseBars(arr)
     }
 
+    /**
+     * 同花顺日 K —— 用来补「非东财系」的后复权交叉验证源。
+     *
+     * 实测（2026-10-26）：`d.10jqka.com.cn/v6/line/hs_<code>/<档>/last.js`
+     *   档位 00=不复权、01=前复权、02=后复权（当日 600519 后复权收 9356.19，与东财量级不同：
+     *   两家复权基准日不同，只能比「日收益率」，不能比绝对价）。
+     *   必须带 Referer，否则连接被重置。
+     * data 形如 "日期,开,高,低,收,量,额,换手,,,0;"，条目用 ; 分隔。
+     */
+    private fun thsKline(code: String, count: Int, adjust: String): List<KBar> {
+        val digits = code.filter { it.isDigit() }.takeLast(6)
+        if (digits.length != 6) return emptyList()
+        val band = when (adjust) {
+            "hfq" -> "02"
+            "qfq" -> "01"
+            else -> "00"
+        }
+        val txt = get(
+            "https://d.10jqka.com.cn/v6/line/hs_$digits/$band/last.js",
+            "utf-8",
+            "https://stockpage.10jqka.com.cn/",
+        ) ?: return emptyList()
+        val start = txt.indexOf("\"data\":\"")
+        if (start < 0) return emptyList()
+        val from = start + "\"data\":\"".length
+        val end = txt.indexOf('"', from)
+        if (end <= from) return emptyList()
+        val rows = txt.substring(from, end).split(";")
+        val out = ArrayList<KBar>()
+        for (row in rows) {
+            val p = row.split(",")
+            if (p.size < 6) continue
+            val day = p[0].trim()
+            if (day.length != 8 || !day.all { it.isDigit() }) continue
+            val open = p[1].toDoubleOrNull() ?: continue
+            val high = p[2].toDoubleOrNull() ?: continue
+            val low = p[3].toDoubleOrNull() ?: continue
+            val close = p[4].toDoubleOrNull() ?: continue
+            out += KBar(
+                date = "${day.take(4)}-${day.substring(4, 6)}-${day.takeLast(2)}",
+                open = open, close = close, high = high, low = low,
+                vol = p[5].toDoubleOrNull() ?: 0.0,
+            )
+        }
+        return out.takeLast(count)
+    }
+
     /** 东财日 K：fqt=1 前复权 / 2 后复权 / 0 不复权。 */
     private fun eastmoneyKline(code: String, count: Int, adjust: String): List<KBar> {
         val fqt = if (adjust == "hfq") 2 else if (adjust == "qfq") 1 else 0
-        val d = getJson(
+        val d = getJsonEm(
             "https://push2his.eastmoney.com/api/qt/stock/kline/get?secid=${secid(code)}" +
                 "&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57,f58" +
                 "&klt=101&fqt=$fqt&end=20500101&lmt=$count"
@@ -335,10 +408,10 @@ object MarketDataClient {
                     }
             }
             // push2his 有完整历史
-            parse(get("https://push2his.eastmoney.com/api/qt/stock/fflow/daykline/get" +
+            parse(getEm("https://push2his.eastmoney.com/api/qt/stock/fflow/daykline/get" +
                     "?secid=$sid&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57,f58" +
                     "&lmt=$days"))
-                ?: parse(get("https://push2delay.eastmoney.com/api/qt/stock/fflow/daykline/get" +
+                ?: parse(getEm("https://push2delay.eastmoney.com/api/qt/stock/fflow/daykline/get" +
                     "?secid=$sid&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57,f58" +
                     "&lmt=$days"))
                 ?: emptyList()
@@ -365,8 +438,8 @@ object MarketDataClient {
             }
         }
         val q = "fields1=f1,f2,f3,f7&fields2=f51,f52,f53,f54,f55,f56&klt=1&lmt=0&ut=f057cbcbce2a86e2866ab8877db1d059"
-        parse(get("https://push2.eastmoney.com/api/qt/stock/fflow/kline/get?secid=$sid&$q"))
-            ?: parse(get("https://push2delay.eastmoney.com/api/qt/stock/fflow/kline/get?secid=$sid&$q"))
+        parse(getEm("https://push2.eastmoney.com/api/qt/stock/fflow/kline/get?secid=$sid&$q"))
+            ?: parse(getEm("https://push2delay.eastmoney.com/api/qt/stock/fflow/kline/get?secid=$sid&$q"))
             ?: emptyList()
     }
 
@@ -423,7 +496,7 @@ object MarketDataClient {
             }
         }
         // 东财 trends2 兜底：f51 时间, f53 收, f56 累计量, f57 累计额, f58 均价
-        getJson(
+        getJsonEm(
             "https://push2his.eastmoney.com/api/qt/stock/trends2/get?secid=${secid(code)}" +
                 "&fields1=f1,f2,f3,f4,f5,f6,f7,f8&fields2=f51,f52,f53,f54,f55,f56,f57,f58&iscr=0&ndays=1"
         )?.optJSONObject("data")?.let { dd ->
@@ -468,7 +541,7 @@ object MarketDataClient {
         val fields = "f12,f13,f14,f2,f3,f4,f5,f6"
         val out = ArrayList<Map<String, Any?>>()
         // 东财批量
-        getJson("https://push2.eastmoney.com/api/qt/ulist.np/get?secids=${list.joinToString(",")}" +
+        getJsonEm("https://push2.eastmoney.com/api/qt/ulist.np/get?secids=${list.joinToString(",")}" +
                 "&fields=$fields&fltt=2")?.let { d ->
             val arr = d.optJSONObject("data")?.optJSONArray("diff")
             if (arr != null) {
@@ -492,7 +565,7 @@ object MarketDataClient {
     suspend fun aShareIndices(): List<Map<String, Any?>> = withContext(Dispatchers.IO) {
         val list = listOf("1.000001", "0.399001", "0.399006", "1.000688", "0.899050", "1.000300")
         val fields = "f12,f13,f14,f2,f3,f4"
-        getJson("https://push2.eastmoney.com/api/qt/ulist.np/get?secids=${list.joinToString(",")}" +
+        getJsonEm("https://push2.eastmoney.com/api/qt/ulist.np/get?secids=${list.joinToString(",")}" +
                 "&fields=$fields&fltt=2")?.optJSONObject("data")?.optJSONArray("diff")
             ?.let { arr ->
                 (0 until arr.length()).mapNotNull { i ->
@@ -511,7 +584,7 @@ object MarketDataClient {
 
     /** 所属板块（东财行业/概念 + db-market 反向索引兑底）—— 个股详情页用 */
     suspend fun boardsOf(code: String): List<Map<String, Any?>> = withContext(Dispatchers.IO) {
-        val em = getJson("https://push2.eastmoney.com/api/qt/stock/get?secid=${secid(code)}" +
+        val em = getJsonEm("https://push2.eastmoney.com/api/qt/stock/get?secid=${secid(code)}" +
                 "&fields=f57,f58,f127,f128,f129,f130,f131,f132,f133,f134,f135,f136")
             ?.optJSONObject("data")
             ?.let { d ->
@@ -546,7 +619,7 @@ object MarketDataClient {
 
     /** 财务摘要（东财 quote 财务字段；holo 未覆盖个股的兜底，与 holo 字段名对齐） */
     suspend fun financeQuote(code: String): Map<String, Any?> = withContext(Dispatchers.IO) {
-        getJson("https://push2.eastmoney.com/api/qt/stock/get?secid=${secid(code)}" +
+        getJsonEm("https://push2.eastmoney.com/api/qt/stock/get?secid=${secid(code)}" +
                 "&fields=f57,f58,f84,f85,f116,f117,f162,f167,f55,f60")
             ?.optJSONObject("data")?.let { d ->
                 buildMap<String, Any?> {
