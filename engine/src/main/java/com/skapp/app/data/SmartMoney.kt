@@ -10,14 +10,19 @@ import java.net.URL
  * 聪明钱信号：宽基 ETF 份额跟踪（「盯份额抄作业」口径）。
  *
  * 数据合同（云端 scripts/collect_etf_shares.py 产出 data/etf_shares.json）：
- *   ts                 采集时点
- *   smart_money        篮子仓位百分位；**live 序列不足 20 个交易日时为 null**（云端不造假）
- *   basket[code]       name / latest{date,shares_yi,d1_chg_pct,d5_chg_pct,d20_chg_pct}
- *                      series[K线底稿] / live_series[逐日真实份额]
+ *   ts                  采集时点
+ *   unit                "亿份"
+ *   min_history_days    出仓位信号所需的最少历史天数（云端阈值，当前 20）
+ *   window_days         百分位窗口（当前 250）
+ *   smart_money         篮子仓位百分位；历史不足时为 null（云端不造假）
+ *   basket[code]        name / market / latest{date,shares_yi,d1, d5, d20}
+ *                       series[{date,shares_yi,source}]  ← 交易所日度真值（sse_etf_vol / szse_fund_size）
+ *                       live_series[...]                 ← 旧的成交量/换手率估算，仅量级对照
  *
  * 本机只做「读取 + 展示 + 按规则调档」，不自己拟合份额：
- * - 份额口径来自 push2 实时快照的 f8（真实份额），K 线底稿的换手率是固定参考份额，不能用于增减判断。
- * - live 序列天数不足 NEED_DAYS 时 ready=false：只展示可核验的日/5 日变动，**不参与仓位调整**。
+ * - 主序列只认 series 里 source 为交易所真值的点（上交所 TOT_VOL / 深交所 current_size）；
+ *   旧 live_series 是估算口径，量级接近但不可用于增减判断，只在真值缺失时兜底。
+ * - 历史天数不足 min_history_days 时 ready=false：只展示可核验的日/5 日变动，不参与仓位调整。
  * - 净申购用「亿份」表达，不换算成金额（没有净值就不臆造金额）。
  */
 object SmartMoney {
@@ -27,7 +32,7 @@ object SmartMoney {
 
     private const val TIMEOUT = 12000
 
-    /** 云端出仓位信号所需的 live 交易日数（与 collect_etf_shares.py 保持一致） */
+    /** 云端出仓位信号所需的最少历史天数；实际以 etf_shares.json 的 min_history_days 为准 */
     const val NEED_DAYS = 20
 
     /** 单只 ETF 的份额跟踪行 */
@@ -57,9 +62,13 @@ object SmartMoney {
         /** 篮子当日净申购合计（亿份） */
         val d1NetYi: Double? = null,
         val d5NetYi: Double? = null,
+        /** 参与百分位的 ETF 只数与窗口天数（云端口径） */
+        val etfsUsed: Int = 0,
+        val windowDays: Int = 0,
+        val minHistoryDays: Int = NEED_DAYS,
     ) {
-        val ready: Boolean get() = liveDays >= NEED_DAYS && positionPct != null
-        val progressText: String get() = "$liveDays/$NEED_DAYS 个交易日"
+        val ready: Boolean get() = liveDays >= minHistoryDays && positionPct != null
+        val progressText: String get() = "$liveDays/$minHistoryDays 天历史"
 
         /**
          * 仓位调档：只有信号成熟才动仓位。
@@ -67,7 +76,7 @@ object SmartMoney {
          * 返回 null 表示不调整（并给出原因，UI 直接展示）。
          */
         fun capAdjust(baseCap: Double?): Pair<Double?, String> {
-            if (!ready) return null to "份额序列积累中（$progressText），本次不参与仓位调整"
+            if (!ready) return null to "份额历史 $progressText，不足不出信号，本次不参与仓位调整"
             val p = positionPct ?: return null to "云端无仓位百分位，本次不参与仓位调整"
             val base = baseCap ?: return null to "基准仓位缺失，无法叠加 ETF 信号"
             return when {
@@ -109,18 +118,30 @@ object SmartMoney {
         for (code in codes) {
             val o = basket.optJSONObject(code) ?: continue
             val latest = o.optJSONObject("latest")
-            val live = o.optJSONArray("live_series")
-            // live_series 已按日期升序；只取真实快照口径的份额
+            // 真值序列优先：只认交易所来源（sse_etf_vol / szse_fund_size）。
+            // 旧 live_series 是成交量/换手率估算，量级接近但口径不同，混算会得出荒谬的日变动。
             val points = mutableListOf<Pair<String, Double>>()
-            if (live != null) {
-                for (i in 0 until live.length()) {
-                    val p = live.optJSONObject(i) ?: continue
-                    val d = p.optString("date").takeIf { it.isNotBlank() } ?: continue
-                    val v = p.optDouble("live_shares_yi", Double.NaN)
-                    if (!v.isNaN()) points.add(d to v)
+            o.optJSONArray("series")?.let { arr ->
+                for (i in 0 until arr.length()) {
+                    val p = arr.optJSONObject(i) ?: continue
+                    val src = p.optString("source")
+                    if (!src.startsWith("sse_") && !src.startsWith("szse_")) continue
+                    val dt = p.optString("date").takeIf { it.isNotBlank() } ?: continue
+                    val v = p.optDouble("shares_yi", Double.NaN)
+                    if (!v.isNaN()) points.add(dt to v)
                 }
-                points.sortBy { it.first }
             }
+            if (points.isEmpty()) {
+                o.optJSONArray("live_series")?.let { arr ->
+                    for (i in 0 until arr.length()) {
+                        val p = arr.optJSONObject(i) ?: continue
+                        val dt = p.optString("date").takeIf { it.isNotBlank() } ?: continue
+                        val v = p.optDouble("live_shares_yi", Double.NaN)
+                        if (!v.isNaN()) points.add(dt to v)
+                    }
+                }
+            }
+            points.sortBy { it.first }
             val shares = points.lastOrNull()?.second ?: latest?.optDouble("shares_yi", Double.NaN)?.takeIf { !it.isNaN() }
             rows.add(
                 EtfRow(
@@ -139,6 +160,7 @@ object SmartMoney {
             )
         }
         val sm = root.optJSONObject("smart_money")
+        val minDays = root.optInt("min_history_days", NEED_DAYS).takeIf { it > 0 } ?: NEED_DAYS
         val signal = Signal(
             ts = root.optString("ts").takeIf { it.isNotBlank() },
             source = root.optString("source").takeIf { it.isNotBlank() },
@@ -148,6 +170,9 @@ object SmartMoney {
             positionNote = sm?.optString("note")?.takeIf { it.isNotBlank() },
             d1NetYi = sumOrNull(rows.map { it.d1NetYi }),
             d5NetYi = sumOrNull(rows.map { it.d5NetYi }),
+            etfsUsed = sm?.optInt("etfs_used") ?: 0,
+            windowDays = sm?.optInt("window_days") ?: root.optInt("window_days", 0),
+            minHistoryDays = minDays,
         )
         return signal
     }

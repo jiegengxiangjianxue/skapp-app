@@ -226,14 +226,15 @@ private fun SmartMoneyCard(state: UiState, vm: SkappViewModel) {
             Spacer(Modifier.height(6.dp))
             if (sm.ready) {
                 Text(
-                    "信号成熟（${sm.progressText}）· 篮子仓位百分位 ${sm.positionPct?.let { String.format("%.1f", it) }}%",
+                    "信号成熟（${sm.progressText}）· 篮子 ${sm.etfsUsed} 只 · 窗口 ${sm.windowDays} 天 · " +
+                        "仓位百分位 ${sm.positionPct?.let { String.format("%.1f", it) }}%",
                     style = MaterialTheme.typography.bodySmall,
                     fontWeight = FontWeight.Medium,
                     color = MaterialTheme.colorScheme.primary,
                 )
             } else {
                 Text(
-                    "序列积累中 ${sm.progressText}，未满 ${com.skapp.app.data.SmartMoney.NEED_DAYS} 个交易日：仅展示可核验的份额变动，不参与仓位调整",
+                    "历史真值 ${sm.progressText}，不足 ${sm.minHistoryDays} 天：仅展示可核验的份额变动，不参与仓位调整",
                     style = MaterialTheme.typography.bodySmall, color = Color(0xFFD29922),
                 )
             }
@@ -261,7 +262,7 @@ private fun SmartMoneyCard(state: UiState, vm: SkappViewModel) {
                         Column(Modifier.weight(2.4f)) {
                             Text(e.name, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
                             Text(
-                                "${e.code} · live ${e.liveDays} 天",
+                                "${e.code} · ${e.liveDays} 天历史",
                                 style = MaterialTheme.typography.bodySmall, color = Color.Gray,
                             )
                         }
@@ -276,7 +277,8 @@ private fun SmartMoneyCard(state: UiState, vm: SkappViewModel) {
                 }
                 HorizontalDivider()
                 Text(
-                    "份额 = 成交量/换手率（push2 真实份额口径）；日/5日/20日为份额变动百分比，样本不足显示「—」，不用底稿估算补齐。",
+                    "份额来自交易所日度披露（上交所 ETF 规模 / 深交所基金规模，单位亿份）；日/5日/20日为份额变动百分比，" +
+                        "样本不足显示「—」，不用估算补齐。",
                     style = MaterialTheme.typography.bodySmall, color = Color.Gray,
                 )
             }
