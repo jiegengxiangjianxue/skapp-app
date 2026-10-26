@@ -172,6 +172,8 @@ data class UiState(
     /** 市场状态机输出 */
     val marketState: MarketState? = null,
     val marketStateLoading: Boolean = false,
+    /** 每日市场宽度（涨停/跌停/成交额/涨跌家数），云端 market_breadth.json 累积 */
+    val marketBreadth: Map<String, Any?> = emptyMap(),
     /** 云端 190 源合并产物摘要（兜底数据源） */
     val allSourcesSummary: String? = null,
     val allSourcesQuotes: Map<String, AllSourcesClient.Quote> = emptyMap(),
@@ -1262,10 +1264,16 @@ class SkappViewModel : ViewModel() {
     /** 看板 */
     fun loadBoard() {
         viewModelScope.launch {
-            val b = runCatching { SiteBoardClient.board() }.getOrElse {
-                mapOf<String, Any?>("status" to "insufficient", "reason" to it.message)
+            val boardD = async {
+                runCatching { SiteBoardClient.board() }.getOrElse {
+                    mapOf<String, Any?>("status" to "insufficient", "reason" to it.message)
+                }
             }
-            _state.value = _state.value.copy(board = b)
+            // 每日市场宽度（CI 累积，非实时快照）——与看板并行拉，缺了就空，不编造
+            val breadthD = async {
+                runCatching { SiteBoardClient.marketBreadth() }.getOrDefault(emptyMap())
+            }
+            _state.value = _state.value.copy(board = boardD.await(), marketBreadth = breadthD.await())
         }
     }
 

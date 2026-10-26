@@ -51,8 +51,9 @@ fun DecisionScreen(vm: SkappViewModel, state: UiState) {
                         "市场状态：${d.marketRegime ?: "暂无数据"}",
                         fontWeight = FontWeight.SemiBold,
                     )
-                    if (!d.regimeDetail.isNullOrBlank()) {
-                        Text(d.regimeDetail, style = MaterialTheme.typography.bodySmall)
+                    val regimeDetail = d.regimeDetail
+                    if (!regimeDetail.isNullOrBlank()) {
+                        Text(regimeDetail, style = MaterialTheme.typography.bodySmall)
                     }
                     val pa = d.positionAdvice
                     if (pa.isNotEmpty()) {

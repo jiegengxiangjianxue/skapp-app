@@ -398,6 +398,43 @@ object SiteBoardClient {
             ?: getJson("${RemoteSources.base(RemoteSources.OWNER_C, RemoteSources.REPO_C)}/theme_report.json")
     }
 
+    /**
+     * 每日市场宽度（涨停 / 跌停 / 成交额 / 涨跌家数）——云端 data/api/market_breadth.json。
+     *
+     * 由 CI 每日累积（scripts/build_market_breadth.py），字段：latest / history / coverage / caliber。
+     * limit_up、limit_down 走东财涨停/跌停池的真实分板块口径；limit_up_hist / limit_down_hist
+     * 是 ±10% 直方图的平价口径，只作对照。缺失时返回 emptyMap，不编造任何数字。
+     */
+    suspend fun marketBreadth(): Map<String, Any?> = withContext(Dispatchers.IO) {
+        val url = RemoteSources.appFile(RemoteSources.OWNER_A, RemoteSources.REPO_A, "api/market_breadth.json")
+        val d = getJson(url) ?: return@withContext emptyMap()
+        val history = ArrayList<Map<String, Any?>>()
+        d.optJSONArray("history")?.let { arr ->
+            for (i in 0 until arr.length()) arr.optJSONObject(i)?.let { history.add(objToMap(it)) }
+        }
+        mapOf(
+            "latest" to (d.optJSONObject("latest")?.let { objToMap(it) } ?: emptyMap<String, Any?>()),
+            "coverage" to (d.optJSONObject("coverage")?.let { objToMap(it) } ?: emptyMap<String, Any?>()),
+            "caliber" to d.optString("caliber"),
+            "history" to history,
+        )
+    }
+
+    private fun objToMap(o: JSONObject): Map<String, Any?> {
+        val out = LinkedHashMap<String, Any?>()
+        val keys = o.keys()
+        while (keys.hasNext()) {
+            val k = keys.next()
+            out[k] = when (val v = o.opt(k)) {
+                is JSONObject -> objToMap(v)
+                is JSONArray -> (0 until v.length()).map { i -> v.opt(i) }
+                JSONObject.NULL -> null
+                else -> v
+            }
+        }
+        return out
+    }
+
     suspend fun summary(): Map<String, Any?> = withContext(Dispatchers.IO) {
         val out = LinkedHashMap<String, Any?>()
         val brief = getJson("$API/daily_brief.json")

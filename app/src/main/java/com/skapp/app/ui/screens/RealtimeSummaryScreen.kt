@@ -146,8 +146,9 @@ private fun PickArtifactCard(
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(title, fontWeight = FontWeight.SemiBold)
             Text("生成 ${shown.generatedAt ?: "暂无数据"} · 计算 ${shown.calculationTime ?: "暂无数据"}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-            if (!stale && shown.reason != null && shown.status != "ok") {
-                Text(shown.reason, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+            val reasonText = shown.reason
+            if (!stale && reasonText != null && shown.status != "ok") {
+                Text(reasonText, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
             }
             if (shown.picks.isEmpty() || !current || !visibleForSession) {
                 val message = when {

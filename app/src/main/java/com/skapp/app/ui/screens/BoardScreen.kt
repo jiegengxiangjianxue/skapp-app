@@ -44,6 +44,8 @@ private val DOWN = Color(0xFF3FB950)
 @Composable
 fun BoardScreen(vm: SkappViewModel, state: UiState) {
     val b = state.board
+    // 进页即重拉：盘前数据最容易「看着是今天的、其实是昨天的」
+    LaunchedEffect(Unit) { vm.loadBoard() }
     LazyColumn(
         Modifier.fillMaxWidth().padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -56,10 +58,14 @@ fun BoardScreen(vm: SkappViewModel, state: UiState) {
             ) {
                 Column {
                     Text("看板", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    val tsText = b["ts"]?.toString() ?: "时点暂无"
+                    val today = java.time.LocalDate.now().toString()
+                    val tsDay = tsText.take(10)
+                    val stale = tsText.length >= 10 && tsDay != today
                     Text(
-                        (b["ts"]?.toString() ?: "时点暂无"),
+                        tsText + if (stale) "（数据日期 $tsDay，非今日，仅供参考）" else "",
                         style = MaterialTheme.typography.bodySmall,
-                        color = Color.Gray,
+                        color = if (stale) MaterialTheme.colorScheme.error else Color.Gray,
                     )
                 }
                 Text(
@@ -68,6 +74,19 @@ fun BoardScreen(vm: SkappViewModel, state: UiState) {
                     color = MaterialTheme.colorScheme.primary,
                     style = MaterialTheme.typography.bodySmall,
                 )
+            }
+        }
+
+        // 每日市场宽度（云端 CI 每日累积，不是实时快照）
+        run {
+            val breadth = state.marketBreadth
+            @Suppress("UNCHECKED_CAST")
+            val latest = (breadth["latest"] as? Map<*, *>) ?: emptyMap<Any?, Any?>()
+            @Suppress("UNCHECKED_CAST")
+            val coverage = (breadth["coverage"] as? Map<*, *>) ?: emptyMap<Any?, Any?>()
+            if (latest.isNotEmpty()) {
+                item { SectionTitle("市场宽度（每日累积）") }
+                item { MarketBreadthCard(latest, coverage, breadth["caliber"]?.toString()) }
             }
         }
 
@@ -489,6 +508,54 @@ private fun DailyBriefCard(summary: Map<String, Any?>) {
                 .forEach {
                     Text(it.trimStart('#').trim(), style = MaterialTheme.typography.bodySmall, color = Color.Gray)
                 }
+        }
+    }
+}
+
+/** 每日市场宽度：涨停/跌停/成交额/涨跌家数，来自 data/api/market_breadth.json。 */
+@Composable
+private fun MarketBreadthCard(latest: Map<*, *>, coverage: Map<*, *>, caliber: String?) {
+    fun n(key: String) = (latest[key] as? Number)?.toInt()
+    fun f(key: String) = (latest[key] as? Number)?.toDouble()
+    Card(colors = CardDefaults.cardColors()) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("交易日 ${latest["date"] ?: "暂无"}", fontWeight = FontWeight.SemiBold)
+                f("amount_yi")?.let {
+                    Text(
+                        String.format("两市成交 %.0f 亿", it),
+                        style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+                    )
+                }
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                Text("涨停 ${n("limit_up") ?: "—"}", style = MaterialTheme.typography.bodySmall, color = UP)
+                Text("跌停 ${n("limit_down") ?: "—"}", style = MaterialTheme.typography.bodySmall, color = DOWN)
+                Text("炸板 ${n("broken") ?: "—"}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                Text(
+                    "封板率 " + (f("seal_rate_pct")?.let { String.format("%.1f%%", it) } ?: "—"),
+                    style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+                )
+            }
+            Text(
+                "涨 ${n("advance") ?: "—"} / 跌 ${n("decline") ?: "—"} / 平 ${n("flat") ?: "—"}"
+                    + "（上涨占比 " + (f("up_pct")?.let { String.format("%.1f%%", it) } ?: "—") + "）",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            Text(
+                "覆盖 ${coverage["days"] ?: "—"} 个交易日 · ${coverage["first"] ?: "—"} ~ ${coverage["last"] ?: "—"}",
+                style = MaterialTheme.typography.labelSmall, color = Color.Gray,
+            )
+            Text(
+                "口径：${caliber ?: "涨停/跌停按分板块涨跌幅限制统计"}",
+                style = MaterialTheme.typography.labelSmall, color = Color.Gray,
+            )
+            n("limit_up_hist")?.let {
+                Text(
+                    "对照（±10% 平价口径）：涨停 $it / 跌停 ${n("limit_down_hist") ?: "—"}",
+                    style = MaterialTheme.typography.labelSmall, color = Color.Gray,
+                )
+            }
         }
     }
 }

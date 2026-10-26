@@ -293,7 +293,8 @@ private fun isMainBoardCandidate(item: SiteBoardClient.PoolItem): Boolean {
     val code = raw.removePrefix("sh").removePrefix("sz").removePrefix("bj")
     val mainBoard = code.startsWith("600") || code.startsWith("601") || code.startsWith("603") ||
         code.startsWith("605") || code.startsWith("000") || code.startsWith("001") || code.startsWith("002")
-    return mainBoard && item.pctChg != null && item.pctChg < 9.5
+    val pct = item.pctChg
+    return mainBoard && pct != null && pct < 9.5
 }
 
 private fun statusText(status: String, empty: Boolean): String = when {
