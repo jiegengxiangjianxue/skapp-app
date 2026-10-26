@@ -222,6 +222,7 @@ class SkappViewModel : ViewModel() {
     private var newsJob: Job? = null
     private var pulseJob: Job? = null
     private var detailJob: Job? = null
+    private var detailLiveJob: Job? = null
     private var askEngine: AskEngine? = null
     private var stockNames: Map<String, String> = emptyMap()
     private var searchQuery: String = ""
@@ -780,11 +781,72 @@ class SkappViewModel : ViewModel() {
                     minuteD.await()
                     historyD.await()
                     flowD.await()
+                    if (MarketHours.isTrading() || MarketHours.isAuction()) {
+                        runCatching { refreshDetailLiveNow(code) }
+                    }
                 }
+                if (MarketHours.isTrading() || MarketHours.isAuction()) startDetailLiveLoop(code)
             } finally {
                 if (isActive) _state.value = _state.value.copy(detailLoading = false)
             }
         }
+    }
+
+    /** 盘中详情实时刷新：约15秒一次，把当日分时/实时价合成最后一根K并重算中枢引擎。 */
+    private fun startDetailLiveLoop(code: String) {
+        detailLiveJob?.cancel()
+        detailLiveJob = viewModelScope.launch {
+            while (isActive) {
+                delay(15_000)
+                if (!MarketHours.isTrading() && !MarketHours.isAuction()) break
+                if (_state.value.detail?.code != code) break
+                runCatching { refreshDetailLiveNow(code) }
+            }
+        }
+    }
+
+    fun refreshDetailLive() {
+        val code = _state.value.detail?.code ?: return
+        viewModelScope.launch { runCatching { refreshDetailLiveNow(code) } }
+    }
+
+    private suspend fun refreshDetailLiveNow(code: String) {
+        val quote = runCatching { MarketDataClient.quote(code) }.getOrNull() ?: return
+        val minute = runCatching { MarketDataClient.minuteTrend(code) }.getOrDefault(emptyList())
+        val bars = mergeLiveBar(_state.value.kline, quote, minute)
+        val engine = if (bars.size >= 30) runCatching { LocalEngine.analyze(bars) }.getOrNull() else null
+        val central = engine?.let { centralEngine(it) }
+        _state.value = _state.value.copy(
+            liveQuote = quote,
+            kline = bars,
+            minuteTrend = minute.ifEmpty { _state.value.minuteTrend },
+            localEngine = engine ?: _state.value.localEngine,
+            centralEngineScore = central?.score ?: _state.value.centralEngineScore,
+            centralEngineResonance = central?.resonance ?: _state.value.centralEngineResonance,
+            centralEngineSummary = central?.summary ?: _state.value.centralEngineSummary,
+            centralEngineStatus = central?.status ?: _state.value.centralEngineStatus,
+        )
+    }
+
+    /** 用当日分时与实时价补齐/替换今天这根日K，避免日K停在历史收盘。 */
+    private fun mergeLiveBar(bars: List<KBar>, quote: Quote, minute: List<Map<String, Any?>>): List<KBar> {
+        val price = quote.price ?: return bars
+        val today = java.time.LocalDate.now().toString()
+        val prices = minute.mapNotNull { (it["price"] as? Number)?.toDouble() }
+        val volSum = minute.sumOf { (it["vol"] as? Number)?.toDouble() ?: 0.0 }
+        val lastClose = bars.lastOrNull { it.date != today }?.close
+        val open = prices.firstOrNull() ?: lastClose ?: price
+        val high = listOfNotNull(prices.maxOrNull(), price, open).max()
+        val low = listOfNotNull(prices.minOrNull(), price, open).min()
+        val bar = KBar(
+            date = today,
+            open = open,
+            close = price,
+            high = maxOf(high, price),
+            low = minOf(low, price),
+            vol = if (volSum > 0) volSum else bars.lastOrNull()?.vol ?: 0.0,
+        )
+        return (bars.filter { it.date != today } + bar).sortedBy { it.date }
     }
 
     /** 切换 K 线周期（日/周/月由日 K 本地聚合，不重新请求） */
@@ -912,13 +974,77 @@ class SkappViewModel : ViewModel() {
         }
     }
 
-    /** 多池选股（网页版 8 池） */
+    /** 多池选股：云端池 + 实时补价 + 本地引擎实时池。 */
     fun loadPools() {
         viewModelScope.launch {
             _state.value = _state.value.copy(poolsLoading = true)
             val ps = runCatching { SiteBoardClient.pools() }.getOrElse { emptyList() }
-            _state.value = _state.value.copy(poolsLoading = false, pools = ps)
+            val enriched = enrichPoolsWithLiveQuotes(ps)
+            _state.value = _state.value.copy(poolsLoading = false, pools = localPool() + enriched)
         }
+    }
+
+    /** 用实时报价覆盖云端池里的旧价，并标出补价时间；非交易时段保留快照价。 */
+    private suspend fun enrichPoolsWithLiveQuotes(pools: List<SiteBoardClient.Pool>): List<SiteBoardClient.Pool> {
+        if (!MarketHours.isTrading() && !MarketHours.isAuction()) return pools
+        val codes = pools.flatMap { pool -> pool.items.mapNotNull { SkappApi.normalize(it.code) } }
+            .distinct()
+            .take(300)
+        if (codes.isEmpty()) return pools
+        val quotes = runCatching {
+            SkappApi.fetchQuotes(codes.map { SkappApi.prefixed(it) })
+        }.getOrDefault(emptyMap())
+        if (quotes.isEmpty()) return pools
+        val byCode = quotes.entries.mapNotNull { (key, value) ->
+            SkappApi.normalize(key)?.let { it to value }
+        }.toMap()
+        val now = java.time.OffsetDateTime.now().toString()
+        return pools.map { pool ->
+            pool.copy(items = pool.items.map { item ->
+                val code = SkappApi.normalize(item.code) ?: return@map item
+                val quote = byCode[code] ?: return@map item
+                item.copy(
+                    price = quote.price ?: item.price,
+                    pctChg = quote.pctChg ?: item.pctChg,
+                    extra = item.extra + mapOf(
+                        "live_price_ts" to (quote.ts ?: now),
+                        "live_source" to "tencent_quote",
+                    ),
+                )
+            })
+        }
+    }
+
+    /** 本地实时池：直接来自本轮本地深算，价格/K线/资金/消息均为本地实时计算。 */
+    private fun localPool(): List<SiteBoardClient.Pool> {
+        val screened = _state.value.screened
+        val ts = _state.value.quoteTs ?: java.time.OffsetDateTime.now().toString()
+        val items = screened.take(20).map { row ->
+            SiteBoardClient.PoolItem(
+                code = row.code,
+                name = row.name,
+                score = row.centralScore,
+                price = row.price,
+                pctChg = row.pctChg,
+                extra = mapOf(
+                    "engine" to "local_screener",
+                    "resonance" to row.resonanceRatio,
+                    "reason" to (row.centralSummary ?: row.reason),
+                    "calculation_time" to ts,
+                ),
+            )
+        }
+        return listOf(
+            SiteBoardClient.Pool(
+                id = "local_live",
+                name = "本地实时",
+                subtitle = "本地 K线+资金+消息实时深算",
+                items = items,
+                ts = ts,
+                status = if (items.isEmpty()) "insufficient" else "ok",
+                reason = if (items.isEmpty()) "本轮本地深算尚无候选，可在实时总结刷新" else null,
+            )
+        )
     }
 
     /** 看板 */
@@ -934,7 +1060,10 @@ class SkappViewModel : ViewModel() {
     /** 推股页数据补齐：多池 + 引擎产出（load() 已覆盖 today_picks/decision/news/sectors/board） */
     fun loadPicks() {
         viewModelScope.launch {
-            val poolsD = async { runCatching { SiteBoardClient.pools() }.getOrElse { emptyList() } }
+            val poolsD = async {
+                val raw = runCatching { SiteBoardClient.pools() }.getOrElse { emptyList() }
+                localPool() + enrichPoolsWithLiveQuotes(raw)
+            }
             val feedsD = async { runCatching { loadEngineFeeds() }.getOrNull() }
             _state.value = _state.value.copy(
                 pools = poolsD.await(),
@@ -1005,15 +1134,71 @@ class SkappViewModel : ViewModel() {
     }
 
     private suspend fun refreshSummary() {
-        val result = requestResult { SiteBoardClient.summary() }
-        val summary = result.getOrElse {
-            mapOf<String, Any?>("status" to "insufficient", "reason" to (it.message ?: "数据源不可达"))
+        val cloud = requestResult { SiteBoardClient.summary() }.getOrNull()
+        val cloudOk = cloud != null && cloud["status"]?.toString() !in setOf("insufficient", "unknown", "error")
+        if (cloudOk) {
+            _state.value = _state.value.copy(summary = cloud!!)
+            return
         }
-        _state.value = _state.value.copy(summary = summary)
-        result.getOrThrow()
-        if (summary.isEmpty() || summary["status"]?.toString() in setOf("insufficient", "unknown", "error")) {
-            throw IllegalStateException(summary["reason"]?.toString() ?: "暂无盘面数据")
+        // 云端产物不可达/过期时，用本地实时行情、消息与本地深算生成总结，不伪造数字。
+        val local = buildLocalSummary()
+        _state.value = _state.value.copy(summary = local)
+        if (local["status"]?.toString() != "ok") {
+            throw IllegalStateException(
+                local["reason"]?.toString()
+                    ?: cloud?.get("reason")?.toString()
+                    ?: "暂无盘面数据"
+            )
         }
+    }
+
+    /** 本地实时总结：只用当前已有真实数据；任何指标缺失就直说不编造。 */
+    private fun buildLocalSummary(): Map<String, Any?> {
+        val s = _state.value
+        val pulse = s.marketPulse
+        val up = pulse.count { (it.pctChg ?: 0.0) > 0 }
+        val down = pulse.count { (it.pctChg ?: 0.0) < 0 }
+        val newsPos = s.news.items.count { it["direction"]?.toString() == "pos" }
+        val newsNeg = s.news.items.count { it["direction"]?.toString() == "neg" }
+        val leaders = pulse.take(5).joinToString("、") { row ->
+            val pct = row.pctChg?.let { "%+.2f%%".format(it) } ?: "暂无"
+            "${row.name}$pct(${outlookLabel(row.outlook)})"
+        }
+        val picks = s.screened.take(5).joinToString("、") { row ->
+            val score = row.centralScore?.let { "%.1f".format(it) } ?: "暂无分"
+            "${row.name ?: row.code}$score"
+        }
+        val lines = buildList {
+            if (pulse.isNotEmpty()) {
+                add("实时异动：涨 $up / 跌 $down（前 ${pulse.size} 只异动候选）")
+                if (leaders.isNotBlank()) add("异动前列：$leaders")
+            }
+            if (s.screened.isNotEmpty() && picks.isNotBlank()) add("本地深算推股：$picks")
+            if (s.news.items.isNotEmpty()) add("消息面：偏多 $newsPos 条 / 偏空 $newsNeg 条（共 ${s.news.items.size} 条）")
+            s.quoteTs?.let { add("行情时点：$it") }
+        }
+        if (lines.isEmpty()) {
+            return mapOf(
+                "status" to "insufficient",
+                "reason" to "本地实时数据尚未就绪（行情、消息、深算均无结果）",
+                "source" to "local_realtime",
+            )
+        }
+        return mapOf(
+            "status" to "ok",
+            "source" to "local_realtime",
+            "ts" to (s.marketPulseTs ?: s.quoteTs ?: java.time.OffsetDateTime.now().toString()),
+            "date" to java.time.LocalDate.now().toString(),
+            "text" to lines.joinToString("\n"),
+        )
+    }
+
+    private fun outlookLabel(value: String): String = when (value) {
+        "bullish" -> "偏多"
+        "bearish" -> "偏空"
+        "watch_up" -> "观察偏强"
+        "watch_down" -> "观察偏弱"
+        else -> "数据不足"
     }
 
     // ── GitCode AI ─────────────────────────────────────

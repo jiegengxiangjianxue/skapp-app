@@ -133,6 +133,17 @@ fun StockDetailSheet(vm: SkappViewModel, state: UiState) {
                         else -> Color.Gray
                     },
                 )
+                val bid = q?.bid1
+                val ask = q?.ask1
+                if (bid != null || ask != null) {
+                    Text(
+                        "买一 ${bid?.let { String.format("%.2f", it) } ?: "暂无"}（${q?.bid1Vol?.let { String.format("%.0f", it) } ?: "暂无"}手）" +
+                            "　卖一 ${ask?.let { String.format("%.2f", it) } ?: "暂无"}（${q?.ask1Vol?.let { String.format("%.0f", it) } ?: "暂无"}手）",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                } else {
+                    Text("买一/卖一：暂无数据（行情源未返回盘口）", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                }
             }
         }
 
@@ -144,8 +155,20 @@ fun StockDetailSheet(vm: SkappViewModel, state: UiState) {
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text("日 K 线", fontWeight = FontWeight.SemiBold)
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Column {
+                        Text("日 K 线", fontWeight = FontWeight.SemiBold)
+                        Text(
+                            "当日K实时价 ${state.liveQuote?.ts ?: "暂无时点"} · ${state.liveQuote?.price?.let { "%.2f".format(it) } ?: "暂无价格"}",
+                            style = MaterialTheme.typography.labelSmall, color = Color.Gray,
+                        )
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            "刷新",
+                            Modifier.clickable { vm.refreshDetailLive() }.padding(4.dp),
+                            color = MaterialTheme.colorScheme.primary,
+                            style = MaterialTheme.typography.labelSmall,
+                        )
                         AdjustChip("前复权", state.detailAdjust == "qfq") { vm.switchAdjust("qfq") }
                         AdjustChip("后复权", state.detailAdjust == "hfq") { vm.switchAdjust("hfq") }
                         AdjustChip("不复权", state.detailAdjust == "none") { vm.switchAdjust("none") }

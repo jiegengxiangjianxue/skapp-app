@@ -73,6 +73,15 @@ fun PoolsScreen(vm: SkappViewModel, state: UiState) {
                 CircularProgressIndicator(modifier = Modifier.height(20.dp), strokeWidth = 2.dp)
             } else {
                 Text(
+                    "实时重算",
+                    Modifier.clickable {
+                        vm.loadPools()
+                        vm.runScreen("all", true)
+                    }.padding(horizontal = 8.dp, vertical = 4.dp),
+                    color = MaterialTheme.colorScheme.primary,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Text(
                     "刷新",
                     Modifier.clickable { vm.loadPools() }.padding(horizontal = 8.dp, vertical = 4.dp),
                     color = MaterialTheme.colorScheme.primary,

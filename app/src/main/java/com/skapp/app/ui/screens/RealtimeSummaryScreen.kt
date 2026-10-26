@@ -48,6 +48,7 @@ fun RealtimeSummaryScreen(vm: SkappViewModel, state: UiState) {
         item {
             state.summaryRefreshMessage?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = if (it.startsWith("刷新失败")) MaterialTheme.colorScheme.error else Color.Gray) }
         }
+        item { LocalRealtimeSummaryCard(state.summary) }
         item { LocalScreenedCard(state.screened, state.screenMsg, vm) }
         item { PickArtifactCard("结构化盘前推股", state.premarketPicks, today, vm) }
         item { PickArtifactCard("午盘推股", state.middayPicks, today, vm) }
@@ -120,6 +121,29 @@ private fun CloseReviewCard(review: CloseReview, today: String) {
                     val summary = data["summary"] as? Map<*, *>
                     Text("$name：${summary?.get("n") ?: summary?.get("n_requested") ?: "暂无数据"} 条 · 胜率 ${summary?.get("hit_rate_pct") ?: "暂无数据"}", style = MaterialTheme.typography.bodySmall)
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun LocalRealtimeSummaryCard(summary: Map<String, Any?>) {
+    val isLocal = summary["source"]?.toString() == "local_realtime"
+    Card(colors = CardDefaults.cardColors()) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+            Text("实时盘面（本地计算）", fontWeight = FontWeight.SemiBold)
+            if (!isLocal) {
+                Text("暂无本地实时总结：盘前分析请看板页面。", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+            } else {
+                val text = summary["text"]?.toString()
+                Text(
+                    if (text.isNullOrBlank()) "暂无数据：本地实时数据未就绪。" else text,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Text(
+                    "时点 ${summary["ts"] ?: "暂无数据"} · 来源 本地行情/消息/深算",
+                    style = MaterialTheme.typography.labelSmall, color = Color.Gray,
+                )
             }
         }
     }

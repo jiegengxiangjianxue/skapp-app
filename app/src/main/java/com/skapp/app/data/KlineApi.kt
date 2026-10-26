@@ -22,7 +22,11 @@ data class KBar(
  */
 object KlineApi {
 
-    suspend fun fetchDayKline(code: String, count: Int = 320): List<KBar> = withContext(Dispatchers.IO) {
+    /** 腾讯前复权日K 主源；失败回退东财 push2his，保持与详情页同一条降级顺序。 */
+    suspend fun fetchDayKline(code: String, count: Int = 320): List<KBar> =
+        tencentDayKline(code, count).ifEmpty { MarketDataClient.dayKline(code, count, "qfq") }
+
+    private suspend fun tencentDayKline(code: String, count: Int): List<KBar> = withContext(Dispatchers.IO) {
         val p = SkappApi.prefixed(code)
         val url = RemoteSources.tencentKline(p, count)
         var conn: HttpURLConnection? = null

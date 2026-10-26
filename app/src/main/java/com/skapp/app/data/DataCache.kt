@@ -53,9 +53,9 @@ object DataCache {
 
     fun klineKey(code: String, adjust: String, count: Int) = "kline:$code:$adjust:$count"
 
-    suspend fun kline(code: String, adjust: String, count: Int): List<KBar> {
+    suspend fun kline(code: String, adjust: String, count: Int, force: Boolean = false): List<KBar> {
         val key = klineKey(code, adjust, count)
-        get<List<KBar>>(key)?.let { return it }
+        if (!force) get<List<KBar>>(key)?.let { return it }
         val bars = MarketDataClient.dayKline(code, count, adjust)
         put(key, bars, DAY_TTL_MS)
         return bars
@@ -93,9 +93,9 @@ object DataCache {
         return r
     }
 
-    suspend fun minute(code: String): List<Map<String, Any?>> {
+    suspend fun minute(code: String, force: Boolean = false): List<Map<String, Any?>> {
         val key = "minute:$code"
-        get<List<Map<String, Any?>>>(key)?.let { return it }
+        if (!force) get<List<Map<String, Any?>>>(key)?.let { return it }
         val m = MarketDataClient.minuteTrend(code)
         put(key, m, MINUTE_TTL_MS)
         return m

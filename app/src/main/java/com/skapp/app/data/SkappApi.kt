@@ -81,7 +81,18 @@ object SkappApi {
                 val price = f.getOrNull(3)?.toDoubleOrNull()
                 val pct = f.getOrNull(32)?.toDoubleOrNull()
                 val ts = f.getOrNull(30)?.takeIf { it.isNotBlank() }
-                out[key] = Quote(key, name, price, pct, ts)
+                // 腾讯字段：9/10 买一价/量，19/20 卖一价/量
+                out[key] = Quote(
+                    code = key,
+                    name = name,
+                    price = price,
+                    pctChg = pct,
+                    ts = ts,
+                    bid1 = f.getOrNull(9)?.toDoubleOrNull(),
+                    bid1Vol = f.getOrNull(10)?.toDoubleOrNull(),
+                    ask1 = f.getOrNull(19)?.toDoubleOrNull(),
+                    ask1Vol = f.getOrNull(20)?.toDoubleOrNull(),
+                )
             }
         }
         out

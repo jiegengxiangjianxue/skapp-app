@@ -92,6 +92,10 @@ object MarketDataClient {
                 price = f.getOrNull(3)?.toDoubleOrNull(),
                 pctChg = f.getOrNull(32)?.toDoubleOrNull(),
                 ts = f.getOrNull(30)?.takeIf { it.isNotBlank() },
+                bid1 = f.getOrNull(9)?.toDoubleOrNull(),
+                bid1Vol = f.getOrNull(10)?.toDoubleOrNull(),
+                ask1 = f.getOrNull(19)?.toDoubleOrNull(),
+                ask1Vol = f.getOrNull(20)?.toDoubleOrNull(),
             )
         }?.let { return@withContext it }
         // 2) 东财
@@ -260,16 +264,17 @@ object MarketDataClient {
             null
         }?.let { return@withContext it }
         // 东财 trends2: "时间,开盘,收盘,最高,最低,成交量,成交额,最新价"
+        // fields2 顺序: f51时间,f52开盘,f53收盘,f54最高,f55最低,f56成交量,f57成交额,f58均价
         getJson("https://push2his.eastmoney.com/api/qt/stock/trends2/get?secid=${secid(code)}" +
-                "&fields1=f1,f2,f3,f4,f5,f6,f7,f8&fields2=f51,f53,f56,f58&iscr=0&ndays=1")
+                "&fields1=f1,f2,f3,f4,f5,f6,f7,f8&fields2=f51,f52,f53,f54,f55,f56,f57,f58&iscr=0&ndays=1")
             ?.optJSONObject("data")?.optJSONArray("trends")
             ?.let { arr ->
                 (0 until arr.length()).mapNotNull { i ->
                     val p = arr.optString(i).split(",")
-                    if (p.size < 5) null
+                    if (p.size < 6) null
                     else mapOf<String, Any?>(
                         "time" to p[0],
-                        "price" to p[4].toDoubleOrNull(),
+                        "price" to p[2].toDoubleOrNull(),
                         "vol" to p[5].toDoubleOrNull(),
                     )
                 }

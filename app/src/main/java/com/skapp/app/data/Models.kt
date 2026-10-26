@@ -11,6 +11,10 @@ data class Quote(
     val price: Double? = null,
     val pctChg: Double? = null,
     val ts: String? = null,
+    val bid1: Double? = null,
+    val bid1Vol: Double? = null,
+    val ask1: Double? = null,
+    val ask1Vol: Double? = null,
 )
 
 data class MarketPulseRow(
