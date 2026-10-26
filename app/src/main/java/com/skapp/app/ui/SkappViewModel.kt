@@ -515,6 +515,16 @@ class SkappViewModel : ViewModel() {
                     "watch_down" -> "涨速偏弱但证据不足，等待板块/消息确认"
                     else -> "缺少连续快照或资金证据"
                 }
+                val event = _state.value.news.items.firstOrNull { item ->
+                    val rawCodes = item["stocks"] ?: item["codes"] ?: item["affected_stocks"]
+                    when (rawCodes) {
+                        is List<*> -> rawCodes.any { value ->
+                            val candidate = if (value is Map<*, *>) value["code"] ?: value["symbol"] else value
+                            candidate?.toString()?.filter(Char::isDigit)?.takeLast(6) == code
+                        }
+                        else -> rawCodes?.toString()?.contains(code) == true
+                    }
+                }
                 com.skapp.app.data.MarketPulseRow(
                     code = code,
                     name = name,
@@ -524,6 +534,12 @@ class SkappViewModel : ViewModel() {
                     volRatio = volRatio,
                     turnover = (raw["turnover"] as? Number)?.toDouble(),
                     mainNet = mainNet,
+                    eventTitle = event?.get("title")?.toString(),
+                    eventDirection = event?.get("direction")?.toString() ?: event?.get("sentiment")?.toString(),
+                    eventReason = event?.get("positive_reason")?.toString()
+                        ?: event?.get("negative_reason")?.toString()
+                        ?: event?.get("reason")?.toString(),
+                    evidenceTs = event?.get("time")?.toString() ?: event?.get("ts")?.toString(),
                     outlook = outlook,
                     outlookReason = reason,
                 )

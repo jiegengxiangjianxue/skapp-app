@@ -123,7 +123,11 @@ object NewsCalcEngine {
         items.map { item ->
             async(Dispatchers.IO) {
                 val title = (item["title"] ?: item["digest"])?.toString() ?: ""
-                val (senti, hits) = sentimentOf(title)
+                val body = listOf("content", "summary", "analysis", "detail")
+                    .mapNotNull { item[it]?.toString()?.takeIf { value -> value.isNotBlank() } }
+                    .joinToString(" ")
+                val analysisText = "$title $body"
+                val (senti, hits) = sentimentOf(analysisText)
                 val storedVerdict = item["verdict"]?.toString()?.takeIf { it.isNotBlank() }
                 val storedBoards = when (val raw = item["boards"] ?: item["sectors"] ?: item["affected_sectors"]) {
                     is List<*> -> raw.mapNotNull { it?.toString() }
@@ -150,7 +154,10 @@ object NewsCalcEngine {
                         else -> value?.toString()
                     }
                 } ?: emptyList()
-                val codes = resolveStocks(title, symbols)
+                val codes = (resolveStocks(analysisText, symbols) + storedCodes)
+                    .map { it.filter(Char::isDigit).takeLast(6) }
+                    .filter { it.length == 6 }
+                    .distinct()
                 if (codes.isEmpty()) {
                     return@async NewsCalc(
                         newsTitle = title,
@@ -196,8 +203,9 @@ object NewsCalcEngine {
                         topReasons = eng?.engines
                             ?.filter { it.score != null }
                             ?.sortedByDescending { it.score }
-                            ?.take(2)
-                            ?.flatMap { it.reasons.take(1) }
+                            ?.take(3)
+                            ?.flatMap { it.reasons.take(2) }
+                            ?.distinct()
                             ?: emptyList(),
                     )
                 }
@@ -213,8 +221,8 @@ object NewsCalcEngine {
                     themes = storedThemes,
                     verdict = storedVerdict ?: verdictOf(senti, hits, title, stocks.mapNotNull { it.pctChg }.maxOrNull()),
                     direction = item["direction"]?.toString()?.takeIf { it.isNotBlank() } ?: senti,
-                    positiveReason = item["positive_reason"]?.toString(),
-                    negativeReason = item["negative_reason"]?.toString(),
+                    positiveReason = localPositiveReason,
+                    negativeReason = localNegativeReason,
                     imageUrl = imageUrlOf(item),
                     status = "ok",
                 )

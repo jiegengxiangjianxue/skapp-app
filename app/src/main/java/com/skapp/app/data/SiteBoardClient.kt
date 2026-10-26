@@ -403,7 +403,13 @@ object SiteBoardClient {
         val brief = getJson("$API/daily_brief.json")
         if (brief != null) {
             val text = brief.optString("text").takeIf { it.isNotEmpty() }
-            out["text"] = text
+            val summaryText = text?.let { raw ->
+                raw.substringBefore("## 二、今日推股")
+                    .substringBefore("## 2、今日推股")
+                    .trim()
+                    .takeIf { it.isNotBlank() }
+            }
+            out["text"] = summaryText
             out["date"] = brief.optString("date")
             out["session"] = brief.optString("session")
             out["ts"] = brief.optString("ts")
@@ -415,12 +421,14 @@ object SiteBoardClient {
                 sections.optString("hot").takeIf { it.isNotBlank() }?.let { out["hot"] = it }
             }
             if (!out.containsKey("premarket") && text != null) {
-                val picksStart = text.indexOf("## 二、今日推股")
+                val picksStart = listOf("## 二、今日推股", "## 2、今日推股")
+                    .map { text.indexOf(it) }.filter { it >= 0 }.minOrNull() ?: -1
                 val premarket = if (picksStart > 0) text.substring(0, picksStart) else text
                 out["premarket"] = premarket
                 if (picksStart >= 0) {
-                    val nextSection = text.indexOf("## 三、", picksStart)
-                    out["picks_text"] = text.substring(picksStart, if (nextSection > picksStart) nextSection else text.length)
+                    val nextSection = listOf("## 三、", "## 3、")
+                        .map { text.indexOf(it, picksStart) }.filter { it > picksStart }.minOrNull() ?: text.length
+                    out["picks_text"] = text.substring(picksStart, nextSection)
                 }
             }
         }

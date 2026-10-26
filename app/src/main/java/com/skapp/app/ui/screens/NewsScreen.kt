@@ -163,8 +163,8 @@ private fun NewsCalcInline(n: NewsCalc, vm: SkappViewModel) {
     )
     Text("方向：${n.direction.ifBlank { "insufficient" }} · 判定：${n.verdict.ifBlank { "insufficient" }}",
         style = MaterialTheme.typography.bodySmall, color = if (n.direction == "neg" || n.verdict == "利空") DOWN else if (n.direction == "pos" || n.verdict.contains("利好")) UP else Color.Gray)
-    if (n.positiveReason?.isNotBlank() == true) Text("利好理由：${n.positiveReason}", style = MaterialTheme.typography.bodySmall, color = UP)
-    if (n.negativeReason?.isNotBlank() == true) Text("利空理由：${n.negativeReason}", style = MaterialTheme.typography.bodySmall, color = DOWN)
+    if (n.positiveReason?.isNotBlank() == true && n.positiveReason != "insufficient") Text("利好理由：${n.positiveReason}", style = MaterialTheme.typography.bodySmall, color = UP)
+    if (n.negativeReason?.isNotBlank() == true && n.negativeReason != "insufficient") Text("利空理由：${n.negativeReason}", style = MaterialTheme.typography.bodySmall, color = DOWN)
     if (n.sentimentHits.isNotEmpty()) Text("命中依据：${n.sentimentHits.joinToString("、")}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
     if (n.impactCodes.isNotEmpty() && n.stocks.isEmpty()) Text("影响个股：${n.impactCodes.joinToString("、")}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
     if (n.boards.isNotEmpty()) Text("影响板块：${n.boards.joinToString("、")}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
@@ -182,8 +182,10 @@ private fun NewsCalcInline(n: NewsCalc, vm: SkappViewModel) {
                     Text("${stock.name ?: stock.code}  ${stock.code}", fontWeight = FontWeight.Medium)
                     Text("实时价 ${stock.price?.let { "%.2f".format(it) } ?: "暂无"} · 涨跌 ${stock.pctChg?.let { "%+.2f%%".format(it) } ?: "暂无"}",
                         style = MaterialTheme.typography.bodySmall, color = pctColor(stock.pctChg))
-                    Text("中枢引擎 ${stock.localScore?.let { "%.1f".format(it) } ?: "insufficient"} · ${signalText(stock.signal)}",
+                    Text("中枢引擎 ${stock.localScore?.let { "%.1f".format(it) } ?: "insufficient"} · ${signalText(stock.signal)} · 量比 ${stock.volRatio?.let { "%.2f".format(it) } ?: "暂无"}",
                         style = MaterialTheme.typography.bodySmall, color = signalColor(stock.signal))
+                    if (stock.topReasons.isNotEmpty()) Text("证据：${stock.topReasons.joinToString("；")}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                    stock.centralSummary?.takeIf { it.isNotBlank() }?.let { Text("引擎摘要：$it", style = MaterialTheme.typography.bodySmall, color = Color.Gray) }
                 }
                 Text("详情 ›", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
             }

@@ -143,6 +143,10 @@ fun DashboardScreen(vm: SkappViewModel, state: UiState) {
                                     style = MaterialTheme.typography.bodySmall,
                                 )
                                 Text(row.outlookReason ?: "暂无推断依据", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                                if (row.eventTitle != null) Text(
+                                    "事件：${row.eventTitle} · ${row.eventDirection ?: "方向暂无"} · ${row.eventReason ?: "理由暂无"} · 时点 ${row.evidenceTs ?: "暂无"}",
+                                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary,
+                                ) else Text("事件：未匹配消息，不能据此归因", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
                             }
                             Text("详情 ›", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodySmall)
                         }

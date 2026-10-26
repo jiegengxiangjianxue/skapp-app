@@ -161,8 +161,12 @@ object SkappApi {
             fetchJson(RemoteSources.newsImpact(RemoteSources.OWNER_C, RemoteSources.REPO_C)),
         )
         roots.firstNotNullOfOrNull { root ->
-            val arr = root?.optJSONArray("items") ?: root?.optJSONArray("news")
-            arr?.toMapList()?.takeIf { it.isNotEmpty() }
+            val rows = ArrayList<Map<String, Any?>>()
+            root?.optJSONArray("items")?.let { rows.addAll(it.toMapList()) }
+            root?.optJSONArray("news")?.let { rows.addAll(it.toMapList()) }
+            root?.optJSONArray("impacts")?.let { rows.addAll(it.toMapList()) }
+            rows.distinctBy { "${it["id"] ?: it["news_id"] ?: ""}|${it["title"] ?: it["digest"] ?: ""}|${it["ts"] ?: it["time"] ?: ""}" }
+                .takeIf { it.isNotEmpty() }
         } ?: emptyList()
     }
 
