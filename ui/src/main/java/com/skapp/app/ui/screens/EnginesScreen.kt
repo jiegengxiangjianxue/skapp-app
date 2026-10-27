@@ -236,7 +236,10 @@ private fun CycleSection(c: EngineFeed.CycleMeta?) {
                         style = MaterialTheme.typography.bodySmall,
                     )
                     Text(
-                        (r.heatShare?.let { String.format("额占%.1f%%", it * 100) } ?: "") + " " + r.phase,
+                        (r.heatShare?.let { String.format("额占%.1f%%", it * 100) } ?: "") + " " + r.phase +
+                            // 5 日动量要本地存档攒够 5 个交易日才有；没有就不显示，不写 0
+                            (r.ret5d?.let { String.format(" · 5日%+.1f%%", it) } ?: "") +
+                            (if (r.upStreak >= 2) " · 连${r.upStreak}天" else ""),
                         style = MaterialTheme.typography.labelSmall,
                         color = Color(0xFF6B7280),
                     )

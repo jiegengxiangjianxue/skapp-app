@@ -73,6 +73,8 @@ object LiveExtras {
         rows: List<LiveMarket.Row>,
         ts: Long = System.currentTimeMillis(),
         top: Int = 20,
+        /** 本地日级快照（升序）：攒够天数就能把 rps20/120/250 从「不可得」变成真值 */
+        history: List<DayMarketSnapshot> = emptyList(),
     ): EngineFeed.RpsPayload? {
         // 停牌票的 60 日涨幅是旧值/0，混进来会把百分位稀释（分母虚大 → 强势股 RPS 偏低）
         val tradable = rows.filter { it.tradable }
@@ -92,30 +94,74 @@ object LiveExtras {
             return lo.toDouble() / sortedPool.size * 100.0
         }
 
+        // 长周期 RPS：用本地日级快照的收盘价算。历史天数不够就返回 null（不是 0），
+        // 天数够一天，就多一个周期的真值——这是「存档」给引擎池带来的实际收益。
+        fun retSeries(lookback: Int): List<Double>? {
+            if (history.size < lookback + 1) return null
+            val base = history[history.size - 1 - lookback]
+            val baseClose = base.entries.associate { it.code to it.close }
+            val out = ArrayList<Double>(tradable.size)
+            for (r in tradable) {
+                val px = r.price ?: continue
+                val b = baseClose[r.code] ?: continue
+                if (b <= 0.0) continue
+                out += (px / b - 1.0) * 100.0
+            }
+            return out.takeIf { it.size >= 100 }   // 样本不足，百分位无意义
+        }
+        val pool20 = retSeries(20)
+        val pool120 = retSeries(120)
+        val pool250 = retSeries(250)
+        val sorted20 = pool20?.sorted()
+        val sorted120 = pool120?.sorted()
+        val sorted250 = pool250?.sorted()
+        fun retOf(r: LiveMarket.Row, lookback: Int): Double? {
+            if (history.size < lookback + 1) return null
+            val base = history[history.size - 1 - lookback]
+            val b = base.entries.firstOrNull { it.code == r.code }?.close ?: return null
+            val px = r.price ?: return null
+            return if (b <= 0.0) null else (px / b - 1.0) * 100.0
+        }
+
+        // 综合强度：60 日百分位 0.5 + 当日百分位 0.2 + （有 20 日数据时）20 日百分位 0.3
         val ranked = tradable.mapNotNull { r ->
             val c60 = r.chg60d ?: return@mapNotNull null
             val p60 = pct(sorted60, c60)
             val pDay = r.pctChg?.let { pct(poolDay, it) } ?: 0.0
-            Triple(r, p60, p60 * 0.7 + pDay * 0.3)
-        }.sortedByDescending { it.third }.take(top)
+            val r20 = retOf(r, 20)
+            val p20 = if (sorted20 != null && r20 != null) pct(sorted20, r20) else null
+            val score = if (p20 != null) p60 * 0.5 + pDay * 0.2 + p20 * 0.3 else p60 * 0.7 + pDay * 0.3
+            r to Triple(p60, p20, score)
+        }.sortedByDescending { it.second.third }.take(top)
 
-        val list = ranked.mapIndexed { i, (r, p60, score) ->
+        val list = ranked.mapIndexed { i, (r, ps) ->
+            val (p60, p20, score) = ps
             EngineFeed.RpsTop(
                 rank = i + 1,
                 symbol = r.code,
                 strongScore = Math.round(score * 10) / 10.0,
-                rps20 = null,
+                rps20 = p20?.let { Math.round(it * 10) / 10.0 },
                 rps60 = Math.round(p60 * 10) / 10.0,
-                rps120 = null,
-                rps250 = null,
+                rps120 = retOf(r, 120)?.let { v -> sorted120?.let { pct(it, v) } }?.let { Math.round(it * 10) / 10.0 },
+                rps250 = retOf(r, 250)?.let { v -> sorted250?.let { pct(it, v) } }?.let { Math.round(it * 10) / 10.0 },
             )
+        }
+        val have = buildList {
+            if (sorted20 != null) add("20")
+            if (sorted120 != null) add("120")
+            if (sorted250 != null) add("250")
         }
         return EngineFeed.RpsPayload(
             ts = iso(ts),
             date = day(ts),
             top = list,
             note = "本地实时：rps60 = 全市场 60 日涨幅（东财 f24）百分位，样本 ${pool60.size} 只；" +
-                "20/120/250 日需逐票日 K，端上不拉，故留空（不是 0）",
+                if (have.isEmpty()) {
+                    "20/120/250 日需本地日级快照（已存 ${history.size} 天），不足故留空（不是 0）"
+                } else {
+                    "rps${have.joinToString("/")} 由本地日级快照（${history.size} 天）的收盘价现算" +
+                        if (have.size < 3) "，其余周期天数不足仍留空（不是 0）" else ""
+                },
         )
     }
 
@@ -135,11 +181,15 @@ object LiveExtras {
         sectors: LocalSectors.Result?,
         ts: Long = System.currentTimeMillis(),
         top: Int = 12,
+        /** 本地日级快照（升序）：有了它才能给「5 日动量 / 连续走强天数」 */
+        history: List<DayMarketSnapshot> = emptyList(),
     ): EngineFeed.CycleMeta? {
         if (sectors == null || sectors.rows.isEmpty()) return null
         val totalHeat = sectors.rows.sumOf { it.heat }.takeIf { it > 0.0 }
+        val momentum = SectorHistoryCalc.momentum(history, top = 200).associateBy { it.name }
         val rows = sectors.rows.take(top).map { s ->
             val upRatio = if (s.n == 0) 0.0 else s.up.toDouble() / s.n
+            val m = momentum[s.name]
             EngineFeed.CycleRow(
                 name = s.name,
                 chg1d = s.chg1d?.let { Math.round(it * 100) / 100.0 },
@@ -148,16 +198,24 @@ object LiveExtras {
                 nDown = s.down,
                 nStocks = s.n,
                 phase = phaseOf(s.chg1d, upRatio),
+                ret5d = m?.ret5d?.let { Math.round(it * 100) / 100.0 },
+                upStreak = m?.upStreak ?: 0,
             )
         }
+        val histDays = history.size
         return EngineFeed.CycleMeta(
             index = "LOCAL_SECTOR",
             indexName = "本地板块强弱（实时聚合）",
-            nDays = 1,
-            spanStart = day(ts),
+            nDays = maxOf(1, histDays),
+            spanStart = history.firstOrNull()?.date ?: day(ts),
             spanEnd = day(ts),
-            note = "端上按当日横截面分档（涨幅+上涨占比+成交额占比）；历史周期序列（20/60 日轮动节奏）本地不可得，" +
-                "所以这是「今天站在哪一档」，不是「周期走到第几天」",
+            note = if (histDays >= 6) {
+                "端上横截面分档（涨幅+上涨占比+成交额占比）+ 本地日级快照攒出的 5 日动量与连续走强天数" +
+                    "（已存 $histDays 个交易日）；20 日动量需 ≥20 个交易日，攒够自动出现"
+            } else {
+                "端上按当日横截面分档（涨幅+上涨占比+成交额占比）；5 日动量需 5 个交易日快照，" +
+                    "当前只有 $histDays 天，故留空（不是 0）"
+            },
             rows = rows,
         )
     }

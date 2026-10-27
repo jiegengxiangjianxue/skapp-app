@@ -476,24 +476,10 @@ private fun marketLabel(k: String): String = when (k) {
 
 /** 每日总结卡：网页版 daily_brief.json（盘后自动生成），取正文前 25 行展示 */
 
-/** 读远端文本（含 gzip 解压）。raw.githubusercontent.com 会按 gzip 返回，
- *  HttpURLConnection 默认请求 gzip 但不自动解压，直接读流是乱码 → JSON 解析失败 → 页面空白。 */
-private fun readRemoteText(url: String): String? = try {
-    val conn = (java.net.URL(url).openConnection() as java.net.HttpURLConnection).apply {
-        connectTimeout = 20000; readTimeout = 20000
-        setRequestProperty("User-Agent", "Mozilla/5.0 (Android) skapp")
-    }
-    val code = conn.responseCode
-    if (code != java.net.HttpURLConnection.HTTP_OK) { conn.disconnect(); null }
-    else {
-        val enc = conn.contentEncoding
-        val stream = if (enc == "gzip" || enc == "x-gzip")
-            java.util.zip.GZIPInputStream(conn.inputStream) else conn.inputStream
-        val txt = stream.bufferedReader().use { it.readText() }
-        conn.disconnect()
-        txt
-    }
-} catch (e: Exception) { null }
+/* 2026-10-27 删除：原 readRemoteText() 本地实现（含一段错误注释「HttpURLConnection 默认请求 gzip」）。
+ * 删除原因：① 全仓 0 个调用点（`grep -rn readRemoteText` 仅命中定义本身）；
+ * ② 同类实现已收敛到 engine-net 的 Http.getText()（gzip/UA/超时一份）；
+ * ③ 原注释与事实相反：HttpURLConnection 不会自动加 Accept-Encoding，该 gzip 分支基本走不到。 */
 
 @Composable
 private fun DailyBriefCard(summary: Map<String, Any?>) {

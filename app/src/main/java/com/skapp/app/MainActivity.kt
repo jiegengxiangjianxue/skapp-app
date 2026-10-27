@@ -43,6 +43,9 @@ class MainActivity : ComponentActivity() {
         // 必须在主线程调用——心跳靠 mainLooper 自循环，这正是它能反映主线程卡顿的原因。
         com.skapp.app.ui.HealthGuard.install(applicationContext)
         Thread { com.skapp.app.ui.HealthGuard.exportPending(applicationContext) }.start()
+        // 本地日级行情存档的落盘目录：连板高度/晋级率/板块动量/长周期 RPS 都靠它按天积累。
+        // 放在这里初始化（而不是各模块自己找 Context），未初始化时存档模块安全地退化为 no-op。
+        com.skapp.app.data.MarketDayArchive.init(filesDir)
         enableEdgeToEdge()
         setContent {
             MaterialTheme(colorScheme = SkappLightColors) {

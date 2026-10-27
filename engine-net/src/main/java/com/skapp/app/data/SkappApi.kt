@@ -4,11 +4,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
-import java.io.BufferedReader
-import java.io.InputStreamReader
-import java.net.HttpURLConnection
-import java.net.URL
-import java.nio.charset.Charset
 
 /**
  * 远端数据客户端：只读 raw.githubusercontent.com 静态 JSON + 腾讯实时行情。
@@ -42,24 +37,18 @@ object SkappApi {
     }
     
     private fun fetchFromUrl(u: String, charset: String, isApi: Boolean = false): String? {
-        var conn: HttpURLConnection? = null
-        return try {
-            conn = (URL(u).openConnection() as HttpURLConnection).apply {
-                connectTimeout = 20000  // 20s，给弱网留时间
-                readTimeout = 20000
-                requestMethod = "GET"
-                setRequestProperty("User-Agent", "skapp-android")
-                token?.let { setRequestProperty("Authorization", "Bearer $it") }
-                if (isApi) setRequestProperty("Accept", "application/vnd.github.raw")
-            }
-            if (conn.responseCode != HttpURLConnection.HTTP_OK) return null
-            val cs = if (charset == "gbk") Charset.forName("GBK") else Charsets.UTF_8
-            BufferedReader(InputStreamReader(conn.inputStream, cs)).use { it.readText() }
-        } catch (e: Exception) {
-            null
-        } finally {
-            conn?.disconnect()
+        val headers = buildMap {
+            // token 对所有域都带（与原实现一致）；没有 token 就不带这个头
+            token?.let { put("Authorization", "Bearer $it") }
+            if (isApi) put("Accept", "application/vnd.github.raw")
         }
+        return Http.getText(
+            url = u,
+            charset = Http.charset(charset),
+            timeoutMs = 20000, // 20s，给弱网留时间
+            ua = "skapp-android",
+            headers = headers,
+        )
     }
 
     fun fetchJson(url: String): JSONObject? =

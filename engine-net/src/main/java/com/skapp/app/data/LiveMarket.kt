@@ -248,23 +248,11 @@ object LiveMarket {
         return v.toString().toDoubleOrNull()
     }
 
-    private fun httpGet(url: String): String? = runCatching {
-        val conn = (java.net.URL(url).openConnection() as java.net.HttpURLConnection).apply {
-            connectTimeout = 20_000
-            readTimeout = 20_000
-            setRequestProperty("User-Agent", RemoteSources.UA_ANDROID)
-            setRequestProperty("Referer", "https://wap.eastmoney.com/")
-            setRequestProperty("Accept", "application/json")
-        }
-        try {
-            if (conn.responseCode !in 200..299) return null
-            // 东财会按 gzip 返回：不解压就是乱码（原来 LocalScreener 里的桥已经踩过这个坑）
-            val enc = conn.contentEncoding
-            val stream = if (enc == "gzip" || enc == "x-gzip")
-                java.util.zip.GZIPInputStream(conn.inputStream) else conn.inputStream
-            stream.bufferedReader().use { it.readText() }
-        } finally {
-            conn.disconnect()
-        }
-    }.getOrNull()
+    private fun httpGet(url: String): String? = Http.getText(
+        url = url,
+        charset = Charsets.UTF_8,
+        timeoutMs = 20_000,
+        referer = "https://wap.eastmoney.com/",
+        accept = "application/json",
+    )
 }

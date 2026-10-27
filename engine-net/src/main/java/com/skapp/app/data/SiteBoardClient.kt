@@ -6,10 +6,6 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
-import java.io.BufferedReader
-import java.io.InputStreamReader
-import java.net.HttpURLConnection
-import java.net.URL
 
 /**
  * 网页版板块数据聚合 —— 把站点的「实时总结 / 多池选股 / 看板 / 消息」搬到 app。
@@ -37,30 +33,20 @@ object SiteBoardClient {
     }
 
     private fun fetchOnce(u: String): JSONObject? {
-        var conn: HttpURLConnection? = null
-        return try {
-            conn = (URL(u).openConnection() as HttpURLConnection).apply {
-                connectTimeout = 15000
-                readTimeout = 15000
-                requestMethod = "GET"
-                setRequestProperty("User-Agent", "Mozilla/5.0 (Android) skapp")
-                if (u.startsWith("https://api.github.com/repos/")) {
-                    token?.let { setRequestProperty("Authorization", "Bearer $it") }
-                    setRequestProperty("Accept", "application/vnd.github.raw")
-                }
-            }
-            if (conn.responseCode != HttpURLConnection.HTTP_OK) return null
-            val enc = conn.contentEncoding
-            val stream = if (enc == "gzip" || enc == "x-gzip")
-                java.util.zip.GZIPInputStream(conn.inputStream)
-            else conn.inputStream
-            BufferedReader(InputStreamReader(stream, Charsets.UTF_8)).use { it.readText() }
-                .let { runCatching { JSONObject(it) }.getOrNull() }
-        } catch (e: Exception) {
-            null
-        } finally {
-            conn?.disconnect()
-        }
+        // 走 raw 时不需要 Accept；走 Contents API 才带 token + vnd.github.raw
+        val isApi = u.startsWith("https://api.github.com/repos/")
+        val headers = if (isApi) buildMap {
+            token?.let { put("Authorization", "Bearer $it") }
+            put("Accept", "application/vnd.github.raw")
+        } else emptyMap()
+        val txt = Http.getText(
+            url = u,
+            charset = Charsets.UTF_8,
+            timeoutMs = 15000,
+            ua = "Mozilla/5.0 (Android) skapp",
+            headers = headers,
+        ) ?: return null
+        return runCatching { JSONObject(txt) }.getOrNull()
     }
 
     data class Pool(

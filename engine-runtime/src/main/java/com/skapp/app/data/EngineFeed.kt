@@ -101,6 +101,10 @@ object EngineFeed {
         val nDown: Int,
         val nStocks: Int,
         val phase: String,
+        /** 5 日累计涨幅（%）：本地日级快照攒够 5 天才给，否则 null（不是 0） */
+        val ret5d: Double? = null,
+        /** 连续上涨天数（含今日）：攒够 2 天才给 */
+        val upStreak: Int = 0,
     )
 
     data class GlobalMarketsMeta(

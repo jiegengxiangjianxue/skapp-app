@@ -28,6 +28,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.skapp.app.data.Http
 import com.skapp.app.data.RemoteSources
 import com.skapp.app.data.SkappApi
 import com.skapp.app.ui.SkappViewModel
@@ -254,21 +255,12 @@ private fun HealthGuardCard() {
     }
 }
 
-private fun probe(): List<Pair<String, String>> {    fun http(url: String): String = try {
-        val conn = (java.net.URL(url).openConnection() as java.net.HttpURLConnection).apply {
-            connectTimeout = 15000; readTimeout = 15000
-            setRequestProperty("User-Agent", "Mozilla/5.0 (Android) skapp")
-        }
-        val code = conn.responseCode
-        val body = if (code == 200) {
-            val enc = conn.contentEncoding
-            val s = if (enc == "gzip" || enc == "x-gzip") java.util.zip.GZIPInputStream(conn.inputStream) else conn.inputStream
-            s.bufferedReader().use { it.readText() }
-        } else ""
-        conn.disconnect()
-        "$code|$body"
-    } catch (e: Exception) {
-        "ERR|${e.javaClass.simpleName}"
+private fun probe(): List<Pair<String, String>> {
+    // 统一走 engine-net 的 Http.probe（gzip/UA/超时一份实现）；保留原 "code|body" / "ERR|类名" 契约
+    fun http(url: String): String {
+        val r = Http.probe(url, timeoutMs = 15000, ua = "Mozilla/5.0 (Android) skapp")
+        return if (r.code < 0) "ERR|${r.error ?: "Exception"}"
+        else "${r.code}|${if (r.code == 200) r.text else ""}"
     }
 
     val out = ArrayList<Pair<String, String>>()

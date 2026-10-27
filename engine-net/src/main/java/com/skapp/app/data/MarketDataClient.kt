@@ -10,11 +10,8 @@ import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
-import java.io.BufferedReader
-import java.io.InputStreamReader
 import java.net.HttpURLConnection
 import java.net.URL
-import java.nio.charset.Charset
 
 /**
  * 多源行情客户端 —— 站点 scripts/ 里 206 个端点中, app 直接用得动的那些。
@@ -34,30 +31,15 @@ object MarketDataClient {
 
     private const val TIMEOUT = 15000
 
-    private fun get(url: String, charset: String = "utf-8", referer: String = "https://gu.qq.com/"): String? {
-        var conn: HttpURLConnection? = null
-        return try {
-            conn = (URL(url).openConnection() as HttpURLConnection).apply {
-                connectTimeout = TIMEOUT
-                readTimeout = TIMEOUT
-                requestMethod = "GET"
-                setRequestProperty("User-Agent", RemoteSources.UA_ANDROID)
-                setRequestProperty("Referer", referer)
-                setRequestProperty("Accept", "*/*")
-            }
-            if (conn.responseCode != HttpURLConnection.HTTP_OK) return null
-            val enc = conn.contentEncoding
-            val stream = if (enc == "gzip" || enc == "x-gzip")
-                java.util.zip.GZIPInputStream(conn.inputStream)
-            else conn.inputStream
-            val cs = if (charset.equals("gbk", true)) Charset.forName("GBK") else Charsets.UTF_8
-            BufferedReader(InputStreamReader(stream, cs)).use { it.readText() }
-        } catch (e: Exception) {
-            null
-        } finally {
-            conn?.disconnect()
-        }
-    }
+    /** 统一走 [Http]（gzip/UA/Referer/超时收敛到一份实现）。 */
+    private fun get(url: String, charset: String = "utf-8", referer: String = "https://gu.qq.com/"): String? =
+        Http.getText(
+            url = url,
+            charset = Http.charset(charset),
+            timeoutMs = TIMEOUT,
+            referer = referer,
+            accept = "*/*",
+        )
 
     private fun getJson(url: String): JSONObject? =
         get(url)?.let { runCatching { JSONObject(it) }.getOrNull() }

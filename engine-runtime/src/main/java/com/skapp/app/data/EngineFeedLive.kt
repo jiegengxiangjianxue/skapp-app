@@ -29,6 +29,9 @@ import java.util.Locale
  */
 object EngineFeedLive {
 
+    /** 装配时读取的本地历史天数：够算 20 日动量与 rps20（120/250 攒够才会出现）。 */
+    private const val HISTORY_DAYS = 260
+
     /** 引擎池缓存：盘中 45s（一次装配要拉几十只日K，不能每次进页面都重算）。 */
     private const val CACHE_TTL_MS = 45_000L
     private var cachedAt = 0L
@@ -58,7 +61,13 @@ object EngineFeedLive {
         val sectors = runCatching { LocalSectors.compute() }.getOrNull()
         // 外围指数只拉一次：策略卡的入市闸门与本轮 market_phase 用同一份数据
         val strategy = LiveExtras.strategy(globalIndices = indices)
-        val feeds = assemble(pulse, screened, indices, snapshot = snap, sectors = sectors, strategy = strategy)
+        // 顺手把当日快照落一份本地存档：连板高度/晋级率/板块动量/长周期 RPS 都靠它积累
+        runCatching { MarketDayArchive.capture(snap, sectors) }
+        val history = runCatching { MarketDayArchive.recent(HISTORY_DAYS) }.getOrDefault(emptyList())
+        val feeds = assemble(
+            pulse, screened, indices, snapshot = snap, sectors = sectors,
+            strategy = strategy, history = history,
+        )
 
         cached = feeds
         cachedAt = System.currentTimeMillis()
@@ -89,6 +98,8 @@ object EngineFeedLive {
         sectors: LocalSectors.Result? = null,
         /** 已算好的策略卡（[LiveExtras.strategy]）。 */
         strategy: EngineFeed.StrategyCard? = null,
+        /** 本地日级快照（升序，含今日）：连板高度/晋级率/板块动量/长周期 RPS 的原料。 */
+        history: List<DayMarketSnapshot> = emptyList(),
     ): EngineFeed.EngineFeeds {
         val date = CstTime.day(ts)
         val iso = CstTime.iso(ts)
@@ -122,16 +133,19 @@ object EngineFeedLive {
 
         // 封板率本地可算：涨停 /（涨停 + 炸板），炸板靠「最高价摸过涨停价、现价没封住」
         val seal = if (snapshot.isEmpty()) null else LiveExtras.seal(snapshot)
+        // 连板高度/晋级率/首板数：靠本地日级存档的多日涨停序列算（没攒够就是不可得）
+        val board = if (history.isEmpty()) null else LimitBoardCalc.compute(history)
 
         val phase = EngineFeed.MarketPhase(
             ts = iso,
             daily = listOf(
                 EngineFeed.MarketPhaseDaily(
                     date = date,
-                    firstBoard = -1,      // 需历史涨停序列，实时不可得
-                    ge2 = -1,             // 同上
-                    height = -1,          // 连板高度需逐只多日涨停历史
-                    promo = -1.0,         // 晋级率需昨日涨停名单
+                    // 有本地存档就填真值；没攒够仍按 -1 表示不可得（不用 0 冒充）
+                    firstBoard = board?.firstBoard ?: -1,
+                    ge2 = board?.ge2 ?: -1,
+                    height = board?.height ?: -1,
+                    promo = board?.promo ?: -1.0,
                     seal = seal?.ratio ?: -1.0,
                 ),
             ),
@@ -148,7 +162,19 @@ object EngineFeedLive {
                 "封板率" to (seal?.let { s ->
                     String.format(Locale.CHINA, "%.0f%%（涨停 %d / 炸板 %d）", (s.ratio ?: 0.0) * 100, s.limitUp, s.broken)
                 } ?: "不可得（缺最高价/昨收）"),
-                "不可得" to "连板高度/晋级率/首板数需多日全市场涨停序列",
+                "连板高度" to (if (board != null && board.hasHistory) {
+                    "${board.height} 板（${board.heightCodes.take(3).joinToString("/")}）"
+                } else "不可得（本地存档 ${history.size}/2 天）"),
+                "晋级率" to (board?.promo?.let { pr ->
+                    String.format(Locale.CHINA, "%.0f%%（昨涨停 %d → 今连板 %d）", pr * 100, board.ydayLimitUp, board.ge2)
+                } ?: "不可得（需上一交易日涨停名单）"),
+                "首板/连板" to (if (board != null && board.hasHistory) {
+                    "${board.firstBoard} 首板 / ${board.ge2} 连板"
+                } else "不可得"),
+                "昨日涨停今日表现" to (board?.ydayLimitUpAvgPct?.let {
+                    String.format(Locale.CHINA, "%+.2f%%", it)
+                } ?: "不可得"),
+                "存档" to "本地日级快照 ${history.size} 天（${history.firstOrNull()?.date ?: "-"} ~ $date）",
             ),
         )
 
@@ -193,8 +219,8 @@ object EngineFeedLive {
                 .take(10),
         )
 
-        val cyclePool = LiveExtras.cycle(sectors, ts)
-        val rpsRotation = if (snapshot.isEmpty()) null else LiveExtras.rps(snapshot, ts)
+        val cyclePool = LiveExtras.cycle(sectors, ts, history = history)
+        val rpsRotation = if (snapshot.isEmpty()) null else LiveExtras.rps(snapshot, ts, history = history)
         val aiPick = if (snapshot.isEmpty()) null else LiveExtras.aiPick(snapshot, screened, ts)
 
         return EngineFeed.EngineFeeds(
@@ -207,7 +233,7 @@ object EngineFeedLive {
             globalMarkets = global,
             aiPick = aiPick,
             decision = decision,
-            missing = missingOf(cyclePool, rpsRotation, strategy, aiPick, seal),
+            missing = missingOf(cyclePool, rpsRotation, strategy, aiPick, seal, board),
             source = "live",
         )
     }
@@ -225,6 +251,7 @@ object EngineFeedLive {
         strategy: EngineFeed.StrategyCard?,
         aiPick: EngineFeed.AiPick?,
         seal: LiveExtras.Seal?,
+        board: LimitBoardCalc.Stats?,
     ): List<String> = buildList {
         if (cyclePool == null) {
             add("cycle_pool (板块强弱聚合不可得：需全市场快照 + 成分映射表)")
@@ -233,13 +260,17 @@ object EngineFeedLive {
         }
         if (rps == null) {
             add("rps_rotation (60 日涨幅样本不足 100 只，百分位无意义)")
-        } else {
-            add("rps_rotation.rps20/120/250 (需逐票日 K，端上不拉；rps60 已本地算出)")
+        } else if (rps.top.firstOrNull()?.rps20 == null) {
+            add("rps_rotation.rps20/120/250 (本地日级快照不足 21 天；rps60 已本地算出)")
+        } else if (rps.top.firstOrNull()?.rps120 == null) {
+            add("rps_rotation.rps120/250 (本地日级快照不足 121 天；rps20/60 已本地算出)")
         }
         if (strategy == null) add("strategy_card (本地策略卡扫描失败)")
         if (aiPick == null) add("ai_pick (无全市场快照，无法统计候选数)")
         if (seal == null) add("market_phase.seal (缺最高价/昨收，无法判炸板)")
-        add("market_phase.firstBoard/ge2/height/promo (需多日全市场涨停序列)")
+        if (board == null || !board.hasHistory) {
+            add("market_phase.firstBoard/ge2/height/promo (本地日级存档不足 2 个交易日，连板序列还不存在)")
+        }
     }
 
     private fun emptyLive(reason: String): EngineFeed.EngineFeeds = EngineFeed.EngineFeeds(

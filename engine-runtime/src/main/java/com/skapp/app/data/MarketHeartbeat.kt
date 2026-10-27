@@ -76,6 +76,14 @@ object MarketHeartbeat {
         while (currentCoroutineContext().isActive) {
             val open = MarketHours.isTrading() || MarketHours.isAuction()
             if (!open) {
+                // 收盘后补一份「终版快照」：这是连板高度/晋级率明天能算出来的前提，
+                // 也是当日涨停名单唯一会被永久保存的机会（接口第二天就不给昨天了）
+                if (MarketHours.phase() == MarketHours.Phase.AFTER_HOURS) {
+                    runCatching {
+                        val snap = LiveMarket.snapshot()
+                        if (snap.isNotEmpty()) MarketDayArchive.capture(snap, final = true)
+                    }
+                }
                 delay(policy.closedPollMs)
                 continue
             }
@@ -105,6 +113,8 @@ object MarketHeartbeat {
             lastPulse = pulse
             val sectors = runCatching { LocalSectors.compute(snapshotIn = snap) }.getOrNull()
             lastSectors = sectors
+            // 当日快照落一份本地存档（内部 60s 节流 + 终版只写一次）
+            runCatching { MarketDayArchive.capture(snap, sectors, now = now) }
 
             // 先发这一轮心跳：盘口是刚拉的，界面该立刻看到
             val tick = Tick(

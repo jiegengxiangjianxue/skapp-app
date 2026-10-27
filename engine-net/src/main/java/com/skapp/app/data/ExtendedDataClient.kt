@@ -4,11 +4,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
-import java.io.BufferedReader
-import java.io.InputStreamReader
-import java.net.HttpURLConnection
-import java.net.URL
-import java.nio.charset.Charset
 
 /**
  * 扩展多源客户端 —— 站点 scripts/ 里那些"带 Referer/Host 伪装"的域。
@@ -55,32 +50,15 @@ object ExtendedDataClient {
         domain: String = "",
         charset: String = "utf-8",
         gzip: Boolean = true,
-    ): String? {
-        var conn: HttpURLConnection? = null
-        return try {
-            conn = (URL(url).openConnection() as HttpURLConnection).apply {
-                connectTimeout = TIMEOUT
-                readTimeout = TIMEOUT
-                requestMethod = "GET"
-                headers(domain).forEach { (k, v) -> setRequestProperty(k, v) }
-                if (gzip) setRequestProperty("Accept-Encoding", "gzip")
-            }
-            if (conn.responseCode != HttpURLConnection.HTTP_OK) return null
-            var raw = conn.inputStream.use { it.readBytes() }
-            if (gzip && (conn.contentEncoding == "gzip" || conn.headerFields.values.flatten().any { it == "gzip" })) {
-                runCatching { raw = java.util.zip.GZIPInputStream(raw.inputStream()).readBytes() }
-            }
-            val cs = when {
-                charset.startsWith("gb") -> Charset.forName(if (charset == "gbk") "GBK" else "GB18030")
-                else -> Charsets.UTF_8
-            }
-            String(raw, cs)
-        } catch (e: Exception) {
-            null
-        } finally {
-            conn?.disconnect()
-        }
-    }
+    ): String? = Http.getText(
+        url = url,
+        charset = Http.charset(charset),
+        timeoutMs = TIMEOUT,
+        // 不加默认 UA：headers(domain) 里自带桌面 UA，且 Host 头必须原样带过去
+        ua = null,
+        headers = headers(domain),
+        requestGzip = gzip,
+    )
 
     private fun getJson(url: String, domain: String = ""): JSONObject? =
         get(url, domain)?.let { runCatching { JSONObject(it) }.getOrNull() }
