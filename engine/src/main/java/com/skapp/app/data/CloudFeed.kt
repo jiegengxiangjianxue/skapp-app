@@ -54,6 +54,8 @@ object CloudFeed {
         SECTOR_ENGINE("sector_engine.json", "板块强度引擎"),
         ETF_SHARES("etf_shares.json", "宽基 ETF 份额（按指数聚合）"),
         GLOBAL_MARKETS("global_markets.json", "全球市场情绪"),
+        INDUSTRY_MAP("industry_map_em.json", "个股 → 东财三级行业（1050 只，与板块层级不一致，仅兜底）"),
+        STOCK_SECTOR_MAP("stock_sector_map.json", "个股 → 板块（按板块成分股反查，与 sector_engine 同源）"),
         AI_PICK_V4("ai_pick_v4.json", "AI 选股 v4"),
     }
 

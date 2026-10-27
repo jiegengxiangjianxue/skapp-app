@@ -112,6 +112,9 @@ fun DecisionScreen(vm: SkappViewModel, state: UiState) {
         // ── 聪明钱：宽基 ETF 份额跟踪（按指数聚合交易所日度总份额）──
         item { SmartMoneyCard(state, vm) }
 
+        // ── 板块主线：云端 sector_engine 的 27 个板块分档（与因子否决并列的第二道过滤）──
+        item { SectorBoardCard(state) }
+
         // ── 因子否决：云端 v3 标定权重 × 端上 16 指标，外加样本外校准闸门 ──
         item { FactorBoardCard(state, vm) }
 
@@ -433,6 +436,109 @@ private fun FactorBoardCard(state: UiState, vm: SkappViewModel) {
             )
             if (fb.dataNote.isNotBlank()) {
                 Text("云端数据：${fb.dataNote}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+            }
+        }
+    }
+}
+
+/**
+ * 板块主线卡。
+ *
+ * 只陈述云端 sector_engine 已经把话说死的东西：哪些板块是主线、哪些在回避名单、分数和分档是多少。
+ * 个股归属用 industry_map 反查，**查不到就直说「未知板块」**，不猜、不做模糊匹配——
+ * 前面查过两份映射源，一份覆盖率只有 1050 只、另一份每板块只有 1 只代表股，
+ * 硬凑出来的归属比没有更糟。
+ */
+@Composable
+private fun SectorBoardCard(state: UiState) {
+    val sb = state.sectorBoard ?: return
+    Card {
+        Column(Modifier.padding(12.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("板块主线 · sector_engine", fontWeight = FontWeight.SemiBold)
+                Text(
+                    listOfNotNull(sb.date.ifBlank { null }, "${sb.sectors.size} 个板块")
+                        .joinToString(" · "),
+                    style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+                )
+            }
+
+            if (sb.mainline.isNotEmpty()) {
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "主线：" + sb.mainlineRows.joinToString("、") {
+                        "${it.name}（${it.grade} ${String.format("%.0f", it.total)}）"
+                    }.ifBlank { sb.mainline.joinToString("、") },
+                    style = MaterialTheme.typography.bodySmall,
+                    fontWeight = FontWeight.Medium,
+                )
+                sb.mainlineRows.firstOrNull()?.let { top ->
+                    Text(
+                        listOfNotNull(
+                            top.leader?.let { "龙头 $it ${top.leaderPct?.let { p -> String.format("%+.1f%%", p) } ?: ""}" },
+                            if (top.nZt > 0) "涨停 ${top.nZt}" else null,
+                            top.chg5d?.let { "5日 ${String.format("%+.1f%%", it)}" },
+                            top.momentum?.let { "动量 ${String.format("%.0f", it)}" },
+                        ).joinToString(" · "),
+                        style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(6.dp))
+            Text("强势板块", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
+            sb.topSectors(5).forEach { r ->
+                Row(Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
+                    Text(
+                        "${r.grade} ",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = when (r.grade) {
+                            "B" -> MaterialTheme.colorScheme.primary
+                            "D" -> MaterialTheme.colorScheme.error
+                            else -> Color.Gray
+                        },
+                    )
+                    Text(r.name, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
+                    Text(
+                        String.format("%.1f", r.total),
+                        style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium,
+                    )
+                    r.chg5d?.let {
+                        Text(
+                            "  5日" + String.format("%+.1f%%", it),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (it >= 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                        )
+                    }
+                }
+            }
+
+            if (sb.avoid.isNotEmpty()) {
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "云端回避名单：" + sb.avoid.joinToString("、"),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+            // 个股归属：说清用的是哪份源、覆盖多少，覆盖率太低就直接警告——
+            // industry_map_em 兜底时只有 1% 的票能落到板块上，这种「有映射」其实没有意义
+            val cov = com.skapp.app.data.SectorLink.coverage(sb)
+            when (sb.mapSource) {
+                com.skapp.app.data.SectorLink.MapSource.STOCK_SECTOR_MAP -> Text(
+                    "个股归属：成分股反查 ${sb.stockToSector.size} 只（覆盖 ${String.format("%.0f%%", cov * 100)}）",
+                    style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+                )
+                com.skapp.app.data.SectorLink.MapSource.INDUSTRY_MAP_EM -> Text(
+                    "个股归属：只有兜底的行业名映射，覆盖 ${String.format("%.1f%%", cov * 100)}" +
+                        "（行业层级与板块不一致，多数票只能标「未知板块」）",
+                    style = MaterialTheme.typography.bodySmall, color = Color(0xFFB8860B),
+                )
+                com.skapp.app.data.SectorLink.MapSource.NONE -> Text(
+                    "缺个股行业映射：只显示板块级强弱，个股归属不可用",
+                    style = MaterialTheme.typography.bodySmall, color = Color(0xFFB8860B),
+                )
             }
         }
     }

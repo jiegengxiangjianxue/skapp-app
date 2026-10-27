@@ -137,6 +137,8 @@ data class UiState(
     /** 因子否决板：云端 v3 标定权重 × 端上 16 指标；gate 为样本外/市况校准闸门 */
     val factorBoard: com.skapp.app.data.FactorBoard? = null,
     val factorBoardLoading: Boolean = false,
+    /** 板块主线：云端 sector_engine 的 27 个板块分档 + 个股归属 */
+    val sectorBoard: com.skapp.app.data.SectorLink.Board? = null,
     val symbols: List<SymbolEntry> = emptyList(),
     val searchResults: List<SymbolEntry> = emptyList(),
     val detail: StockDetail? = null,
@@ -420,6 +422,8 @@ class SkappViewModel : ViewModel() {
                 val calibDoc = com.skapp.app.data.CloudFeed.load(com.skapp.app.data.CloudFeed.Doc.WEIGHT_CALIBRATION)
                 val calib = com.skapp.app.data.FactorWeightStrategy.parseCalibration(calibDoc.json)
                 val gate = runCatching { com.skapp.app.data.SignalCalibration.load() }.getOrNull()
+                // 板块主线与因子板一起取：两者在界面上是并列的两道过滤，分开加载会错位
+                val sectors = runCatching { com.skapp.app.data.SectorLink.load() }.getOrNull()
 
                 val rows = targets.map { code ->
                     val bars = runCatching { KlineApi.fetchDayKline(code, 160) }.getOrNull() ?: emptyList()
@@ -430,6 +434,7 @@ class SkappViewModel : ViewModel() {
                 }
 
                 _state.value = _state.value.copy(
+                    sectorBoard = sectors ?: _state.value.sectorBoard,
                     factorBoard = com.skapp.app.data.FactorBoard(
                         calib = calib,
                         gate = gate,

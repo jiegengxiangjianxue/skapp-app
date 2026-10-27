@@ -88,6 +88,13 @@ object FactorWeightStrategy {
         val bearCount: Int,
         val neutralCount: Int,
         val reasons: List<String>,
+        /** 族级分解：看清「多少票是同一族重复投的」 */
+        val families: List<FamilyScore> = emptyList(),
+        /** 有方向的族数（最多 5）——比指标个数更能代表独立证据量 */
+        val activeFamilies: Int = 0,
+        /** 旧口径（逐指标加权，未去相关），保留用于对比与排查 */
+        val rawBuyScore: Double = 0.0,
+        val rawAvoidScore: Double = 0.0,
         /** 云端该持有期「看多」基准胜率（%）——用来提醒：偏多不等于胜率高 */
         val bullBaseRate: Double? = null,
         val bearBaseRate: Double? = null,
@@ -139,6 +146,47 @@ object FactorWeightStrategy {
         )
     }
 
+    // ── 指标族（去相关） ──────────────────────────────────────
+
+    /**
+     * 16 个指标按「测的是什么」分族。
+     *
+     * 为什么必须分：这 16 个指标高度共线——Donchian 位置、Keltner 位置、Pivot 位置本质上都在
+     * 回答「价格站在区间哪一侧」。实测里经常出现「14 个偏多 / 0 个偏空」，看着像 14 份独立证据，
+     * 其实只是 5 个族里的 2~3 个族在重复表态。按指标逐个加权会把同一件事数很多遍，
+     * 于是分数虚高、区分度消失。
+     *
+     * 分族后族内先取净额（相互抵消的分歧不再各记一半），族间再按云端给的权重合成，
+     * 相当于「每个族只有一票」。族的划分按指标定义，不按相关性数据拟合——
+     * 后者需要全市场因子矩阵，端上不做。
+     */
+    enum class Family(val label: String, val members: List<String>) {
+        CHANNEL("通道位置", listOf("Donchian20", "BOLL/Keltner", "Pivot")),
+        MOMENTUM("动量", listOf("UltimateOsc", "CMO", "RSI", "MACD")),
+        TREND("趋势", listOf("SuperTrend", "MA5/MA20", "HullMA", "VWMA", "Vortex")),
+        VOLUME("量能", listOf("A/D Line", "ElderForce")),
+        STRUCTURE("波动结构", listOf("Choppiness", "KDJ(RSV)")),
+    }
+
+    /** 一个族的净表态 */
+    data class FamilyScore(
+        val family: Family,
+        /** 族内加权净方向，-1..1 */
+        val net: Double,
+        /** 该族内所有指标的云端 rel_weight 之和（仅用于展示与排序，**不参与合成**） */
+        val weightShare: Double,
+        /** 族内有方向的指标数 / 总指标数 */
+        val participate: Int,
+        val total: Int,
+        /** 族内分歧度：0 = 全部同向，1 = 多空对半 */
+        val dispersion: Double,
+    ) {
+        val dir: Int get() = if (net > 0.05) 1 else if (net < -0.05) -1 else 0
+    }
+
+    private val familyOf: Map<String, Family> =
+        Family.entries.flatMap { f -> f.members.map { it to f } }.toMap()
+
     // ── 打分 ────────────────────────────────────────────────
 
     /**
@@ -157,27 +205,48 @@ object FactorWeightStrategy {
         val votes = calib.specs.mapNotNull { spec -> evaluate(spec, bars, closes) }
         if (votes.isEmpty()) return null
 
-        val buyScore = votes.filter { it.signal > 0 }.sumOf { it.relWeight * it.strength } / totalWeight
-        val avoidScore = votes.filter { it.signal < 0 }.sumOf { it.relWeight * it.strength } / totalWeight
+        // 旧口径：逐指标独立加权（同一族内多个指标会重复计数）
+        val rawBuy = votes.filter { it.signal > 0 }.sumOf { it.relWeight * it.strength } / totalWeight
+        val rawAvoid = votes.filter { it.signal < 0 }.sumOf { it.relWeight * it.strength } / totalWeight
+
+        // 新口径：族内先抵消，族间每族一票（见 Family 的注释与 aggregate() 的说明）
+        val families = buildFamilies(votes)
+        val agg = aggregate(families)
+        val buyScore = agg.buy
+        val avoidScore = agg.avoid
         val net = buyScore - avoidScore
+        val activeFamilies = families.count { it.dir != 0 }
 
         val bull = votes.count { it.signal > 0 }
         val bear = votes.count { it.signal < 0 }
+        val bullFamilies = families.count { it.dir > 0 }
+        val bearFamilies = families.count { it.dir < 0 }
 
         // 否决制：只看空侧有多强，多侧不构成推荐。
         // 阈值取「1/3 权重」与「半数指标」两个独立口径，任一满足即回避——
         // 单指标翻脸不算数（云端空头样本仅 3.4%，单指标不可靠）。
         val verdict = when {
-            avoidScore >= 0.33 || bear >= 8 -> Verdict.AVOID
-            avoidScore >= 0.15 || bear >= 4 -> Verdict.WATCH
+            // 否决要求「多个族同向看空」：单族（比如全是趋势指标）翻脸不算数，
+            // 云端空头样本仅 3.4%，单族误判的代价太高。
+            avoidScore >= 0.30 && bearFamilies >= 2 -> Verdict.AVOID
+            avoidScore >= 0.20 && bearFamilies >= 3 -> Verdict.AVOID
+            avoidScore >= 0.12 || bearFamilies >= 2 -> Verdict.WATCH
             else -> Verdict.PASS
         }
 
-        // 只挑权重最高的几条讲清楚理由，避免界面变成指标dump
-        val reasons = votes.sortedByDescending { it.relWeight * it.strength }
-            .filter { it.signal != 0 }
+        // 理由按族给：先说「哪几族在表态」，再点族内最有代表性的指标，
+        // 避免 5 个同族指标并列成 5 条看似独立的证据
+        val reasons = families.filter { it.dir != 0 }
+            .sortedByDescending { abs(it.net) * it.weightShare }
             .take(3)
-            .map { "${if (it.signal > 0) "偏多" else "偏空"}·${it.name}（${it.value}）${it.why}" }
+            .map { f ->
+                val top = votes.filter { familyOf[it.name] == f.family && it.signal != 0 }
+                    .maxByOrNull { it.relWeight * it.strength }
+                val dirTxt = if (f.dir > 0) "偏多" else "偏空"
+                val rep = top?.let { "（代表：${it.name} ${it.value}）" } ?: ""
+                val dispTxt = if (f.dispersion > 0.3) "，族内分歧 ${(f.dispersion * 100).toInt()}%" else ""
+                "$dirTxt·${f.family.label}族$rep$dispTxt"
+            }
 
         return Score(
             code = code,
@@ -190,6 +259,10 @@ object FactorWeightStrategy {
             bearCount = bear,
             neutralCount = votes.size - bull - bear,
             reasons = reasons,
+            families = families,
+            activeFamilies = activeFamilies,
+            rawBuyScore = round3(rawBuy),
+            rawAvoidScore = round3(rawAvoid),
             bullBaseRate = calib.bullBaseRate,
             bearBaseRate = calib.bearBaseRate,
             caveat = buildCaveat(calib),
@@ -209,6 +282,56 @@ object FactorWeightStrategy {
         } else {
             "本模块只做否决：AVOID 有信息量，PASS 仅表示未被否掉"
         }
+    }
+
+    /** 把逐指标投票折叠成族级表态（族内加权、分歧可见） */
+    internal fun buildFamilies(votes: List<Vote>): List<FamilyScore> =
+        Family.entries.mapNotNull { fam ->
+            val vs = votes.filter { familyOf[it.name] == fam }
+            if (vs.isEmpty()) return@mapNotNull null
+            val famW = vs.sumOf { it.relWeight }
+            val signed = vs.sumOf { it.relWeight * it.signal * it.strength }
+            val bulls = vs.count { it.signal > 0 }
+            val bears = vs.count { it.signal < 0 }
+            val voted = bulls + bears
+            FamilyScore(
+                family = fam,
+                net = if (famW > 0) (signed / famW).coerceIn(-1.0, 1.0) else 0.0,
+                weightShare = famW,
+                participate = voted,
+                total = vs.size,
+                dispersion = if (voted > 0) min(bulls, bears).toDouble() / voted else 0.0,
+            )
+        }
+
+    data class Aggregate(val buy: Double, val avoid: Double)
+
+    /**
+     * 族级合成。**每族一票，族间等权**，并且按族内分歧打折。
+     *
+     * 这里踩过一个坑值得记下来：最初写成「族内加权平均 × 族权重（= 族内权重和 / 总和）」，
+     * 数学上正好等于逐指标加权求和——两级平均是恒等变换，等于什么都没改，
+     * 实测四只票的分数与改之前一模一样，就是这个原因。
+     *
+     * 之所以族间取等权：云端的 rel_weight 是**指标层**标定，没有族层标定。
+     * 若拿「族内权重之和」当族权重，趋势族（5 个指标）天然比量能族（2 个）话语权大，
+     * 而这恰恰是要消掉的偏差——趋势族那 5 个指标里，有 4 个都在说「价格在均线上方」。
+     *
+     * dispersion 惩罚：族内 3 多 2 空时，这一族不该既算 3 份多、又算 2 份空（原口径两边都计），
+     * 也不该按净额全票通过。按 (1 - dispersion) 打折，等于「族内越吵架，这票越轻」。
+     */
+    internal fun aggregate(families: List<FamilyScore>): Aggregate {
+        val n = families.size
+        if (n == 0) return Aggregate(0.0, 0.0)
+        val per = 1.0 / n
+        var buy = 0.0
+        var avoid = 0.0
+        for (f in families) {
+            val eff = per * (1.0 - f.dispersion)
+            if (f.net > 0) buy += f.net * eff
+            else if (f.net < 0) avoid += -f.net * eff
+        }
+        return Aggregate(round3(buy), round3(avoid))
     }
 
     /** 单个指标 → 投票。每个分支都写清阈值依据，方便以后复核。 */
