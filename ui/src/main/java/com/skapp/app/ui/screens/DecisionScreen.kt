@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Card
@@ -16,6 +17,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -29,6 +31,8 @@ import com.skapp.app.ui.UiState
 @Composable
 fun DecisionScreen(vm: SkappViewModel, state: UiState) {
     val d = state.decision
+    // 进页面就自动算一次因子否决板（内部有缓存与去重，重复进入不会重复拉云端）
+    LaunchedEffect(Unit) { vm.loadFactorBoard() }
     LazyColumn(
         Modifier.fillMaxWidth().padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -69,19 +73,32 @@ fun DecisionScreen(vm: SkappViewModel, state: UiState) {
                         if (reason != null) {
                             Text(reason, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
                         }
-                        // 聪明钱调档：只有 ETF 份额序列成熟（>=20 交易日）才允许改仓位上限
-                        val (adjCap, adjReason) = state.smartMoney?.capAdjust(baseCap) ?: (null to "")
+                        // 仓位链路（只减不增，每一步都必须说明来源）：
+                        //   基准上限(云端) → ETF 份额调档(聪明钱) → 样本外/市况校准闸门
+                        val (smCap, adjReason) = state.smartMoney?.capAdjust(baseCap) ?: (null to "")
                         if (adjReason.isNotBlank()) {
-                            val changed = adjCap != null && baseCap != null && adjCap != baseCap
+                            val changed = smCap != null && baseCap != null && smCap != baseCap
                             Text(
-                                "ETF 份额信号：$adjReason",
+                                "① ETF 份额信号：$adjReason",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = if (changed) MaterialTheme.colorScheme.primary else Color.Gray,
                             )
-                            if (changed) {
+                        }
+
+                        val gate = state.factorBoard?.gate
+                        val afterSm = smCap ?: baseCap
+                        if (gate != null && afterSm != null) {
+                            val capped = gate.applyCap(afterSm)
+                            Text(
+                                "② 校准闸门：${gate.confidenceLabel} · 可信度 ${(gate.confidence * 100).toInt()}%" +
+                                    " × 买入折扣 ${(gate.buyFactor * 100).toInt()}% = 仓位系数 ${gate.positionPctLabel}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (capped < afterSm) MaterialTheme.colorScheme.primary else Color.Gray,
+                            )
+                            if (capped < afterSm) {
                                 Text(
-                                    "调整后仓位上限：${String.format("%.0f%%", adjCap!! * 100)}"
-                                        + "（基准 ${String.format("%.0f%%", baseCap!! * 100)}）",
+                                    "校准后仓位上限：${String.format("%.0f%%", capped * 100)}" +
+                                        "（基准 ${String.format("%.0f%%", baseCap!! * 100)}）",
                                     style = MaterialTheme.typography.bodySmall,
                                     fontWeight = FontWeight.SemiBold,
                                 )
@@ -94,6 +111,9 @@ fun DecisionScreen(vm: SkappViewModel, state: UiState) {
 
         // ── 聪明钱：宽基 ETF 份额跟踪（按指数聚合交易所日度总份额）──
         item { SmartMoneyCard(state, vm) }
+
+        // ── 因子否决：云端 v3 标定权重 × 端上 16 指标，外加样本外校准闸门 ──
+        item { FactorBoardCard(state, vm) }
 
         if (d.cards.isNotEmpty()) {
             item { SectionHeader("决策卡") }
@@ -304,4 +324,113 @@ private fun PctCell(v: Double?, modifier: Modifier) {
         color = color,
         modifier = modifier,
     )
+}
+
+/**
+ * 因子否决卡：把云端 weight_calibrator_v3 的标定用在端上。
+ *
+ * 界面刻意不写「评分越高越该买」——云端实测这 16 个指标的看多胜率只有 43~45%，
+ * 低于 50% 基准，所以这里只表达「有没有被否掉」，并且把基准胜率与校准系数一起摊开。
+ */
+@Composable
+private fun FactorBoardCard(state: UiState, vm: SkappViewModel) {
+    val fb = state.factorBoard
+    Card {
+        Column(Modifier.padding(12.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("因子否决 · 云端 v3 标定", fontWeight = FontWeight.SemiBold)
+                Text(
+                    if (state.factorBoardLoading) "计算中…" else "重算",
+                    Modifier.clickable { vm.loadFactorBoard(force = true) },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
+
+            if (fb == null) {
+                Text(
+                    "点「重算」加载：需要云端 weight_calibration.json + 本地日 K（≥60 根）。",
+                    style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+                )
+                return@Column
+            }
+
+            val calib = fb.calib
+            if (calib != null) {
+                Text(
+                    "${calib.engine} · ${calib.horizon} 日持有 · ${calib.specs.size} 个指标 · " +
+                        "看多基准 ${calib.bullBaseRate?.let { String.format("%.1f", it) } ?: "—"}% / " +
+                        "看空 ${calib.bearBaseRate?.let { String.format("%.1f", it) } ?: "—"}%",
+                    style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+                )
+            } else {
+                Text("云端标定不可用，无法打分。", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+            }
+
+            fb.gate?.let { g ->
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "校准闸门：可信度 ${(g.confidence * 100).toInt()}%（${g.confidenceLabel}）· " +
+                        "买入折扣 ${(g.buyFactor * 100).toInt()}% · 仓位系数 ${g.positionPctLabel}",
+                    style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium,
+                )
+                g.notes.take(2).forEach {
+                    Text("· $it", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                }
+            }
+
+            Spacer(Modifier.height(6.dp))
+            Text(fb.summary, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
+
+            fb.scored.take(8).forEach { r ->
+                val sc = r.score ?: return@forEach
+                Row(Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
+                    Column(Modifier.weight(1f)) {
+                        Row {
+                            Text(
+                                r.code,
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.Medium,
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                sc.verdict.label,
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.SemiBold,
+                                color = when (sc.verdict) {
+                                    com.skapp.app.data.FactorWeightStrategy.Verdict.AVOID ->
+                                        MaterialTheme.colorScheme.error
+                                    com.skapp.app.data.FactorWeightStrategy.Verdict.WATCH -> Color(0xFFB8860B)
+                                    else -> Color.Gray
+                                },
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                "多${sc.bullCount}/空${sc.bearCount}",
+                                style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+                            )
+                        }
+                        sc.reasons.take(2).forEach {
+                            Text(it, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                        }
+                    }
+                    Text(
+                        String.format("%+.2f", sc.netScore),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (sc.netScore < 0) MaterialTheme.colorScheme.error else Color.Gray,
+                    )
+                }
+            }
+
+            HorizontalDivider(Modifier.padding(vertical = 4.dp))
+            Text(
+                fb.scored.firstOrNull()?.score?.caveat
+                    ?: "AVOID 才是有信息量的结论；PASS 只表示本模块没有否决它。",
+                style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+            )
+            if (fb.dataNote.isNotBlank()) {
+                Text("云端数据：${fb.dataNote}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+            }
+        }
+    }
 }

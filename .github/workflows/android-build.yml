@@ -170,6 +170,11 @@ jobs:
       - name: Compile engine module
         run: ./gradlew :engine:compileKotlin --no-daemon --stacktrace
 
+      # 引擎算法必须真跑一遍 fixture：只「编译通过」挡不住把权重解析成等权、
+      # 或把均线空头排列读成买点这类方向性错误。
+      - name: Run engine algorithm tests
+        run: ./gradlew :engine:test --no-daemon --stacktrace
+
   # ── 4. 后端 UI + 密集渲染层（:app Kotlin 编译，只做类型检查不打包）────────
   ui-render-gate:
     needs: [engine-kotlin, analysis-gate]

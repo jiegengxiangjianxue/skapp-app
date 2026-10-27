@@ -134,6 +134,9 @@ data class UiState(
     val poolsLoadedAt: Long = 0L,
     /** 引擎产出聚合（engines_feed：regime/cycle/anomaly/price_level/orchestrator） */
     val engineFeeds: com.skapp.app.data.EngineFeed.EngineFeeds? = null,
+    /** 因子否决板：云端 v3 标定权重 × 端上 16 指标；gate 为样本外/市况校准闸门 */
+    val factorBoard: com.skapp.app.data.FactorBoard? = null,
+    val factorBoardLoading: Boolean = false,
     val symbols: List<SymbolEntry> = emptyList(),
     val searchResults: List<SymbolEntry> = emptyList(),
     val detail: StockDetail? = null,
@@ -390,6 +393,57 @@ class SkappViewModel : ViewModel() {
             _state.value = _state.value.copy(smartMoneyLoading = true)
             val s = runCatching { com.skapp.app.data.SmartMoney.fetch() }.getOrNull()
             _state.value = _state.value.copy(smartMoney = s ?: _state.value.smartMoney, smartMoneyLoading = false)
+        }
+    }
+
+    /**
+     * 因子否决板：云端 v3 标定（16 指标相对权重）× 端上指标，再叠加样本外校准闸门。
+     *
+     * 候选来源取「关注列表 + 云端决策卡」的交集式合并（去重、上限 8 只），
+     * 每只都要拉日 K 才能算指标，所以限制数量而不是全市场扫。
+     */
+    fun loadFactorBoard(codes: List<String> = emptyList(), force: Boolean = false) {
+        viewModelScope.launch {
+            val cur = _state.value
+            if (cur.factorBoardLoading) return@launch
+            if (!force && !cur.factorBoard?.rows.isNullOrEmpty()) return@launch
+            _state.value = cur.copy(factorBoardLoading = true)
+
+            // 候选 = 关注列表 + 云端决策卡，去重后最多 8 只（每只要拉日 K，不能全市场扫）
+            val targets = (codes.toList() + cur.decision.cards.map { it.code })
+                .map { it.trim() }
+                .filter { it.isNotBlank() }
+                .distinct()
+                .take(8)
+
+            try {
+                val calibDoc = com.skapp.app.data.CloudFeed.load(com.skapp.app.data.CloudFeed.Doc.WEIGHT_CALIBRATION)
+                val calib = com.skapp.app.data.FactorWeightStrategy.parseCalibration(calibDoc.json)
+                val gate = runCatching { com.skapp.app.data.SignalCalibration.load() }.getOrNull()
+
+                val rows = targets.map { code ->
+                    val bars = runCatching { KlineApi.fetchDayKline(code, 160) }.getOrNull() ?: emptyList()
+                    val score = if (calib != null && bars.size >= 60) {
+                        com.skapp.app.data.FactorWeightStrategy.score(code, bars, calib)
+                    } else null
+                    com.skapp.app.data.FactorRow(code = code, name = "", score = score)
+                }
+
+                _state.value = _state.value.copy(
+                    factorBoard = com.skapp.app.data.FactorBoard(
+                        calib = calib,
+                        gate = gate,
+                        rows = rows,
+                        dataNote = com.skapp.app.data.CloudFeed.healthText(listOf(calibDoc)),
+                    ),
+                    factorBoardLoading = false,
+                )
+            } catch (e: Exception) {
+                _state.value = _state.value.copy(
+                    factorBoardLoading = false,
+                    factorBoard = _state.value.factorBoard?.copy(lastError = e.message ?: "加载失败"),
+                )
+            }
         }
     }
 

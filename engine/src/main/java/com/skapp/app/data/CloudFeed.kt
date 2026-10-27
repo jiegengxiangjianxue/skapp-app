@@ -1,0 +1,188 @@
+package com.skapp.app.data
+
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.withContext
+import org.json.JSONObject
+import java.net.HttpURLConnection
+import java.net.URL
+import java.text.SimpleDateFormat
+import java.util.Locale
+
+/**
+ * 云端引擎数据的统一入口。
+ *
+ * 过去每个模块自己拼 URL、自己建连接、失败就静默返回 null，结果是：云端 90 多个
+ * 九十几个 data 下的 json 里 App 只用到 3 个，而且某个文件挂了没人知道。这里把取数收成一条链路：
+ *
+ *   注册表(Doc) → 并发拉取 → 内存缓存(带 TTL) → 数据陈旧度(按文件自身 ts) → 降级
+ *
+ * 三种状态明确区分，不混淆：
+ *   - `json == null`            拉不到（网络/404），调用方必须自行降级
+ *   - `stale == true`           拿到了但文件本身 ts 太旧（云端任务没跑），仍可用但要标注
+ *   - 正常                       新鲜可用
+ *
+ * 云端各文件的 ts 格式并不统一（ISO 带时区 / "yyyy-MM-dd HH:mm:ss" / 只有 date），
+ * 这里统一解析成毫秒，解析不出来的按「未知」处理而不是当成新鲜。
+ */
+object CloudFeed {
+
+    const val BASE = "https://raw.githubusercontent.com/qwerzxcva/stocks-ai-view/main/data"
+
+    private const val TIMEOUT = 15000
+
+    /** 日更类数据的内存缓存时长：云端最快也是十几分钟一次，缓存 10 分钟足够。 */
+    private const val TTL_MS = 10 * 60 * 1000L
+
+    /** 超过这个年龄就标记 stale。日更的任务 36 小时没更新，基本可以认为当天没跑成。 */
+    private const val STALE_HOURS = 36.0
+
+    /** 云端数据文件注册表。新增一个文件只需在这里加一行。 */
+    enum class Doc(val file: String, val note: String) {
+        WEIGHT_CALIBRATION("weight_calibration.json", "16 指标分层权重（v3 校准，5~6 万样本）"),
+        WALKFORWARD("walkforward.json", "样本外回测：IS/OOS 胜率与过拟合判定"),
+        RPS_ROTATION("rps_rotation.json", "RPS 区间涨幅百分位 Top30"),
+        MARKET_BREADTH("market_breadth_history.json", "涨跌停/炸板/封板率历史"),
+        STRATEGY_CARD("strategy_card.json", "云端策略卡：规则 + 回测 + 候选"),
+        ENGINE_V5("engine_v5.json", "引擎 v5 Top 榜"),
+        ENGINE_FUSION("engine_fusion.json", "多引擎加权融合 E 值与一致性"),
+        DECISION("decision.json", "云端决策：市况/仓位建议/卡片"),
+        MARKET_PHASE("market_phase.json", "市况分档"),
+        CYCLE_POOL("cycle_pool_v2.json", "周期池 v2"),
+        SECTOR_ENGINE("sector_engine.json", "板块强度引擎"),
+        ETF_SHARES("etf_shares.json", "宽基 ETF 份额（按指数聚合）"),
+        GLOBAL_MARKETS("global_markets.json", "全球市场情绪"),
+        AI_PICK_V4("ai_pick_v4.json", "AI 选股 v4"),
+    }
+
+    data class CloudDoc(
+        val doc: Doc,
+        val json: JSONObject?,
+        /** 本次实际取到数据的时间（毫秒）；命中缓存时是缓存写入时间 */
+        val fetchedAt: Long,
+        /** 文件自身 ts 距今小时数；解析不出为 null */
+        val ageHours: Double?,
+        /** 从缓存拿的（而非本次网络获取） */
+        val fromCache: Boolean = false,
+        val error: String? = null,
+    ) {
+        val ok: Boolean get() = json != null
+        val stale: Boolean get() = ok && ageHours != null && ageHours > STALE_HOURS
+        val tsText: String
+            get() = when {
+                !ok -> "不可用"
+                ageHours == null -> "时间未知"
+                ageHours < 1 -> "${(ageHours * 60).toInt()} 分钟前"
+                ageHours < 48 -> "${ageHours.toInt()} 小时前"
+                else -> "${(ageHours / 24).toInt()} 天前"
+            }
+    }
+
+    private data class Entry(val doc: CloudDoc, val expiresAt: Long)
+
+    private val cache = HashMap<Doc, Entry>()
+
+    private fun now() = System.currentTimeMillis()
+
+    /** 一次拉多个文件：并发，互不拖累；单个失败只影响它自己。 */
+    suspend fun loadMany(
+        docs: List<Doc>,
+        force: Boolean = false,
+    ): Map<Doc, CloudDoc> = coroutineScope {
+        docs.map { d -> async { d to load(d, force) } }.awaitAll().toMap()
+    }
+
+    suspend fun load(doc: Doc, force: Boolean = false): CloudDoc {
+        if (!force) {
+            synchronized(cache) {
+                cache[doc]?.let { e ->
+                    if (e.expiresAt > now()) return e.doc.copy(fromCache = true)
+                }
+            }
+        }
+        val fetched = withContext(Dispatchers.IO) { fetch(doc) }
+        if (fetched.ok) {
+            synchronized(cache) { cache[doc] = Entry(fetched, now() + TTL_MS) }
+        } else {
+            // 拉失败时退回旧缓存（哪怕过期），让 UI 还能显示上次的数据并标陈旧
+            synchronized(cache) { cache[doc] }?.let { old ->
+                return old.doc.copy(fromCache = true, error = fetched.error)
+            }
+        }
+        return fetched
+    }
+
+    private fun fetch(doc: Doc): CloudDoc {
+        var conn: HttpURLConnection? = null
+        val at = now()
+        return try {
+            conn = (URL("$BASE/${doc.file}").openConnection() as HttpURLConnection).apply {
+                connectTimeout = TIMEOUT
+                readTimeout = TIMEOUT
+                requestMethod = "GET"
+                setRequestProperty("User-Agent", RemoteSources.UA_ANDROID)
+            }
+            if (conn.responseCode != 200) {
+                return CloudDoc(doc, null, at, null, error = "HTTP ${conn.responseCode}")
+            }
+            val text = conn.inputStream.bufferedReader().use { it.readText() }
+            val json = JSONObject(text)
+            CloudDoc(doc, json, at, ageHoursOf(json))
+        } catch (e: Exception) {
+            CloudDoc(doc, null, at, null, error = e.message ?: e.javaClass.simpleName)
+        } finally {
+            conn?.disconnect()
+        }
+    }
+
+    /** 各文件的 ts 字段格式不一致，逐个试；都失败返回 null（宁可不判新鲜，也不假定新鲜）。 */
+    private fun ageHoursOf(json: JSONObject): Double? {
+        val raw = json.optString("ts").takeIf { it.isNotBlank() }
+            ?: json.optString("recorded_at").takeIf { it.isNotBlank() }
+            ?: json.optString("generated_at").takeIf { it.isNotBlank() }
+            ?: return null
+        val ms = parseStamp(raw) ?: return null
+        val diff = now() - ms
+        return if (diff < 0) 0.0 else diff / 3_600_000.0
+    }
+
+    private val stampFormats = listOf(
+        "yyyy-MM-dd'T'HH:mm:ssXXX",   // 2026-10-27T00:10:02+08:00
+        "yyyy-MM-dd'T'HH:mm:ss",      // 2026-10-26T23:51:08
+        "yyyy-MM-dd HH:mm:ss",        // 2026-10-26 23:51:08
+        "yyyy-MM-dd HH:mm",
+        "yyyy-MM-dd",
+    )
+
+    private fun parseStamp(raw: String): Long? {
+        // 去掉毫秒（2026-10-26T23:51:08.123+08:00 -> 2026-10-26T23:51:08+08:00）
+        val s = raw.trim().replace(Regex("""\.\d+"""), "")
+        for (f in stampFormats) {
+            try {
+                val fmt = SimpleDateFormat(f, Locale.CHINA).apply { isLenient = true }
+                return fmt.parse(s)?.time
+            } catch (_: Exception) {
+                // 试下一个
+            }
+        }
+        return null
+    }
+
+    fun invalidate() = synchronized(cache) { cache.clear() }
+
+    /** 给界面用的一句话数据健康度：几个文件可用 / 几个陈旧。 */
+    fun healthText(docs: Collection<CloudDoc>): String {
+        val list = docs.toList()
+        if (list.isEmpty()) return "未加载"
+        val ok = list.count { it.ok }
+        val stale = list.count { it.stale }
+        val fail = list.size - ok
+        return buildString {
+            append("$ok/${list.size} 可用")
+            if (stale > 0) append(" · $stale 陈旧")
+            if (fail > 0) append(" · $fail 失败")
+        }
+    }
+}

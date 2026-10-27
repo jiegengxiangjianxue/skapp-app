@@ -161,38 +161,41 @@ object EngineFeed {
 
     // ── 拉取 ────────────────────────────────────────────────
 
+    /**
+     * 拉取全部引擎产出。
+     *
+     * 原来这里是 8 个文件串行 openConnection，任何一个卡住都会把整轮拖到超时，
+     * 失败也只是静默丢进 missing。现在统一走 CloudFeed：并发拉取、内存缓存、
+     * 按文件自身 ts 标陈旧、失败退回旧缓存——单文件挂掉不再连累其它引擎。
+     */
     suspend fun loadAll(): EngineFeeds = withContext(Dispatchers.IO) {
-        val files = listOf(
-            "engine_v5.json" to "engine_v5",
-            "cycle_pool_v2.json" to "cycle_pool",
-            "rps_rotation.json" to "rps",
-            "strategy_card.json" to "strategy",
-            "market_phase.json" to "phase",
-            "global_markets.json" to "global",
-            "ai_pick_v4.json" to "aipick",
-            "decision.json" to "decision",
+        val docs = CloudFeed.loadMany(
+            listOf(
+                CloudFeed.Doc.ENGINE_V5,
+                CloudFeed.Doc.CYCLE_POOL,
+                CloudFeed.Doc.RPS_ROTATION,
+                CloudFeed.Doc.STRATEGY_CARD,
+                CloudFeed.Doc.MARKET_PHASE,
+                CloudFeed.Doc.GLOBAL_MARKETS,
+                CloudFeed.Doc.AI_PICK_V4,
+                CloudFeed.Doc.DECISION,
+            )
         )
         val results = mutableMapOf<String, JSONObject>()
         val missing = mutableListOf<String>()
-        files.forEach { (file, key) ->
-            try {
-                val url = "$BASE/$file"
-                val conn = URL(url).openConnection() as HttpURLConnection
-                conn.connectTimeout = TIMEOUT
-                conn.readTimeout = TIMEOUT
-                conn.requestMethod = "GET"
-                conn.setRequestProperty("User-Agent", "skapp-android/1.0")
-                if (conn.responseCode == 200) {
-                    val s = conn.inputStream.bufferedReader().readText()
-                    results[key] = JSONObject(s)
-                } else {
-                    missing.add(file)
-                }
-                conn.disconnect()
-            } catch (_: Exception) {
-                missing.add(file)
-            }
+        fun put(key: String, doc: CloudFeed.Doc) {
+            val d = docs[doc]
+            if (d?.json != null) results[key] = d.json else missing.add(doc.file + (d?.error?.let { "($it)" } ?: ""))
         }
+        put("engine_v5", CloudFeed.Doc.ENGINE_V5)
+        put("cycle_pool", CloudFeed.Doc.CYCLE_POOL)
+        put("rps", CloudFeed.Doc.RPS_ROTATION)
+        put("strategy", CloudFeed.Doc.STRATEGY_CARD)
+        put("phase", CloudFeed.Doc.MARKET_PHASE)
+        put("global", CloudFeed.Doc.GLOBAL_MARKETS)
+        put("aipick", CloudFeed.Doc.AI_PICK_V4)
+        put("decision", CloudFeed.Doc.DECISION)
+
         EngineFeeds(
             ts = System.currentTimeMillis(),
             engineV5 = parseEngineV5(results["engine_v5"]),
