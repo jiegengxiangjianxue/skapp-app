@@ -14,6 +14,7 @@ on:
     branches: [main]
     paths:
       - 'app/**'
+      - 'ui/**'
       - 'engine/**'
       - 'gradle/**'
       - 'build.gradle.kts'
@@ -167,6 +168,23 @@ jobs:
           fi
           echo "engine module is Android-free and does not depend on :ui"
 
+      # 守卫的判定逻辑（阈值/去重/内存分级）必须一直有断言覆盖——
+      # 测试文件被删掉时 :engine:test 依然会「通过」，所以要显式把它钉住。
+      - name: Guard - health core tests must stay
+        run: |
+          set -euo pipefail
+          TEST=engine/src/test/kotlin/com/skapp/app/data/health/ProcessHealthCoreTest.kt
+          CORE=engine/src/main/java/com/skapp/app/data/health/ProcessHealthCore.kt
+          test -f "$TEST"
+          test -f "$CORE"
+          for mark in "stall threshold" "stall progression records every repeat interval" \
+                      "memory levels follow warn and critical ratios" "system low memory overrides ratio"; do
+            grep -q "$mark" "$TEST" || { echo "::error::健康守卫测试丢了用例：$mark"; exit 1; }
+          done
+          grep -q "STALL_THRESHOLD_MS" "$CORE"
+          grep -q "classifyMemory" "$CORE"
+          echo "health core + tests present"
+
       - name: Compile engine module
         run: ./gradlew :engine:compileKotlin --no-daemon --stacktrace
 
@@ -176,6 +194,15 @@ jobs:
       # 给「要不要上 Rust/NDK」提供可复核数据，见 docs/adr/0001-cloud-python-vs-ondevice-kotlin.md
       - name: Run engine algorithm tests
         run: ./gradlew :engine:test --no-daemon --stacktrace
+
+      # org.json 越界调用守卫（vc19 真机闪退的根因就是它）。
+      # :engine 用 compileOnly 的 org.json:json 编译，运行期却是 Android 内置 org.json，
+      # 两者方法集不同（jar 有 toMap()，平台没有）。编译和单测都拦不住，只能看字节码。
+      - name: Guard - no org.json methods missing on Android
+        run: |
+          set -euo pipefail
+          python3 tools/org_json_api_guard.py --self-test
+          python3 tools/org_json_api_guard.py engine/build/classes
 
   # ── 4. 后端 UI + 密集渲染层（:app Kotlin 编译，只做类型检查不打包）────────
   ui-render-gate:
@@ -255,6 +282,43 @@ jobs:
           grep -q "minuteTrendRich" engine/src/main/java/com/skapp/app/data/MarketDataClient.kt
           grep -q "lastKlineSource" engine/src/main/java/com/skapp/app/data/MarketDataClient.kt
           echo "render + data layer markers ok"
+
+      # vc19 守卫：CrashGuard 只能抓 Java 未捕获异常，ANR / 低内存被回收 / native 崩溃它看不到。
+      # 这一层把「不依赖崩溃栈」的守卫钉住，防止以后被人当成死代码清掉（它平时确实很安静）。
+      - name: Health guard presence check (ANR / watchdog / memory)
+        run: |
+          set -euo pipefail
+          GUARD=ui/src/main/java/com/skapp/app/ui/HealthGuard.kt
+          test -f "$GUARD"
+          # 必须真的挂在启动路径上，否则文件存在也等于没装
+          grep -q "HealthGuard.install" app/src/main/java/com/skapp/app/MainActivity.kt
+          grep -q "HealthGuard.exportPending" app/src/main/java/com/skapp/app/MainActivity.kt
+          # 两条监视通道的真实抓手：主线程心跳、native 堆、系统低内存
+          grep -q "Looper.getMainLooper" "$GUARD"
+          grep -q "Debug.getNativeHeapAllocatedSize" "$GUARD"
+          grep -q "getMemoryInfo" "$GUARD"
+          # 停顿必须由 watchdog 线程写盘（主线程此时卡着），且线程得是 daemon 不拖住退出
+          grep -q "skapp-health-watchdog" "$GUARD"
+          grep -q "isDaemon = true" "$GUARD"
+          # 与崩溃记录隔离：前缀必须是 health_，绝不能按 crash_ 前缀导出/删除
+          grep -q 'PREFIX = "health_"' "$GUARD"
+          if grep -q 'PREFIX = "crash_' "$GUARD"; then
+            echo "::error::健康记录用了 crash_ 前缀，会与 CrashGuard 的导出/删除通道撞车"
+            exit 1
+          fi
+          if grep -q '"crash_last.txt"' "$GUARD"; then
+            echo "::error::健康守卫对 crash_last.txt 有字面引用（红卡那份），2026-10-27 误删事故的同类风险"
+            exit 1
+          fi
+          echo "health guard markers ok"
+
+      # 白名单模式的 org.json 守卫：拿 android.jar 的真实方法集逐项比对 bytecode。
+      # 放在这一层是因为这里 :engine / :ui / :app 三层都已编译完，能一次扫全。
+      - name: Guard - org.json API surface vs android.jar
+        run: |
+          set -euo pipefail
+          python3 tools/org_json_api_guard.py \
+            --android-jar "$ANDROID_HOME/platforms/android-35/android.jar"
 
   # ── 5. 打包 ───────────────────────────────────────────────────────────
   build:

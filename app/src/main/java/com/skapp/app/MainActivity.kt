@@ -38,6 +38,11 @@ class MainActivity : ComponentActivity() {
         // 上次若崩过，把原始堆栈导出到 Download：用户不连电脑就能把日志发出来。
         // 放后台线程——MediaStore 写入要几百毫秒，不能拖住首帧。
         Thread { com.skapp.app.ui.CrashGuard.exportPending(applicationContext) }.start()
+        // vc19 守卫：CrashGuard 只抓 Java 未捕获异常，抓不到 ANR / 低内存被回收 / native 崩溃。
+        // 这里补一条与异常无关的通道：主线程心跳（停顿当场落盘）+ 内存水位采样。
+        // 必须在主线程调用——心跳靠 mainLooper 自循环，这正是它能反映主线程卡顿的原因。
+        com.skapp.app.ui.HealthGuard.install(applicationContext)
+        Thread { com.skapp.app.ui.HealthGuard.exportPending(applicationContext) }.start()
         enableEdgeToEdge()
         setContent {
             MaterialTheme(colorScheme = SkappLightColors) {

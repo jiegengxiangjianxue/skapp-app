@@ -9,3 +9,6 @@ captures/
 .cxx/
 *.apk
 *.aab
+
+# Kotlin 增量编译会话目录（Gradle 8.x + Kotlin 2.x 生成，不入库）
+.kotlin/

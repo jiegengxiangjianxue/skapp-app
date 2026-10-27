@@ -21,6 +21,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -31,7 +32,10 @@ import com.skapp.app.data.RemoteSources
 import com.skapp.app.data.SkappApi
 import com.skapp.app.ui.SkappViewModel
 import com.skapp.app.ui.UiState
+import com.skapp.app.ui.HealthGuard
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 
@@ -60,6 +64,7 @@ fun DiagScreen(vm: SkappViewModel, state: UiState) {
     ) {
         Text("数据源自检", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
         DecisionCardToggles()
+        HealthGuardCard()
         SourceLedgerCard(state, vm)
         val stats = state.registryStats
         val registry = rows.firstOrNull { it.first == "源注册表" }?.second
@@ -170,6 +175,80 @@ private fun SourceLedgerCard(state: UiState, vm: SkappViewModel) {
                     "不可用（不绕过）：${ds.blockedIds.take(10).joinToString("、")}",
                     style = MaterialTheme.typography.bodySmall, color = Color.Gray,
                 )
+            }
+        }
+    }
+}
+
+/**
+ * vc19 守卫状态卡 —— 看门狗与内存水位。
+ *
+ * 为什么放诊断页：ANR / 低内存被回收 / native 崩溃这三种死法**不抛任何异常**，
+ * CrashGuard 的红卡永远是空的，用户只能报「又闪退了」。这里直接给出「主线程停顿被记了
+ * 几次、当前堆水位多少、最近一条记录原文」，并提供一键导出到 Download。
+ *
+ * 注意：因为停顿是**正在进行时**写的，所以遇到真正卡死的场景，用户回来时可能已经能看到记录；
+ * 内存告警则是预先留痕，两者都不依赖崩溃栈。
+ */
+@Composable
+private fun HealthGuardCard() {
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var status by remember { mutableStateOf("") }
+    var note by remember { mutableStateOf("") }
+    var detail by remember { mutableStateOf<String?>(null) }
+    var busy by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        while (true) {
+            status = withContext(Dispatchers.IO) { HealthGuard.status(ctx) }
+            delay(2000)
+        }
+    }
+
+    Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors()) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("运行健康（vc19 守卫）", fontWeight = FontWeight.SemiBold)
+                Text(
+                    if (busy) "导出中…" else "导出日志",
+                    Modifier.clickable {
+                        if (busy) return@clickable
+                        busy = true
+                        scope.launch {
+                            withContext(Dispatchers.IO) { HealthGuard.exportPending(ctx) }
+                            note = HealthGuard.lastExportNote ?: "暂无健康记录"
+                            busy = false
+                        }
+                    },
+                    color = MaterialTheme.colorScheme.primary,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+            Text(
+                "崩溃捕获只管 Java 未捕获异常；ANR、低内存被回收、native 崩溃都不抛异常。这里靠主线程心跳与内存水位在进程被杀之前留痕。",
+                style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+            )
+            Text(status.ifBlank { "采样中…" }, style = MaterialTheme.typography.bodySmall)
+            if (note.isNotBlank()) {
+                Text(note, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+            }
+            Text(
+                if (detail == null) "查看最近一条健康记录" else "收起最近一条健康记录",
+                Modifier.clickable {
+                    if (detail != null) {
+                        detail = null
+                    } else {
+                        scope.launch {
+                            detail = withContext(Dispatchers.IO) { HealthGuard.lastRecord(ctx) } ?: "（暂无记录）"
+                        }
+                    }
+                },
+                color = MaterialTheme.colorScheme.primary,
+                style = MaterialTheme.typography.bodySmall,
+            )
+            detail?.let {
+                Text(it, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
             }
         }
     }
