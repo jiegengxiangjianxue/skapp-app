@@ -372,7 +372,7 @@ jobs:
             "- Commit: \`$(echo "$GITHUB_SHA" | cut -c1-7)\`" \
             "- Gates passed: engine-gate -> analysis-gate -> engine-kotlin -> ui-render-gate -> build" \
             "" \
-            "安装：直接点下面的 $NAME 下载安装；versionCode 随每次更新递增，可覆盖安装。")"
+            "Install: tap **$NAME** below to download and install. versionCode increases with every release, so it installs straight over the previous version.")"
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "release $TAG exists -> refresh asset"
             gh release upload "$TAG" "/tmp/$NAME" --clobber

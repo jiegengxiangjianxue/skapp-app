@@ -25,12 +25,23 @@ import java.util.Locale
  *
  * 记录内容刻意保持最小：时间、线程名、异常堆栈。不写设备标识、不写业务数据。
  * 每次崩溃独立成文件（不互相覆盖），导出成功后删除源文件，避免重复导出。
+ *
+ * 注意：`crash_last.txt` 是给红卡读的那一份，**不参与导出**。它同样以 "crash_" 开头，
+ * 早先按前缀匹配筛选时被误当成原始记录导出并删除，导致红卡永远为空（2026-10-27 修复）。
  */
 object CrashGuard {
 
     private const val FILE_NAME = "crash_last.txt"
     private const val PREFIX = "crash_"
     private const val TAG = "CrashGuard"
+
+    /**
+     * 原始崩溃记录的文件名必须严格匹配 `crash_yyyyMMdd_HHmmss.txt`（与 [write] 的 stamp 格式对应）。
+     *
+     * 不能用 `startsWith(PREFIX)` 判断：`crash_last.txt` 也以 "crash_" 开头，
+     * 会把红卡那份一起导出后 delete() 掉。改 stamp 格式时这里必须同步。
+     */
+    private val ORIGINAL_NAME = Regex("^crash_\\d{8}_\\d{6}\\.txt$")
 
     /** 最近一次崩溃的导出结果，供诊断页/红卡展示，避免用户找不到文件 */
     @Volatile
@@ -64,8 +75,9 @@ object CrashGuard {
         // 独立文件：连续闪退几次也不会互相覆盖，能看出是不是同一个栈
         runCatching { File(context.filesDir, "$PREFIX$stamp.txt").writeText(body) }
             .onFailure { Log.w(TAG, "崩溃原始文件写入失败: ${it.message}") }
-        // 红卡读这一份（只保留最近一次）
-        File(context.filesDir, FILE_NAME).writeText(body)
+        // 红卡读这一份（只保留最近一次）；写失败只记日志，不能连累上面那份原始记录
+        runCatching { File(context.filesDir, FILE_NAME).writeText(body) }
+            .onFailure { Log.w(TAG, "红卡崩溃记录写入失败: ${it.message}") }
     }
 
     /**
@@ -77,8 +89,9 @@ object CrashGuard {
      */
     fun exportPending(context: Context) {
         runCatching {
+            // 只认严格时间戳命名的原始记录，并显式排除红卡那份 —— 否则它会被导出后删掉
             val files = context.filesDir.listFiles { f ->
-                f.name.startsWith(PREFIX) && f.name.endsWith(".txt") && f.length() > 0L
+                f.name != FILE_NAME && ORIGINAL_NAME.matches(f.name) && f.length() > 0L
             } ?: return
             if (files.isEmpty()) return
             val exported = ArrayList<String>()
