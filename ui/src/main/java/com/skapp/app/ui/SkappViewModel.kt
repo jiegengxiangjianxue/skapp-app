@@ -388,7 +388,14 @@ class SkappViewModel : ViewModel() {
     }
 
     /** 云端引擎产物（qwerzxcva/stocks-ai-view），供 EnginesScreen 使用 */
-    suspend fun loadEngineFeeds(): EngineFeed.EngineFeeds = EngineFeed.loadAll()
+    /**
+     * 引擎池数据。
+     *
+     * 走**本地实时装配**（实时快照 + 本地 12 引擎），不再读云端归档的 engine_v5/decision。
+     * 拿不到就返回带 missing 说明的空结构——宁缺毋假，不拿云端旧结论顶替。
+     */
+    suspend fun loadEngineFeeds(force: Boolean = false): EngineFeed.EngineFeeds =
+        com.skapp.app.data.EngineFeedLive.load(force)
 
     /** 聪明钱信号（ETF 份额）单独刷新：决策页右上「刷新」与下拉都走这里 */
     fun loadSmartMoney() {
