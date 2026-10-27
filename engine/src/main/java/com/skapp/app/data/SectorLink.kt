@@ -24,6 +24,40 @@ import org.json.JSONObject
  */
 object SectorLink {
 
+    /**
+     * 人工确认的板块名对照：东财 f100 行业名 → sector_engine 板块名。
+     *
+     * 2026-10-27 实测：sector_engine 27 个板块对 stock_sector_map 的 127 个板块直接命中 21 个，
+     * 6 个对不上，它们的个股全部落到「未知板块」：
+     *   白酒 / 国有大型银行 / 轨交设备 / 电视广播 / 地面兵装 / 专业连锁
+     * 根因是东财新分类给二级行业统一加了「Ⅱ」后缀（白酒Ⅱ、轨交设备Ⅱ …），
+     * 而 sector_engine 还在用旧名；「国有大型银行」额外多一层层级错位（三级 vs 二级）。
+     *
+     * 刻意**不做**模糊匹配：「非白酒」也含「白酒」二字，装的却是黄酒/啤酒
+     * （000752/000929/600059/600084），并进白酒就是方向性错误。
+     * 云端 data/sector_alias.json 是同一份人工确认表的权威版，两边的测试互相对住。
+     */
+    val ALIAS_TO_ENGINE: Map<String, String> = mapOf(
+        "白酒Ⅱ" to "白酒",
+        "轨交设备Ⅱ" to "轨交设备",
+        "电视广播Ⅱ" to "电视广播",
+        "地面兵装Ⅱ" to "地面兵装",
+        "专业连锁Ⅱ" to "专业连锁",
+    )
+
+    /**
+     * 东财「银行Ⅱ」是二级行业，里面混着股份行（招商 600036）和城商行（兰州 001227）。
+     * 全量映射会把招行说成国有大行，所以只认工农中建交邮储这六家。
+     */
+    private val BANK_WHITELIST: Set<String> =
+        setOf("601398", "601288", "601328", "601658", "601988", "601939")
+
+    /** 把东财行业名归一化到 sector_engine 的命名；非白名单的银行保持原名不动 */
+    internal fun normalizeSector(code: String, raw: String): String = when (raw) {
+        "银行Ⅱ" -> if (code in BANK_WHITELIST) "国有大型银行" else raw
+        else -> ALIAS_TO_ENGINE[raw] ?: raw
+    }
+
     /** 个股归属的数据来源。两者覆盖率差一个数量级，界面上必须说清用的是哪份。 */
     enum class MapSource(val label: String) {
         STOCK_SECTOR_MAP("成分股反查"),
@@ -178,7 +212,11 @@ object SectorLink {
             while (keys.hasNext()) {
                 val k = keys.next()
                 val v = m.optString(k)
-                if (v.isNotBlank()) stockToSector[k.filter { it.isDigit() }.takeLast(6)] = v
+                if (v.isNotBlank()) {
+                    val digits = k.filter { it.isDigit() }.takeLast(6)
+                    // 归一化到 sector_engine 的命名，否则「白酒Ⅱ」这类带后缀的板块永远对不上 byName
+                    if (digits.isNotBlank()) stockToSector[digits] = normalizeSector(digits, v)
+                }
             }
         }
 
