@@ -25,9 +25,16 @@ import kotlinx.coroutines.isActive
  * | 深算 | 5min | 候选池 ≤30 只拉日 K → [LocalEngine] 12 引擎 → 打分排序 | ~30 req / 5min |
  *
  * 心跳数据供市场状态、相位、资金榜用；深算结果供推股/引擎池用。两者互不阻塞：
- * 深算那一轮心跳会晚一点，但不会整轮停摆。
+ * 深算跑在子协程里，落地后补发一轮 tick。
+ *
+ * 深算还有**轮换**：每轮只深算 30 只，永远取预评分前列的话其余几千只永远不会被算到，
+ * 所以每轮把名额在预评分排序里整体后移一段（环形，N 轮铺满全市场），
+ * 结果并进累积池——覆盖面随时间扩大，而界面看到的榜单保持稳定。
  */
 object MarketHeartbeat {
+
+    /** 深算累积池上限：留一点余量给轮换补扫进来的票，又不至于榜单太长。 */
+    private const val DEEP_POOL_MAX = 60
 
     /** 一轮心跳的结果。`deep` 非空表示这轮顺带做了候选池深算。 */
     data class Tick(
@@ -56,11 +63,15 @@ object MarketHeartbeat {
     ) = coroutineScope {
         var lastTick = 0L
         var lastDeep = 0L
+        /** 深算结果累积池：code → 最新结果。轮换补扫的票并进来，界面看到的是稳定的榜单 */
+        val deepPool = LinkedHashMap<String, LocalScreener.Screened>()
         var deep: List<LocalScreener.Screened>? = null
         var deepAt: Long? = null
         var lastPulse: LivePulse? = null
         var lastSectors: LocalSectors.Result? = null
         var deepJob: Job? = null
+        // 深算轮换档位：每轮后移一段，避免「永远只深算预评分前 30 只」
+        var deepRound = 0
 
         while (currentCoroutineContext().isActive) {
             val open = MarketHours.isTrading() || MarketHours.isAuction()
@@ -110,11 +121,22 @@ object MarketHeartbeat {
             if (policy.shouldDeep(now, lastDeep) && deepJob?.isActive != true) {
                 lastDeep = now
                 deepJob = launch {
+                    val rotation = deepRound++
                     val res = runCatching {
-                        LocalScreener.screen(deepCriteria, onProgress = {}, mode = "all")
+                        LocalScreener.screen(
+                            deepCriteria, onProgress = {}, mode = "all", rotation = rotation,
+                        )
                     }.getOrDefault(emptyList())
                     if (res.isNotEmpty()) {
-                        deep = res
+                        // 累积而不是替换：轮换每轮只补扫一段，若直接替换，
+                        // 界面上的候选会每 5 分钟整批换一次，看起来像「推股在乱跳」。
+                        res.forEach { deepPool[it.code] = it }
+                        // 只保留评分最好的若干个，避免累积池无限增长
+                        deep = deepPool.values
+                            .sortedByDescending { it.centralScore ?: 0.0 }
+                            .take(DEEP_POOL_MAX)
+                        // 掉出榜单的票下次补扫还会重算，池子跟着淘汰
+                        deepPool.keys.retainAll(deep.map { it.code }.toSet())
                         deepAt = System.currentTimeMillis()
                         EngineFeedLive.invalidate()   // 深算结果变了，引擎池缓存跟着失效
                         // 深算落地后补发一轮：让界面立刻看到新的候选池，而不是等下一个 30 秒

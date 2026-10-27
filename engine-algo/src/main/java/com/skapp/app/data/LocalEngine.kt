@@ -414,6 +414,11 @@ object LocalEngine {
                 else -> reasons += "距 60 日高点 ${String.format("%.0f%%", r * 100)}"
             }
         }
+        if (p240 == null) {
+            // 选股链路默认只取 120 根日 K，240 日分位算不出来——要说出来，
+            // 不能让「位置引擎」看起来用到了 240 日口径
+            reasons += "240 日分位需 ≥240 根日 K（本轮 ${bars.size} 根，不参与）"
+        }
         p240?.let { p ->
             when {
                 p > 0.9 -> { score -= 6; reasons += "240 日分位 ${String.format("%.0f%%", p * 100)}，高位" }

@@ -87,8 +87,13 @@ object LocalScreener {
      *   盘前口径必须置 true —— 盘前推股只能看「截至上一交易日收盘」的指标，
      *   否则会把盘中实时当收盘值，等于用未来数据推过去。
      */
+    /**
+     * @param rotation 候选池轮换档位：0=按预评分取前列；n>0 表示在预评分排序里整段后移 n 段，
+     *        用于心跳多轮之间把深算名额摊到全市场（详见 [preselect]）。
+     */
     suspend fun screen(c: Criteria = Criteria(), onProgress: (String) -> Unit = {},
-                       mode: String = "score", dropLastBar: Boolean = false): List<Screened> = coroutineScope {
+                       mode: String = "score", dropLastBar: Boolean = false,
+                       rotation: Int = 0): List<Screened> = coroutineScope {
         onProgress("正在实时拉取全市场行情…")
         val snap = LiveMarket.snapshot()
         if (snap.isEmpty()) return@coroutineScope emptyList()
@@ -113,7 +118,7 @@ object LocalScreener {
         //   旧做法：按 mainNet 降序取前 N —— 候选池会被「大市值 + 已大额流入」的票锁死，
         //   量比很高但主力净流出（换手/洗盘）的票永远进不了深算，推股结果偏得很有规律。
         val cands = if (limitup) pool.sortedByDescending { it.pctChg ?: 0.0 }.take(50)
-        else preselect(pool, c.maxCandidates)
+        else preselect(pool, c.maxCandidates, rotation)
 
         onProgress("预筛命中 ${cands.size} 只，逐只拉 K 线 + 本地引擎计算…")
 
@@ -185,7 +190,11 @@ object LocalScreener {
      * 谁更值得深算，只有「各自在本池里排第几」可以相加。权重上量比最高——
      * 放量是本地引擎最能确认的先行信号，涨幅已经被预筛区间框住了。
      */
-    internal fun preselect(pool: List<LiveMarket.Row>, limit: Int): List<LiveMarket.Row> {
+    internal fun preselect(
+        pool: List<LiveMarket.Row>,
+        limit: Int,
+        rotation: Int = 0,
+    ): List<LiveMarket.Row> {
         if (pool.size <= limit) return pool
         fun pct(get: (LiveMarket.Row) -> Double?): DoubleArray {
             val idx = pool.indices.filter { get(pool[it]) != null }
@@ -205,6 +214,18 @@ object LocalScreener {
         val scored = pool.mapIndexed { i, row ->
             row to (0.35 * vol[i] + 0.25 * chg[i] + 0.20 * amt[i] + 0.20 * flow[i])
         }
-        return scored.sortedByDescending { it.second }.take(limit).map { it.first }
+        val ordered = scored.sortedByDescending { it.second }.map { it.first }
+        if (rotation <= 0) return ordered.take(limit)
+
+        // 轮换：每轮只深算 30 只，若永远取预评分前列，其余 5000 只**永远不会被深算**。
+        // 按档位把名额整体后移（环形），N 轮之内全市场都能轮到一次；
+        // 档位用整数而不是随机，保证同一档结果可复现、可测。
+        val start = (rotation.toLong() * limit % ordered.size).toInt()
+        val rotated = ordered.drop(start) + ordered.take(start)
+        return rotated.take(limit)
     }
+
+    /** 全市场铺开需要多少轮（预选上限 × 轮数 ≥ 池子大小）。供心跳记录「覆盖进度」。 */
+    internal fun rotationSpan(poolSize: Int, limit: Int): Int =
+        if (limit <= 0 || poolSize <= limit) 1 else ((poolSize + limit - 1) / limit)
 }

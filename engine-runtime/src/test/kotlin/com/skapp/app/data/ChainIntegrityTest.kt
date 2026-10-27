@@ -70,6 +70,34 @@ class ChainIntegrityTest {
         assertEquals(picked.size, picked.map { it.code }.toSet().size)
     }
 
+    @Test
+    fun `候选池要按轮换档位摊开而不是每轮都算同一批`() {
+        val pool = (0 until 100).map {
+            row("60%04d".format(it), 1.0 + (it % 5) * 0.1, 1.0 + it % 3, 1e9 + it, it.toDouble())
+        }
+        val r0 = LocalScreener.preselect(pool, limit = 30, rotation = 0).map { it.code }
+        val r1 = LocalScreener.preselect(pool, limit = 30, rotation = 1).map { it.code }
+        val r2 = LocalScreener.preselect(pool, limit = 30, rotation = 2).map { it.code }
+        assertEquals(30, r1.size)
+        // 三档之间不应完全重叠：否则「轮换」没发生，5000 只里永远只有 30 只被深算
+        assertTrue((r0.intersect(r1.toSet())).size < 30, "第 1 档与第 0 档完全相同，轮换无效")
+        assertTrue((r1.intersect(r2.toSet())).size < 30)
+        // 三档并起来应覆盖整池
+        assertEquals(100, (r0 + r1 + r2 + LocalScreener.preselect(pool, 30, 3).map { it.code }).toSet().size)
+    }
+
+    @Test
+    fun `轮换档位越界要环形回到开头`() {
+        val pool = (0 until 40).map { row("60%04d".format(it), 1.0, 1.5, 1e9, it.toDouble()) }
+        // 40 只 / 每轮 20 只 → 2 轮铺满，第 2 档回到与第 0 档相同的位置
+        val r0 = LocalScreener.preselect(pool, limit = 20, rotation = 0).map { it.code }
+        val r2 = LocalScreener.preselect(pool, limit = 20, rotation = 2).map { it.code }
+        assertEquals(r0, r2)
+        assertEquals(2, LocalScreener.rotationSpan(40, 20))
+        assertEquals(1, LocalScreener.rotationSpan(20, 20))
+        assertEquals(23, LocalScreener.rotationSpan(4500, 200))
+    }
+
     // ── 3) 全球闸门不能因为数字类型被闷死 ──
 
     @Test
