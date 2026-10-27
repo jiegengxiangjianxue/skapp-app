@@ -29,6 +29,13 @@ data class DayMarketSnapshot(
     val final: Boolean,
     val entries: List<Entry>,
     val sectors: List<SectorDay> = emptyList(),
+    /**
+     * 这份存档是否带「是否摸过涨停」这一位（v2 起有，v1 没有）。
+     *
+     * 没有它就算不出炸板数，封板率不是「100%」而是**不可得**——两者差得远：
+     * 一个说的是「今天没有炸板」，另一个说的是「我们不知道」。
+     */
+    val hasTouchInfo: Boolean = true,
 ) {
     data class Entry(
         val code: String,
@@ -36,7 +43,18 @@ data class DayMarketSnapshot(
         val amount: Double?,
         val limitUp: Boolean,
         val close: Double?,
-    )
+        /**
+         * 当日是否**摸过**涨停价（含已封住的）。
+         *
+         * 封板率 = 涨停 /（涨停 + 炸板），炸板 = 摸过但没封住。所以要还原历史封板率，
+         * 光存「是否涨停」不够——必须连「摸过没封住」也一起存下来（v1 存档没有这一位，
+         * 读旧文件时退化为 `touched == limitUp`，即历史封板率不可得而不是 100%）。
+         */
+        val touchedLimit: Boolean = limitUp,
+    ) {
+        /** 炸板：摸过涨停价但收盘没封住。 */
+        val brokenBoard: Boolean get() = touchedLimit && !limitUp
+    }
 
     data class SectorDay(
         val name: String,
@@ -79,6 +97,12 @@ object LimitBoardCalc {
         val ydayLimitUpAvgPct: Double?,
         val ydayLimitUp: Int,
         val daysUsed: Int,
+        /** 当日摸过涨停价的只数（含封住的） */
+        val touched: Int = 0,
+        /** 当日炸板只数 = touched - limitUp */
+        val broken: Int = 0,
+        /** 封板率 = 涨停 /（涨停 + 炸板）；存档没存「摸过涨停」时不可得 */
+        val seal: Double? = null,
     ) {
         /** 有几天数据可用（少于 2 天时连板相关字段都不可得）。 */
         val hasHistory: Boolean get() = daysUsed >= 2
@@ -89,12 +113,34 @@ object LimitBoardCalc {
      */
     fun compute(days: List<DayMarketSnapshot>): Stats? {
         if (days.isEmpty()) return null
-        val today = days.last()
-        val todayLimitUp = today.limitUpCodes()
+        val sets = days.map { it.limitUpCodes() }
+        return statsAt(days, sets, days.size - 1)
+    }
+
+    /**
+     * 多日情绪序列：最近 [last] 个交易日的涨停/连板/晋级/封板率。
+     *
+     * 这是「市场情绪周期」的唯一真凭实据——单日 height=3、promo=25% 说明不了什么，
+     * 但「1 → 2 → 3 → 2」和「晋级率 60% → 45% → 25%」连起来就是退潮。
+     */
+    fun series(days: List<DayMarketSnapshot>, last: Int = 10): List<Stats> {
+        if (days.isEmpty()) return emptyList()
+        val sets = days.map { it.limitUpCodes() }
+        val from = maxOf(0, days.size - last)
+        return (from until days.size).mapNotNull { i -> statsAt(days, sets, i) }
+    }
+
+    private fun statsAt(
+        days: List<DayMarketSnapshot>,
+        sets: List<Set<String>>,
+        idx: Int,
+    ): Stats? {
+        val today = days[idx]
+        val todayLimitUp = sets[idx]
         if (todayLimitUp.isEmpty() && today.entries.isEmpty()) return null
 
-        val prev = days.getOrNull(days.size - 2)
-        val prevLimitUp = prev?.limitUpCodes().orEmpty()
+        val prev = if (idx >= 1) days[idx - 1] else null
+        val prevLimitUp = if (idx >= 1) sets[idx - 1] else emptySet()
 
         val firstBoard = if (prev == null) -1 else todayLimitUp.count { it !in prevLimitUp }
         val ge2 = if (prev == null) -1 else todayLimitUp.count { it in prevLimitUp }
@@ -113,13 +159,12 @@ object LimitBoardCalc {
         var height = 0
         for (code in todayLimitUp) {
             var run = 1
-            var idx = days.size - 2
-            while (idx >= 0) {
-                val day = days[idx]
-                if (day.entries.isEmpty()) break
-                if (code !in day.limitUpCodes()) break
+            var i = idx - 1
+            while (i >= 0) {
+                if (days[i].entries.isEmpty()) break
+                if (code !in sets[i]) break
                 run++
-                idx--
+                i--
             }
             if (run > height) {
                 height = run
@@ -130,6 +175,9 @@ object LimitBoardCalc {
             }
         }
 
+        val touched = today.entries.count { it.touchedLimit }
+        val broken = today.entries.count { it.brokenBoard }
+        val denom = todayLimitUp.size + broken
         return Stats(
             date = today.date,
             limitUp = todayLimitUp.size,
@@ -140,7 +188,11 @@ object LimitBoardCalc {
             promo = promo,
             ydayLimitUpAvgPct = ydayAvg,
             ydayLimitUp = prevLimitUp.size,
-            daysUsed = days.size,
+            daysUsed = idx + 1,
+            touched = touched,
+            broken = broken,
+            // 老存档没有炸板信息 → 封板率不可得（null），而不是算成 100%
+            seal = if (today.hasTouchInfo && denom > 0) todayLimitUp.size.toDouble() / denom else null,
         )
     }
 }

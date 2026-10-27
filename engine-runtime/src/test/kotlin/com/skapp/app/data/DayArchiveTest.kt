@@ -109,6 +109,30 @@ class DayArchiveTest {
         assertEquals(0, MarketDayArchive.storedDays())
     }
 
+    @Test
+    fun `v1 老存档还能读，封板率退化为不可得而不是百分百`() {
+        val dir = tempDir()
+        MarketDayArchive.init(dir)
+        MarketDayArchive.clearAll()
+        // 手写一份 v1 格式（没有「摸过涨停」这一位）
+        val f = File(dir, "market_days/2026-10-20.dat.gz")
+        f.parentFile.mkdirs()
+        java.util.zip.GZIPOutputStream(f.outputStream()).use { out ->
+            out.write(
+                ("#v1\t2026-10-20\t0\t1\n" +
+                    "R\t600001\t10.0000\t100000000.0000\t1\t11.0000\n" +
+                    "R\t600002\t5.0000\t100000000.0000\t0\t10.5000\n").toByteArray(),
+            )
+        }
+        val snap = MarketDayArchive.load("2026-10-20")
+        assertNotNull(snap)
+        assertEquals(2, snap.entries.size)
+        val s = LimitBoardCalc.compute(listOf(snap))!!
+        assertEquals(1, s.limitUp)
+        assertEquals(0, s.broken, "v1 没有炸板信息，不能凭空判出炸板")
+        assertNull(s.seal, "没有炸板信息时封板率是不可得，不是 100%")
+    }
+
     // ── 连板 / 晋级 ───────────────────────────────────────
 
     private fun day(date: String, limitUp: List<String>, all: List<String> = emptyList()): DayMarketSnapshot {

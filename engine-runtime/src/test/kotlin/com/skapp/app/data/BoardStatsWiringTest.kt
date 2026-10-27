@@ -59,7 +59,8 @@ class BoardStatsWiringTest {
             sectors = sectors(),
             history = history,
         )
-        val d = feeds.marketPhase!!.daily.first()
+        val d = feeds.marketPhase!!.daily.last()   // 升序，最后一行是「今天」
+        assertEquals("2026-10-27", d.date)
         assertEquals(2, d.height, "600001 昨日+今日连板 → 高度 2")
         assertEquals(1, d.firstBoard, "600003 是首板")
         assertEquals(1, d.ge2)
@@ -81,12 +82,75 @@ class BoardStatsWiringTest {
             sectors = sectors(),
             history = emptyList(),
         )
-        val d = feeds.marketPhase!!.daily.first()
+        val d = feeds.marketPhase!!.daily.last()
         assertEquals(-1, d.firstBoard)
         assertEquals(-1, d.height)
         assertEquals(-1.0, d.promo)
         assertTrue(feeds.missing.any { it.startsWith("market_phase.firstBoard") })
         assertTrue(feeds.marketPhase!!.labels["连板高度"]!!.contains("不可得"))
+    }
+
+    @Test
+    fun `多日存档要给出逐日情绪序列而不是只有今天`() {
+        val history = listOf(
+            day("2026-10-22", listOf("600001")),
+            day("2026-10-23", listOf("600001", "600002")),
+            day("2026-10-24", listOf("600001", "600002", "600003")),
+            day("2026-10-27", listOf("600001")),
+        )
+        val feeds = EngineFeedLive.assemble(
+            pulse = pulse(), screened = emptyList(), globalIndices = emptyList(),
+            snapshot = snapshot(), sectors = sectors(), history = history,
+        )
+        val daily = feeds.marketPhase!!.daily
+        assertEquals(4, daily.size, "4 天存档应出 4 行走势")
+        assertEquals(listOf("2026-10-22", "2026-10-23", "2026-10-24", "2026-10-27"), daily.map { it.date })
+        // 高度逐日长起来再掉下去：1 → 2 → 3 → 4
+        assertEquals(listOf(1, 2, 3, 4), daily.map { it.height })
+    }
+
+    @Test
+    fun `实时快照要覆盖成今天的最后一行`() {
+        val ts = 1_760_000_000_000L               // 2025-10-09 前后的一个交易日时点
+        val today = CstTime.day(ts)
+        val rows = (0 until 120).map { i ->
+            val limitUp = i >= 2                   // 前 2 只封住，其余不涨停
+            LiveMarket.Row(
+                code = "60%04d".format(i), name = "股$i",
+                price = if (limitUp) 11.0 else 10.5,
+                pctChg = if (limitUp) 10.0 else 5.0,
+                volumeLots = 1000.0, amount = 1e8, amplitude = 1.0, turnoverRate = 1.0, pe = 10.0,
+                volRatio = 1.2, mv = 1e9, mainNet = 1e6, ts = ts,
+                high = 10.5, prevClose = 10.0, chg60d = 5.0,
+            )
+        }
+        val feeds = EngineFeedLive.assemble(
+            pulse = pulse(), screened = emptyList(), globalIndices = emptyList(),
+            ts = ts, snapshot = rows, sectors = sectors(),
+            history = listOf(day("2025-10-08", listOf("600002"))),
+        )
+        val last = feeds.marketPhase!!.daily.last()
+        assertEquals(today, last.date)
+        assertEquals(118, last.ge2 + last.firstBoard, "实时快照里 118 只涨停")
+        assertEquals(1, last.ge2, "600002 昨天也涨停 → 连板 1 只")
+        assertEquals(117, last.firstBoard)
+    }
+
+    @Test
+    fun `封板率历史要用存档的摸过涨停标记算`() {
+        val d = DayMarketSnapshot(
+            date = "2026-10-27", ts = 0, final = true,
+            entries = listOf(
+                DayMarketSnapshot.Entry("600001", 10.0, 1e8, true, 11.0, touchedLimit = true),   // 封住
+                DayMarketSnapshot.Entry("600002", 10.0, 1e8, true, 11.0, touchedLimit = true),   // 封住
+                DayMarketSnapshot.Entry("600003", 6.0, 1e8, false, 10.6, touchedLimit = true),   // 摸过炸板
+                DayMarketSnapshot.Entry("600004", 3.0, 1e8, false, 10.3, touchedLimit = false),
+            ),
+        )
+        val s = LimitBoardCalc.compute(listOf(d))!!
+        assertEquals(3, s.touched)
+        assertEquals(1, s.broken)
+        assertEquals(2.0 / 3.0, s.seal!!, 1e-9, "封板率 = 涨停 2 /（涨停 2 + 炸板 1）")
     }
 
     @Test

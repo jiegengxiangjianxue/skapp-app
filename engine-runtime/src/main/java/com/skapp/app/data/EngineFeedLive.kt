@@ -23,14 +23,21 @@ import java.util.Locale
  *
  * ## 拿不到的不编
  *
- * `cycle_pool`（板块周期池）、`rps_rotation`（全市场 250 日相对强度）、`strategy_card`
- * （需全市场 240 日重算）、`ai_pick`（LLM 产物）、`market_phase` 的连板高度/晋级率/封板率
- * —— 这些实时接口给不了，一律进 `missing` 并写明原因，**不用 0 或旧值冒充**。
+ * 多日统计（`market_phase` 的连板高度/晋级率/首板/2 板+、`cycle_pool` 的板块动量、
+ * `rps20/120/250`）需要的不是算法而是**历史**：实时接口只给「此刻」。
+ * 这类字段现在由 [MarketDayArchive] 的本地日级存档逐日积累（攒够就出真值），
+ * 攒不够仍进 `missing` 并写明差几天，**不用 0 或旧值冒充**。
+ *
+ * `ai_pick` 不是 LLM 产物而是本地评分（`basis=local-score` 必须标出来），
+ * `strategy_card` 是本地扫描，这两块的来源差异写在各自 note 里。
  */
 object EngineFeedLive {
 
     /** 装配时读取的本地历史天数：够算 20 日动量与 rps20（120/250 攒够才会出现）。 */
     private const val HISTORY_DAYS = 260
+
+    /** 情绪序列展示天数（连板高度/晋级率/封板率的逐日走势）。 */
+    private const val EMOTION_DAYS = 10
 
     /** 引擎池缓存：盘中 45s（一次装配要拉几十只日K，不能每次进页面都重算）。 */
     private const val CACHE_TTL_MS = 45_000L
@@ -133,22 +140,65 @@ object EngineFeedLive {
 
         // 封板率本地可算：涨停 /（涨停 + 炸板），炸板靠「最高价摸过涨停价、现价没封住」
         val seal = if (snapshot.isEmpty()) null else LiveExtras.seal(snapshot)
-        // 连板高度/晋级率/首板数：靠本地日级存档的多日涨停序列算（没攒够就是不可得）
-        val board = if (history.isEmpty()) null else LimitBoardCalc.compute(history)
+        // 今日存档可能还在 60s 节流窗口里，直接用实时快照拼一份「今日」覆盖进序列，
+        // 保证界面上最后一天是此刻的数，而不是最多 1 分钟前的。
+        // 盘前/休市拿到的快照 ts 是昨日的 —— 那种情况不覆盖，免得把旧行情记成今天。
+        val liveDay = if (snapshot.isEmpty() || CstTime.day(snapshot.maxOf { it.ts }) != date) null else {
+            DayMarketSnapshot(
+                date = date,
+                ts = ts,
+                final = false,
+                entries = snapshot.filter { it.tradable }.map {
+                    DayMarketSnapshot.Entry(
+                        code = it.code,
+                        pctChg = it.pctChg,
+                        amount = it.amount,
+                        limitUp = it.atLimitUp,
+                        close = it.price,
+                        touchedLimit = it.atLimitUp || it.brokenBoard,
+                    )
+                },
+                sectors = sectors?.rows.orEmpty().map {
+                    DayMarketSnapshot.SectorDay(it.name, it.chg1d, it.up, it.down, it.heat)
+                },
+            )
+        }
+        val days = when {
+            liveDay == null -> history
+            else -> (history.filter { it.date != liveDay.date } + liveDay).sortedBy { it.date }
+        }
+        // 连板高度/晋级率/首板数/封板率：靠本地日级存档的多日涨停序列算（没攒够就是不可得）
+        val board = if (days.isEmpty()) null else LimitBoardCalc.compute(days)
+        val emotion = if (days.isEmpty()) emptyList() else LimitBoardCalc.series(days, last = EMOTION_DAYS)
 
         val phase = EngineFeed.MarketPhase(
             ts = iso,
-            daily = listOf(
-                EngineFeed.MarketPhaseDaily(
-                    date = date,
-                    // 有本地存档就填真值；没攒够仍按 -1 表示不可得（不用 0 冒充）
-                    firstBoard = board?.firstBoard ?: -1,
-                    ge2 = board?.ge2 ?: -1,
-                    height = board?.height ?: -1,
-                    promo = board?.promo ?: -1.0,
-                    seal = seal?.ratio ?: -1.0,
-                ),
-            ),
+            daily = if (emotion.isEmpty()) {
+                // 一条历史都没有：仍然给当天一行，逐项写 -1（不可得），不用 0 冒充
+                listOf(
+                    EngineFeed.MarketPhaseDaily(
+                        date = date,
+                        firstBoard = -1,
+                        ge2 = -1,
+                        height = -1,
+                        promo = -1.0,
+                        seal = seal?.ratio ?: -1.0,
+                    ),
+                )
+            } else {
+                emotion.mapIndexed { i, s ->
+                    // 最后一行是「今天」：封板率用实时值（存档那份最多 60s 前的）
+                    val isToday = i == emotion.size - 1
+                    EngineFeed.MarketPhaseDaily(
+                        date = s.date,
+                        firstBoard = s.firstBoard,
+                        ge2 = s.ge2,
+                        height = s.height,
+                        promo = s.promo ?: -1.0,
+                        seal = (if (isToday) seal?.ratio else null) ?: s.seal ?: -1.0,
+                    )
+                }
+            },
             labels = mapOf(
                 "口径" to "本地实时（东财 clist 全市场盘口现算）",
                 "涨跌家数" to "${pulse.up}涨 / ${pulse.down}跌 / ${pulse.flat}平",
@@ -174,6 +224,9 @@ object EngineFeedLive {
                 "昨日涨停今日表现" to (board?.ydayLimitUpAvgPct?.let {
                     String.format(Locale.CHINA, "%+.2f%%", it)
                 } ?: "不可得"),
+                "情绪序列" to if (emotion.size >= 2) {
+                    "${emotion.size} 个交易日的涨停/连板/晋级/封板率走势（本地存档累积）"
+                } else "仅当日（本地存档 ${history.size} 天，攒够 2 天出走势）",
                 "存档" to "本地日级快照 ${history.size} 天（${history.firstOrNull()?.date ?: "-"} ~ $date）",
             ),
         )

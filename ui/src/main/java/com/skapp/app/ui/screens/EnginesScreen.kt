@@ -345,13 +345,30 @@ private fun MarketPhaseSection(m: EngineFeed.MarketPhase?) {
         Column(Modifier.padding(12.dp)) {
             Text("⑤ 市场情绪阶段", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(4.dp))
-            m.daily.takeLast(5).reversed().forEach { d ->
+            m.daily.takeLast(6).reversed().forEach { d ->
                 val phase = findPhase(m.labels, d.seal, d.promo)
+                // -1 是「不可得」的哨兵值，不能直接显示成「封板-1」或「高度-1 板」
+                fun n(v: Int) = if (v < 0) "—" else "$v"
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(d.date.take(10), style = MaterialTheme.typography.labelMedium, modifier = Modifier.width(80.dp))
-                    Text("封板${d.firstBoard}  ≥2连板${d.ge2}  高度${d.height}", style = MaterialTheme.typography.bodySmall)
-                    Text(phase, style = MaterialTheme.typography.bodySmall.copy(color = phaseColor(phase)))
+                    Text(d.date.take(10), style = MaterialTheme.typography.labelMedium, modifier = Modifier.width(76.dp))
+                    Text(
+                        "首板${n(d.firstBoard)} 连板${n(d.ge2)} 高${n(d.height)}板 " +
+                            "晋级" + (if (d.promo < 0) "—" else String.format("%.0f%%", d.promo * 100)),
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    Text(
+                        (if (d.seal < 0) "封—" else String.format("封%.0f%%", d.seal * 100)) + " " + phase,
+                        style = MaterialTheme.typography.bodySmall.copy(color = phaseColor(phase)),
+                    )
                 }
+            }
+            if (m.daily.size == 1) {
+                Text(
+                    m.labels["情绪序列"] ?: "",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color(0xFF6B7280),
+                    modifier = Modifier.padding(top = 2.dp),
+                )
             }
         }
     }

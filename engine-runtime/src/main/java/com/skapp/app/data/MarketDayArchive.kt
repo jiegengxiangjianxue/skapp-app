@@ -32,7 +32,9 @@ object MarketDayArchive {
     private const val DIR_NAME = "market_days"
     private const val MAX_DAYS = 420
     private const val INTRADAY_MIN_INTERVAL_MS = 60_000L
-    private const val HEADER = "#v1"
+    /** v2 起每行多一位「是否摸过涨停」（封板率历史的原料）；v1 文件仍能读（退化处理）。 */
+    private const val HEADER = "#v2"
+    private val KNOWN_HEADERS = setOf("#v1", "#v2")
 
     @Volatile private var root: File? = null
     @Volatile private var lastWriteAt = 0L
@@ -111,6 +113,7 @@ object MarketDayArchive {
                     amount = it.amount,
                     limitUp = it.atLimitUp,
                     close = it.price,
+                    touchedLimit = it.atLimitUp || it.brokenBoard,
                 )
             },
             sectors = run {
@@ -141,7 +144,10 @@ object MarketDayArchive {
             val w = out.writer(Charsets.UTF_8)
             w.write("$HEADER\t${snap.date}\t${snap.ts}\t${if (snap.final) 1 else 0}\n")
             for (e in snap.entries) {
-                w.write("R\t${e.code}\t${fmt(e.pctChg)}\t${fmt(e.amount)}\t${if (e.limitUp) 1 else 0}\t${fmt(e.close)}\n")
+                w.write(
+                    "R\t${e.code}\t${fmt(e.pctChg)}\t${fmt(e.amount)}\t${if (e.limitUp) 1 else 0}\t" +
+                        "${fmt(e.close)}\t${if (e.touchedLimit) 1 else 0}\n",
+                )
             }
             for (s in snap.sectors) {
                 w.write("S\t${s.name}\t${fmt(s.chg1d)}\t${s.up}\t${s.down}\t${fmt(s.heat)}\n")
@@ -169,6 +175,7 @@ object MarketDayArchive {
         var date = ""
         var ts = 0L
         var final = false
+        var hasTouchInfo = true
         val entries = ArrayList<DayMarketSnapshot.Entry>()
         val sectors = ArrayList<DayMarketSnapshot.SectorDay>()
         GZIPInputStream(file.inputStream().buffered()).use { input ->
@@ -176,18 +183,23 @@ object MarketDayArchive {
                 if (line.isEmpty()) return@forEachLine
                 val p = line.split('\t')
                 when (p[0]) {
-                    HEADER -> {
+                    in KNOWN_HEADERS -> {
+                        hasTouchInfo = p[0] == "#v2"
                         date = p.getOrNull(1).orEmpty()
                         ts = p.getOrNull(2)?.toLongOrNull() ?: 0L
                         final = p.getOrNull(3) == "1"
                     }
                     "R" -> if (p.size >= 6) {
+                        val limitUp = p[4] == "1"
                         entries += DayMarketSnapshot.Entry(
                             code = p[1],
                             pctChg = num(p[2]),
                             amount = num(p[3]),
-                            limitUp = p[4] == "1",
+                            limitUp = limitUp,
                             close = num(p[5]),
+                            // v1 存档没有这一位：退化为「涨停即摸过」，于是那几天的封板率
+                            // 只能是 100%（等于不可得），绝不能反过来假设「没摸过」
+                            touchedLimit = if (p.size >= 7) p[6] == "1" else limitUp,
                         )
                     }
                     "S" -> if (p.size >= 6) {
@@ -203,7 +215,7 @@ object MarketDayArchive {
             }
         }
         if (date.isEmpty()) return null
-        return DayMarketSnapshot(date, ts, final, entries, sectors)
+        return DayMarketSnapshot(date, ts, final, entries, sectors, hasTouchInfo)
     }
 
     /** 已存档的交易日，升序。 */
