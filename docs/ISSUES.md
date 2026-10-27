@@ -265,3 +265,10 @@ Pivot/MA/SuperTrend/ElderForce/Vortex/RSI + 本地补的 MACD/RSV），缺的是
 - breadth：±10% 直方图口径、advance/decline/amount 无历史接口，不可回填
 - ST 5% 涨停在直方图口径下必然漏计（已降级为对照字段，主值不受影响）
 
+## 闪退 / 稳定性
+
+| 问题 | 状态 | 说明 |
+|---|---|---|
+| 决策页一进就闪退（vc18 及以前） | ✅ 2026-10-27（vc19 修复） | 根因：`java.lang.NoSuchMethodError: No method toMap()Ljava/util/Map; in class Lorg/json/JSONObject;`（`SkappApi.kt:626`）。Kotlin **成员优先于扩展**，自写的 `private fun JSONObject.toMap()` 是死代码，调用被解析成 `org.json:json` jar 的成员；而 Android 平台内置 org.json 没有 `toMap()`（android-35 的 JSONObject 只有 48 个方法，那个 jar 有 101 个）。→ 统一改名为 `toPlainMap()/toPlainList()/toPlainMapList()`，4 份重复实现合并到 `JsonPlain.kt`；新增 `tools/org_json_api_guard.py` 按字节码＋android.jar 方法集比对，CI 双段生效 |
+| ANR / 低内存被回收 / native 崩溃三种死法没有任何现场 | ✅ 2026-10-27（vc19 新增） | `CrashGuard` 只抓 Java 未捕获异常。新增 `HealthGuard`：主线程心跳（5s 停顿即当场落盘主线程栈）+ 内存水位采样（80%/92% 分级，系统 lowMemory 一律记），见 `docs/HEALTH-GUARD.md`。诊断页加「运行健康」卡片可看状态/一键导出 |
+| 改 `ui/` 的提交不触发 CI | ✅ 2026-10-27 | `android-build.yml` 的 `paths` 漏了 `ui/**`（2026-10-27 拆出 :ui 模块后一直没补），只改界面层的推送不会跑任何门禁 |

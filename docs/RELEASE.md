@@ -29,7 +29,12 @@
 
 守卫（CI 自动执行）：
 - `engine-gate`：`:engine` 出现 `import android.` / `import androidx.` 直接失败；`:engine` 不得 `project(":ui")`
+- `engine-kotlin`：健康守卫的判定逻辑与测试必须存在（`ProcessHealthCore*`），防被当死代码清掉；
+  另有 `tools/org_json_api_guard.py` 黑名单模式守在编译后
 - `ui-render-gate`：先 `:ui:compileDebugKotlin` 再 `:app:compileDebugKotlin`，UI 类型错误会报成 UI 错误而不是「APK 构建失败」
+- `ui-render-gate`：`HealthGuard` 必须被 `MainActivity` 安装、且不得碰 `crash_*` / `crash_last.txt`（通道隔离）
+- `ui-render-gate`：`tools/org_json_api_guard.py --android-jar <android.jar>` 白名单模式，
+  把三层字节码里引用到的每个 org.json 方法与平台方法集逐项比对（vc19 闪退根因的守卫）
 
 ## 本地可做的验证（aarch64 容器，不能打 APK）
 
@@ -42,6 +47,10 @@
 
 # 壳层（aapt2 只有 x86_64 二进制，本地必须跳过资源任务）
 ./gradlew :app:compileDebugKotlin -x :app:processDebugResources
+
+# org.json 越界守卫（本机有 android.jar 就能跑白名单模式）
+python3 tools/org_json_api_guard.py --self-test
+python3 tools/org_json_api_guard.py --android-jar /root/android-sdk/platforms/android-35/android.jar
 ```
 
 ## 凭据
