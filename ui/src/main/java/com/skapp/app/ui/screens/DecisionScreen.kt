@@ -243,6 +243,9 @@ private fun SmartMoneyCard(state: UiState, vm: SkappViewModel) {
                 listOfNotNull(sm.ts, sm.source).joinToString(" · ").ifBlank { "时点暂无" },
                 style = MaterialTheme.typography.bodySmall, color = Color.Gray,
             )
+            sm.staleText?.let {
+                Text(it, style = MaterialTheme.typography.bodySmall, color = Color(0xFFB8860B))
+            }
             Spacer(Modifier.height(6.dp))
             if (sm.ready) {
                 Text(

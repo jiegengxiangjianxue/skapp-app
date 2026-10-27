@@ -3,8 +3,6 @@ package com.skapp.app.data
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
-import java.net.HttpURLConnection
-import java.net.URL
 
 /**
  * 聪明钱信号：宽基 ETF 份额跟踪（「盯份额抄作业」口径）。
@@ -31,11 +29,6 @@ import java.net.URL
  * - 净申购用「亿份」表达，不换算成金额（没有净值就不臆造金额）。
  */
 object SmartMoney {
-
-    private const val URL_ETF =
-        "https://raw.githubusercontent.com/qwerzxcva/stocks-ai-view/main/data/etf_shares.json"
-
-    private const val TIMEOUT = 12000
 
     /** 云端出仓位信号所需的最少历史天数；实际以 etf_shares.json 的 min_history_days 为准 */
     const val NEED_DAYS = 20
@@ -73,6 +66,8 @@ object SmartMoney {
         val etfsUsed: Int = 0,
         val windowDays: Int = 0,
         val minHistoryDays: Int = NEED_DAYS,
+        /** 云端文件偏旧时的提示；正常为 null */
+        val staleText: String? = null,
     ) {
         val ready: Boolean get() = liveDays >= minHistoryDays && positionPct != null
         val progressText: String get() = "$liveDays/$minHistoryDays 天历史"
@@ -96,25 +91,15 @@ object SmartMoney {
         private fun pctText(v: Double): String = String.format("%.0f%%", v * 100)
     }
 
-    suspend fun fetch(): Signal? = withContext(Dispatchers.IO) {
-        val text = runCatching { httpGet(URL_ETF) }.getOrNull() ?: return@withContext null
-        runCatching { parse(text) }.getOrNull()
-    }
-
-    private fun httpGet(url: String): String {
-        var conn: HttpURLConnection? = null
-        try {
-            conn = (URL(url).openConnection() as HttpURLConnection).apply {
-                connectTimeout = TIMEOUT
-                readTimeout = TIMEOUT
-                requestMethod = "GET"
-                setRequestProperty("User-Agent", "skapp-android/1.0")
-            }
-            check(conn.responseCode == 200) { "http ${conn.responseCode}" }
-            return conn.inputStream.bufferedReader().use { it.readText() }
-        } finally {
-            conn?.disconnect()
-        }
+    /**
+     * 取数统一走 CloudFeed：共享缓存（10 分钟）、按文件 ts 判陈旧、失败退回上一版快照。
+     * 以前这里是自己开连接，云端抖动时直接返回 null，界面就成了「暂无数据」。
+     */
+    suspend fun fetch(force: Boolean = false): Signal? {
+        val doc = CloudFeed.load(CloudFeed.Doc.ETF_SHARES, force)
+        val json = doc.json ?: return null
+        return runCatching { parse(json.toString()) }.getOrNull()
+            ?.copy(staleText = if (doc.stale) "云端数据 ${doc.tsText}（可能未更新）" else null)
     }
 
     internal fun parse(text: String): Signal {
