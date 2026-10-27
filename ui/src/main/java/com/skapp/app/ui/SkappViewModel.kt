@@ -135,6 +135,9 @@ data class UiState(
     val poolsLoadedAt: Long = 0L,
     /** 引擎产出聚合（engines_feed：regime/cycle/anomaly/price_level/orchestrator） */
     val engineFeeds: com.skapp.app.data.EngineFeed.EngineFeeds? = null,
+    /** 最近一轮盘中心跳（0=未启动）；界面用它显示「30 秒前更新」 */
+    val heartbeatAt: Long = 0L,
+    val heartbeatLabel: String = "",
     /** 因子否决板：云端 v3 标定权重 × 端上 16 指标；gate 为样本外/市况校准闸门 */
     val factorBoard: com.skapp.app.data.FactorBoard? = null,
     val factorBoardLoading: Boolean = false,
@@ -603,15 +606,37 @@ class SkappViewModel : ViewModel() {
         viewModelScope.launch { runCatching { refreshMarketPulse() } }
     }
 
-    /** 全市场快照异动榜：交易时段约30秒，规则预筛不拉逐股K线。 */
+    /**
+     * 全市场实时循环：统一交给 [MarketHeartbeat] 管节拍。
+     *
+     * 一轮心跳（30s）做三件事：
+     *   1. 全股盘口 → 异动榜（[refreshMarketPulse]，不拉逐股 K 线）
+     *   2. 全股盘口 → 市场状态（相位/涨跌停，复用同一份快照，不再各拉一遍）
+     *   3. 每 5 分钟顺带做一次候选池深算（逐只日 K + 12 引擎），结果写进 screened
+     *
+     * 节拍逻辑抽在 [HeartbeatPolicy]，交易时段判断也在心跳内部，外层不再自己 sleep。
+     */
     fun startMarketPulseLoop() {
         pulseJob?.cancel()
-        pulseJob = viewModelScope.launch {
-            while (isActive) {
-                if (!_state.value.marketPulseLoading && (MarketHours.isTrading() || MarketHours.isAuction())) {
-                    runCatching { refreshMarketPulse() }
-                }
-                delay(if (MarketHours.isTrading() || MarketHours.isAuction()) 30_000L else 180_000L)
+        pulseJob = viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            runCatching {
+                com.skapp.app.data.MarketHeartbeat.run(onTick = { tick ->
+                    _state.value = _state.value.copy(
+                        heartbeatAt = tick.at,
+                        heartbeatLabel = tick.error ?: tick.pulse.label,
+                    )
+                    runCatching { com.skapp.app.data.MarketStateEngine.computeLive(tick.pulse) }
+                        .getOrNull()
+                        ?.let { ms ->
+                            _state.value = _state.value.copy(marketState = ms, marketStateLoading = false)
+                        }
+                    tick.deep?.takeIf { it.isNotEmpty() }?.let { deep ->
+                        _state.value = _state.value.copy(screened = deep)
+                    }
+                    if (!_state.value.marketPulseLoading) {
+                        runCatching { refreshMarketPulse() }
+                    }
+                })
             }
         }
     }
