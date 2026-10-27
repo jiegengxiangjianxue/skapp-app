@@ -146,7 +146,65 @@
 
 `smart_money.position_pct = 47.9`、`index_used = 6`、`window_days = 230`（单只口径是 43.5，都在中性区）。
 
+## 2026-10-27 第二轮：把云端已有的标定与验证接进引擎链路
+
+云端仓库里有一堆「算好了但 App 从没读过」的东西：weight_calibration（v3 标定，5~6 万样本、
+16 指标 × 4 持有期）、walkforward（45 折样本外）、rps_rotation、market_breadth_history……
+App 只用到了其中 3 个文件，择股阈值还是写死的。这轮接了三处。
+
+### 1. 数据层：CloudFeed 统一入口
+
+原来每个模块自己拼 URL、自己开连接；`EngineFeed.loadAll()` 串行拉 8 个文件，任何一个卡住
+就整轮超时，失败还只是静默丢进 `missing`。现在统一成：
+
+```
+Doc 注册表 → 并发拉取 → 内存缓存(TTL 10min) → 按文件自身 ts 判陈旧 → 失败退回旧快照
+```
+
+三种状态明确区分：`json==null`（拉不到）、`stale=true`（拿到了但云端没更新）、正常。
+`EngineFeed` 已切过来，单文件挂掉不再连累其它七个。
+
+### 2. 算法：FactorWeightStrategy（云端权重 × 端上指标）
+
+16 个指标端上基本都有实现（Donchian/UltimateOsc/Choppiness/CMO/Keltner/VWMA/A-D/HullMA/
+Pivot/MA/SuperTrend/ElderForce/Vortex/RSI + 本地补的 MACD/RSV），缺的是**权重从哪来**。
+现在直接读云端 `rel_weight`（Donchian20 0.5 → RSI 0.1，差 5 倍，不做等权平均）。
+
+关键取舍：**这套东西不能用来选股**。云端数据写得很清楚——16 个指标 edge 全为负
+（−5 ~ −7pp）、bull_win_rate 只有 43~45%、`market_advice=avoid_first`。所以输出只有
+`AVOID / WATCH / PASS` 三档，PASS 的含义是「本模块没有否决它」，不是看涨。
+
+> 第一版实现给三只上涨的样本票都打了「可买」，正好违背云端这个结论，已改掉；
+> 测试现在断言的是「下跌趋势的票必须被否决」。
+
+顺手修了 `ExtendedIndicators.superTrend`：上轨/下轨写反了（`basicUpper = hl2 - mult*atr`），
+策略里改用本地修正版，原函数没动（详情页还在用它的值）。
+
+### 3. 链路：SignalCalibration（样本外 + 市况 → 真正的闸门）
+
+之前 walkforward 和 avoid_first 只是躺在 json 里。现在变成两个系数：
+
+| 系数 | 依据 | 取值 |
+|---|---|---|
+| confidence | 沿用云端自己的「OOS < IS − 10pp 判 overfit」规则分档 | 1.0 / 0.85 / 0.75 / 0.7（无数据 0.8） |
+| buyFactor | `market_advice=avoid_first`，且 16 指标看多胜率全 < 50% | 0.85 |
+| positionFactor | confidence × buyFactor | **只减不增** |
+
+决策页的仓位链路因此变成三段，每段都标出来源：
+`云端基准上限 → ① ETF 份额调档 → ② 校准闸门 → 校准后上限`。
+
+`applyCap` 是「基准 → 校准后」的一次映射，**不能叠加调用**（会 0.85² 重复打折），
+测试断言的是单调不增而非幂等，注释里也写死了。
+
+### 4. 引擎测试进 CI
+
+`:engine` 原来没有 test 源集，CI 只做 `compileKotlin` —— 编译通过挡不住「权重解析成等权」
+或「均线空头排列读成买点」这类方向性错误。现在有 6 个用例跑真实 140 根日 K
+（688655/002230/600519/601398）+ 真实云端标定 fixture，CI 的 engine gate 里跑 `:engine:test`。
+
 本轮新增/保留待办：
+- 云端还有一批算好但尚未接入的数据：sector_engine（板块强度）、theme_report（题材）、pead_events（财报漂移）、valuation、limitup_forecast —— 下一轮优先接 pead 与 sector
+- FactorWeightStrategy 的 16 指标高度相关（多数时候 14 多 / 0 空），区分度有限；若要提高信息量，应做去相关（PCA 或按族聚类后再均衡）
 - 创业板指只有 175 天（深市分段回填有个别缺口），其余 5 个指数 230 天；再跑一次 `backfill_days=250` 可补齐
 - 新增 ETF 后需带 `refresh_map=1` 重建成员映射，否则新 ETF 不在合计里
 - ETF 份额为交易所 T 日晚间口径，T+1 早间以正式数据为准
