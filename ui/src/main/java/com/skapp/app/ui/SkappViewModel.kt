@@ -57,6 +57,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 
@@ -425,12 +426,23 @@ class SkappViewModel : ViewModel() {
                 // 板块主线与因子板一起取：两者在界面上是并列的两道过滤，分开加载会错位
                 val sectors = runCatching { com.skapp.app.data.SectorLink.load() }.getOrNull()
 
-                // 计算必须离开主线程：每只票要跑 16 个指标、160 根 K 线，8 只就是一百多次
-                // 指标计算。之前这段直接在 viewModelScope（Main）里跑，进决策页会卡住主线程，
-                // 严重时被系统判 ANR 杀掉——表现就是「容易闪退」。
-                val rows = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                // 计算必须离开主线程：每只票要跑 16 个指标、160 根 K 线。之前这段直接在
+                // viewModelScope（Main）里跑，进决策页会卡住主线程，严重时被判 ANR——表现为「容易闪退」。
+                //
+                // 取数并发：8 只票原本在同一个 IO 线程里 map 串行拉，整块耗时=8 次往返之和。
+                // 改为先并发发起、再按 targets 原序收集（顺序稳定，UI 不跳），总耗时≈最慢的那一只。
+                // 单只票打分实测仅 0.2ms（engine PerfProbeTest 基线），瓶颈在网络不在 CPU，
+                // 所以计算放 Default、不与网络抢 IO 线程。KlineApi 每次调用自带局部连接，可并发调用。
+                val klines = coroutineScope {
                     targets.map { code ->
-                        val bars = runCatching { KlineApi.fetchDayKline(code, 160) }.getOrNull() ?: emptyList()
+                        async(Dispatchers.IO) {
+                            code to (runCatching { KlineApi.fetchDayKline(code, 160) }.getOrNull() ?: emptyList())
+                        }
+                    }.map { it.await() }
+                }
+
+                val rows = withContext(Dispatchers.Default) {
+                    klines.map { (code, bars) ->
                         val score = if (calib != null && bars.size >= 60) {
                             runCatching {
                                 com.skapp.app.data.FactorWeightStrategy.score(code, bars, calib)

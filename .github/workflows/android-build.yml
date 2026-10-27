@@ -172,6 +172,8 @@ jobs:
 
       # 引擎算法必须真跑一遍 fixture：只「编译通过」挡不住把权重解析成等权、
       # 或把均线空头排列读成买点这类方向性错误。
+      # 其中 PerfProbeTest 是性能基线（故意只打印不断言，慢机型不误伤）：
+      # 给「要不要上 Rust/NDK」提供可复核数据，见 docs/adr/0001-cloud-python-vs-ondevice-kotlin.md
       - name: Run engine algorithm tests
         run: ./gradlew :engine:test --no-daemon --stacktrace
 
