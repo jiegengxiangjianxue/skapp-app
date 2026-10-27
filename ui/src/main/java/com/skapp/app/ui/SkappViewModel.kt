@@ -425,12 +425,19 @@ class SkappViewModel : ViewModel() {
                 // 板块主线与因子板一起取：两者在界面上是并列的两道过滤，分开加载会错位
                 val sectors = runCatching { com.skapp.app.data.SectorLink.load() }.getOrNull()
 
-                val rows = targets.map { code ->
-                    val bars = runCatching { KlineApi.fetchDayKline(code, 160) }.getOrNull() ?: emptyList()
-                    val score = if (calib != null && bars.size >= 60) {
-                        com.skapp.app.data.FactorWeightStrategy.score(code, bars, calib)
-                    } else null
-                    com.skapp.app.data.FactorRow(code = code, name = "", score = score)
+                // 计算必须离开主线程：每只票要跑 16 个指标、160 根 K 线，8 只就是一百多次
+                // 指标计算。之前这段直接在 viewModelScope（Main）里跑，进决策页会卡住主线程，
+                // 严重时被系统判 ANR 杀掉——表现就是「容易闪退」。
+                val rows = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    targets.map { code ->
+                        val bars = runCatching { KlineApi.fetchDayKline(code, 160) }.getOrNull() ?: emptyList()
+                        val score = if (calib != null && bars.size >= 60) {
+                            runCatching {
+                                com.skapp.app.data.FactorWeightStrategy.score(code, bars, calib)
+                            }.getOrNull()
+                        } else null
+                        com.skapp.app.data.FactorRow(code = code, name = "", score = score)
+                    }
                 }
 
                 _state.value = _state.value.copy(

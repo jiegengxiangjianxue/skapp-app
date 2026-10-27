@@ -72,7 +72,19 @@ object SectorLink {
         /** 映射覆盖的板块总数（全市场约 127）；sector_engine 只跟踪其中一部分 */
         val mappedSectorTotal: Int = 0,
     ) {
-        private val byName: Map<String, SectorRow> = sectors.associateBy { it.name }
+        // 下面这些都按需算一次并缓存：Board 是不可变的，界面重组时不该重复遍历
+        // （stockToSector 有几千条，每次重组扫一遍会明显掉帧）
+        private val byName: Map<String, SectorRow> by lazy { sectors.associateBy { it.name } }
+
+        /** 能落到本板块表的股票数（缓存） */
+        val mappedCount: Int by lazy { stockToSector.keys.count { sectorOf(it) != null } }
+
+        /** 归属覆盖率（缓存）：mappedCount / 映射总数 */
+        val coverageRatio: Double
+            get() {
+                if (stockToSector.isEmpty()) return 0.0
+                return mappedCount.toDouble() / stockToSector.size
+            }
 
         fun sectorOf(code: String): SectorRow? {
             val digits = code.filter { it.isDigit() }.takeLast(6)
@@ -105,8 +117,9 @@ object SectorLink {
         fun rowOf(code: String): SectorRow? = sectorOf(code)
 
         /** 主线板块的完整行（按 total 降序），用于界面展示 */
-        val mainlineRows: List<SectorRow>
-            get() = sectors.filter { it.name in mainline }.sortedByDescending { it.total }
+        val mainlineRows: List<SectorRow> by lazy {
+            sectors.filter { it.name in mainline }.sortedByDescending { it.total }
+        }
 
         /** 强势板块前 N（排除 avoid 名单） */
         fun topSectors(n: Int = 5): List<SectorRow> =

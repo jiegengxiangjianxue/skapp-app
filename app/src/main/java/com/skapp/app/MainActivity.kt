@@ -33,6 +33,8 @@ private val SkappLightColors = lightColorScheme(
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // 尽最早安装崩溃捕获：闪退原因未知时，这是唯一能拿到堆栈的途径
+        com.skapp.app.ui.CrashGuard.install(this)
         enableEdgeToEdge()
         setContent {
             MaterialTheme(colorScheme = SkappLightColors) {

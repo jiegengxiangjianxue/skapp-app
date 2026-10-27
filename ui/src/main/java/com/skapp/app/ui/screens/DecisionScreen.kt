@@ -17,6 +17,8 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -33,10 +35,36 @@ fun DecisionScreen(vm: SkappViewModel, state: UiState) {
     val d = state.decision
     // 进页面就自动算一次因子否决板（内部有缓存与去重，重复进入不会重复拉云端）
     LaunchedEffect(Unit) { vm.loadFactorBoard() }
+    // 上次崩溃的现场：直接摊在页面最上方，用户截图即可定位，不需要 adb
+    val ctx = LocalContext.current
+    val crash = remember { com.skapp.app.ui.CrashGuard.lastCrash(ctx) }
     LazyColumn(
         Modifier.fillMaxWidth().padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
+        if (crash != null) {
+            item {
+                Card(colors = CardDefaults.cardColors(containerColor = Color(0xFFFFEBEE))) {
+                    Column(Modifier.padding(10.dp)) {
+                        Text(
+                            "上次崩溃记录（点击清除）",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.clickable {
+                                com.skapp.app.ui.CrashGuard.clear(ctx)
+                            },
+                        )
+                        Text(
+                            crash.take(700),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color(0xFF8B2500),
+                        )
+                    }
+                }
+            }
+        }
+
         item {
             Column {
                 Text("市场决策", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
@@ -524,11 +552,11 @@ private fun SectorBoardCard(state: UiState) {
             }
             // 个股归属：说清用的是哪份源、覆盖多少，覆盖率太低就直接警告——
             // industry_map_em 兜底时只有 1% 的票能落到板块上，这种「有映射」其实没有意义
-            val cov = com.skapp.app.data.SectorLink.coverage(sb)
+            val cov = sb.coverageRatio
             when (sb.mapSource) {
                 com.skapp.app.data.SectorLink.MapSource.STOCK_SECTOR_MAP -> Text(
                     "个股归属：成分股反查 ${sb.stockToSector.size} 只，其中 " +
-                        "${com.skapp.app.data.SectorLink.mappedCount(sb)} 只落在本板块表" +
+                        "${sb.mappedCount} 只落在本板块表" +
                         (if (sb.mappedSectorTotal > 0) "（板块表只跟踪 ${sb.sectors.size}/${sb.mappedSectorTotal} 个板块）" else ""),
                     style = MaterialTheme.typography.bodySmall, color = Color.Gray,
                 )
