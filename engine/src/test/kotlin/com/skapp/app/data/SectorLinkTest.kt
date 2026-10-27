@@ -107,6 +107,38 @@ class SectorLinkTest {
     }
 
     @Test
+    fun `成分股反查的真实映射能把覆盖率从百分之一拉到可用`() {
+        // 云端真实产物（2026-10-27, build_stock_sector_map）：2706 只股票 / 127 个板块
+        val real = SectorLink.parse(
+            json("sector_engine.json"),
+            json("stock_sector_map.json"),
+            SectorLink.MapSource.STOCK_SECTOR_MAP,
+        )
+        val b = assertNotNull(real, "真实映射解析失败")
+        val cov = SectorLink.coverage(b)
+        val fallback = SectorLink.parse(json("sector_engine.json"), json("industry_map_em.json"))
+        val covFallback = fallback?.let { SectorLink.coverage(it) } ?: 0.0
+
+        println("成分股反查: ${b.stockToSector.size} 只，落到板块的覆盖 ${"%.1f".format(cov * 100)}%")
+        println("行业名兜底: ${fallback?.stockToSector?.size ?: 0} 只，覆盖 ${"%.1f".format(covFallback * 100)}%")
+
+        // 注意：sector_engine 只跟踪 27 个重点板块，而这份映射覆盖全市场 127 个板块，
+        // 所以「能落到 27 个板块上」的比例天然不可能高。要看的是绝对数量是否够用。
+        val mapped = b.stockToSector.keys.count { b.sectorOf(it) != null }
+        val mappedFallback = fallback?.stockToSector?.keys?.count { fallback.sectorOf(it) != null } ?: 0
+        println("能落到 sector_engine 板块的：成分股反查 $mapped 只 vs 行业名兜底 $mappedFallback 只")
+        assertTrue(mapped > 300, "至少要有几百只票可归属，实际 $mapped")
+        assertTrue(mapped > mappedFallback * 10, "应远好于行业名兜底（之前实测只有 14 只）")
+        assertTrue(cov < 0.5, "27/127 的板块覆盖决定上限，覆盖率不应异常偏高（偏高说明板块匹配出错了）")
+
+        // 抽查：命中的板块里个股能正确归属
+        val named = b.stockToSector.entries.firstOrNull { b.sectorOf(it.key) != null }
+        assertNotNull(named, "至少有一只票能落到板块上")
+        println("抽查 ${named.key} → ${named.value} (${b.stance(named.key).label})")
+        assertEquals(named.value, b.sectorNameOf(named.key))
+    }
+
+    @Test
     fun `缺数据时返回空而不是造一个空壳板块表`() {
         assertEquals(null, SectorLink.parse(null, null))
         assertEquals(null, SectorLink.parse(JSONObject("{}"), JSONObject("{}")))

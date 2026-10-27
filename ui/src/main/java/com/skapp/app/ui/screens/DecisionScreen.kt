@@ -527,7 +527,9 @@ private fun SectorBoardCard(state: UiState) {
             val cov = com.skapp.app.data.SectorLink.coverage(sb)
             when (sb.mapSource) {
                 com.skapp.app.data.SectorLink.MapSource.STOCK_SECTOR_MAP -> Text(
-                    "个股归属：成分股反查 ${sb.stockToSector.size} 只（覆盖 ${String.format("%.0f%%", cov * 100)}）",
+                    "个股归属：成分股反查 ${sb.stockToSector.size} 只，其中 " +
+                        "${com.skapp.app.data.SectorLink.mappedCount(sb)} 只落在本板块表" +
+                        (if (sb.mappedSectorTotal > 0) "（板块表只跟踪 ${sb.sectors.size}/${sb.mappedSectorTotal} 个板块）" else ""),
                     style = MaterialTheme.typography.bodySmall, color = Color.Gray,
                 )
                 com.skapp.app.data.SectorLink.MapSource.INDUSTRY_MAP_EM -> Text(

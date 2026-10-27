@@ -69,6 +69,8 @@ object SectorLink {
         val mapCaveat: String = "",
         /** 个股归属用哪份数据：stock_sector_map（首选）/ industry_map_em（兜底）/ 无 */
         val mapSource: MapSource = MapSource.NONE,
+        /** 映射覆盖的板块总数（全市场约 127）；sector_engine 只跟踪其中一部分 */
+        val mappedSectorTotal: Int = 0,
     ) {
         private val byName: Map<String, SectorRow> = sectors.associateBy { it.name }
 
@@ -176,6 +178,7 @@ object SectorLink {
             stockToSector = stockToSector,
             mapCaveat = mapJson?.optString("caveat") ?: mapJson?.optString("note") ?: "",
             mapSource = if (stockToSector.isEmpty()) MapSource.NONE else source,
+            mappedSectorTotal = mapJson?.optInt("n_sectors", 0) ?: 0,
         )
     }
 
@@ -215,6 +218,10 @@ object SectorLink {
         }
         parse(sectorJson, docs[CloudFeed.Doc.INDUSTRY_MAP]?.json, MapSource.INDUSTRY_MAP_EM)
     }
+
+    /** 能落到 sector_engine 板块表上的股票数（映射本身覆盖全市场，板块表只跟踪其中一部分） */
+    fun mappedCount(board: Board): Int =
+        board.stockToSector.keys.count { board.sectorOf(it) != null }
 
     /** 个股归属的覆盖率：能落到 sector_engine 板块上的股票占比，界面用它决定要不要发警告 */
     fun coverage(board: Board): Double {
