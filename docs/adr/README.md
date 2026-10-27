@@ -5,6 +5,7 @@
 | 编号 | 决策 | 状态 | 日期 |
 |---|---|---|---|
 | [0001](0001-cloud-python-vs-ondevice-kotlin.md) | 云端 Python 重计算 / 端上 Kotlin 轻量应用的分工（含上 Rust 触发条件） | Accepted | 2026-10-27 |
+| [0002](0002-on-device-data-format.md) | 端上数据交换格式：JSON 为默认，二进制/列式需满足量化触发条件 | Accepted | 2026-10-27 |
 
 ## 命名与格式
 

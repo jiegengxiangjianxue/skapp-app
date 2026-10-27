@@ -31,4 +31,28 @@ class PerfProbeTest {
         val msEach = (System.nanoTime() - t0) / 1e6 / n
         println("bars=" + bars.size + "  单只票 " + String.format("%.3f", msEach) + " ms  8 只合计 " + String.format("%.1f", msEach * 8) + " ms")
     }
+
+    /**
+     * JSON 解析基线：ADR-0002（端上数据交换格式）的量化依据。
+     * 同一份真实产物反复 `JSONObject(text)`，输出 ms/MB，便于乘以线上实际体积。
+     * 同样只打印不断言。
+     */
+    @Test
+    fun `JSON 解析耗时`() {
+        val root = listOf(File("src/test/resources"), File("engine/src/test/resources"))
+            .first { it.exists() }
+        val f = File(root, "stock_sector_map.json")
+        val text = f.readText()
+        repeat(50) { JSONObject(text) }          // 预热 JIT
+        val n = 200
+        val t0 = System.nanoTime()
+        repeat(n) { JSONObject(text) }
+        val msEach = (System.nanoTime() - t0) / 1e6 / n
+        val mb = text.length / 1024.0 / 1024.0
+        println(
+            "file=" + f.name + "  " + String.format("%.2f", mb) + " MB  " +
+                "单次解析 " + String.format("%.3f", msEach) + " ms  " +
+                "即 " + String.format("%.1f", msEach / mb) + " ms/MB"
+        )
+    }
 }

@@ -94,7 +94,7 @@
 | 涨停口径对齐 | ✅ | build_market_now.py 主值改东财涨停/跌停池 tc，直方图降级 limit_up_hist/limit_down_hist；breadth 改读 hist 键、删「主值缺失静默用直方图顶替」、删 seal_rate 混合口径误报、差异阈值 30%→10%、重写 caliber_caveat 并写明切换日 2026-10-27 |
 | market_breadth 历史回填 | ✅ 脚本+入口 | 新增 `--backfill-from/--backfill-to` 与 breadth-backfill.yml；实测回填 2026-10-23 得 zt=82/dt=6/zb=12，与 git 快照 market_now 三项全符；回填记录 advance/amount/hist 一律 null 并带 notes，且不得覆盖 market_now 主记录 |
 | :ui 模块拆分 | ✅ | 新增 :ui Android library（18 屏 + VM + 4 个 Android 侧 client），:app 只剩 MainActivity + 资源；依赖方向 :app→:ui→:engine；拆分前提已核验：ui 包对 R.* 零引用；CI 改为先 :ui 后 :app 分层编译，engine-gate 加「:engine 不得依赖 :ui」守卫 |
-| 凭据卫生 | ✅ | 两个本地仓库 .git/config 的内嵌明文 PAT 已清除，推送改用 `git -c http.extraheader` 从 tokens.json 现取；skapp 公开面已关闭 |
+| 凭据卫生 | ✅（2026-10-27 复清） | **7** 个本地仓库 .git/config 的内嵌明文 PAT 已全清（原先只清了 2 个，`stocks` / `stocks-tools` / `stocks-data-{kline,live,news}` 遗留）。根因修掉：`git_push` 不再 `git remote add <带 token 的 URL>`（这一步才是把凭据固化进 config 的源头），改成干净 URL + 本次命令 `-c http.extraheader`；`sync_repos.py` / `push_e_fix.py` / `migrate_predictions.py` 三处硬编码 token 已删，改从 env / tokens.json 取，缺失即报错不再回落；含 PAT 的 `__pycache__` 已删；新增 `~/workspace/git_push_auth.sh` 供日常推送。已核验 5 个仓 `ls-remote` 用新方式仍通，且 token 从未进过任何仓库的提交历史（无需轮换） |
 | 出包位置 | ✅ | APK 不再进 Actions artifact，改为 GitHub Release（tag v<versionName>，同版本重跑覆盖资产）；安装包名 skapp-<version>-vc<code>-arm64.apk |
 
 ## 2026-10-27 晚 更正：聪明钱份额的口径结论错了，已改正
