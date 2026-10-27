@@ -55,35 +55,59 @@ object ExtendedIndicators {
 
     // ── 站点 indicators_ext.py 的 25 个指标 ────────────────
 
-    /** SuperTrend(10, 3) */
+    /**
+     * SuperTrend(10, 3)：返回 (方向, 方向序列)，方向 +1=多头 / -1=空头。
+     *
+     * ⚠️ 旧实现把上下轨写反了（上轨 = hl2 − 3·ATR），于是「收盘价 > 上轨」几乎恒成立，
+     * 方向永远是多头 —— 这个引擎就成了常驻的 68 分看多票，既拉高 composite，
+     * 又给「共振」灌了一个永远 bullish 的引擎。这里按标准式重写：
+     *
+     *   basicUpper = hl2 + mult·ATR,  basicLower = hl2 − mult·ATR
+     *   终值带单向收敛（只在价格未突破时收紧），趋势在收盘穿越对侧终值带时翻转。
+     */
     fun superTrend(bars: List<KBar>, period: Int = 10, mult: Double = 3.0): Pair<Double?, List<Double?>> {
-        val atrs = trueRange(bars)
-        val atr = wilder(atrs, period)
-        var trend = 0.0
-        val out = ArrayList<Double?>()
-        var upperFinal: Double? = null
-        var lowerFinal: Double? = null
+        if (bars.size < period + 1) return null to emptyList()
+        val atrSeries = wilder(trueRange(bars), period)
+        var upper: Double? = null
+        var lower: Double? = null
+        var trend = 1.0
+        val out = ArrayList<Double?>(bars.size)
         for (i in bars.indices) {
-            val a = atr.getOrNull(i) ?: continue
+            val a = atrSeries.getOrNull(i)
+            if (a == null) {
+                out += null
+                continue
+            }
             val hl2 = (bars[i].high + bars[i].low) / 2
-            val basicUpper = hl2 - mult * a
-            val basicLower = hl2 + mult * a
+            val basicUpper = hl2 + mult * a
+            val basicLower = hl2 - mult * a
             val prevClose = bars.getOrNull(i - 1)?.close ?: bars[i].close
-            upperFinal = if (upperFinal == null || prevClose > (upperFinal ?: 0.0)) basicUpper else min(basicUpper, upperFinal!!)
-            lowerFinal = if (lowerFinal == null || prevClose < (lowerFinal ?: 0.0)) basicLower else max(basicLower, lowerFinal!!)
-            val prevTrend = out.lastOrNull()?.let { 1.0 } ?: 0.0
+            val prevUpper = upper
+            val prevLower = lower
+
+            upper = when {
+                prevUpper == null -> basicUpper
+                basicUpper < prevUpper || prevClose > prevUpper -> basicUpper
+                else -> prevUpper
+            }
+            lower = when {
+                prevLower == null -> basicLower
+                basicLower > prevLower || prevClose < prevLower -> basicLower
+                else -> prevLower
+            }
+
             val close = bars[i].close
-            trend = if (close > (upperFinal ?: 0.0)) 1.0
-            else if (close < (lowerFinal ?: 0.0)) -1.0
-            else if (prevTrend > 0 && close > (upperFinal ?: 0.0)) 1.0
-            else if (prevTrend < 0 && close < (lowerFinal ?: 0.0)) -1.0
-            else prevTrend
+            trend = when {
+                prevUpper == null || prevLower == null -> if (close >= hl2) 1.0 else -1.0
+                trend > 0 && close < lower!! -> -1.0
+                trend < 0 && close > upper!! -> 1.0
+                else -> trend
+            }
             out += trend
         }
         return (out.lastOrNull() ?: 0.0) to out
     }
 
-    /** True Range 序列 */
     private fun trueRange(bars: List<KBar>): List<Double> =
         bars.indices.map { i ->
             if (i == 0) bars[i].high - bars[i].low
@@ -96,7 +120,7 @@ object ExtendedIndicators {
     fun atr(bars: List<KBar>, n: Int = 14): Double? =
         wilder(trueRange(bars), n).lastOrNull()
 
-    /** Keltner Channel(20, 2) */
+    /** Keltner Channel(20, 2)：中轨 SMA20，上下轨 ± 2×ATR(20) */
     fun keltner(bars: List<KBar>, n: Int = 20, mult: Double = 2.0): Triple<Double?, Double?, Double?> {
         val mid = sma(bars.map { it.close }, n).lastOrNull() ?: return Triple(null, null, null)
         val a = atr(bars, n) ?: return Triple(null, null, null)
@@ -296,9 +320,17 @@ object ExtendedIndicators {
             val tp = (bars[i].high + bars[i].low + bars[i].close) / 3
             val pp = (bars[i - 1].high + bars[i - 1].low + bars[i - 1].close) / 3
             val rmf = tp * bars[i].vol
-            if (tp > pp) pos += rmf else neg += rmf
+            // 典型价持平的交易日既不算流入也不算流出；旧写法把它并进负向，
+            // 于是横盘股 MFI=0，被资金引擎判成「流出极端」而加分。
+            if (tp > pp) pos += rmf else if (tp < pp) neg += rmf
         }
-        return if (neg == 0.0) 100.0 else 100 - 100 / (1 + pos / neg)
+        // 与 RSI 同理：既没流入也没流出（横盘）时返回 50，
+        // 否则恒盘股 MFI=100 会被资金引擎判成「超买」而扣分。
+        return when {
+            neg == 0.0 && pos == 0.0 -> 50.0
+            neg == 0.0 -> 100.0
+            else -> 100 - 100 / (1 + pos / neg)
+        }
     }
 
     /** OBV 能量潮 */

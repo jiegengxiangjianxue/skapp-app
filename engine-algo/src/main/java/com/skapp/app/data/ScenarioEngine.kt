@@ -26,7 +26,7 @@ enum class MarketScene(val label: String) {
             val advance = (m["advance"] as? Number)?.toInt() ?: 0
             val decline = (m["decline"] as? Number)?.toInt() ?: 0
             val total = maxOf(1, advance + decline)
-            val upPct = (m["up_pct"] as? Double)
+            val upPct = (m["up_pct"] as? Number)?.toDouble()
                 ?: (advance.toDouble() / total * 100)
             val limitUp = (m["limit_up"] as? Number)?.toInt() ?: 0
             val limitDown = (m["limit_down"] as? Number)?.toInt() ?: 0
@@ -188,24 +188,27 @@ object ScenarioEngine {
         val passed = mutableListOf<Map<String, Any?>>()
         val rejected = mutableListOf<Map<String, Any?>>()
 
-        val chgLo = rules["chg_lo"] as? Double ?: -10.0
-        val chgHi = rules["chg_hi"] as? Double ?: 10.0
-        val posMax = rules["pos240_max"] as? Double ?: 100.0
-        val vrLo = rules["vratio_lo"] as? Double ?: 0.0
-        val vrHi = rules["vratio_hi"] as? Double ?: 10.0
+        // 一律按 Number 取：JSON 里的 3 会解析成 Int，`as? Double` 得到 null，
+        // 于是「涨幅/位置/量比」三条硬规则**静默失效**（null 直接跳过）——
+        // 场景规则看起来在跑，其实一条都没拦。这是最难发现的一类：不报错、不拒单。
+        val chgLo = rules.num("chg_lo") ?: -10.0
+        val chgHi = rules.num("chg_hi") ?: 10.0
+        val posMax = rules.num("pos240_max") ?: 100.0
+        val vrLo = rules.num("vratio_lo") ?: 0.0
+        val vrHi = rules.num("vratio_hi") ?: 10.0
 
         for (rec in picks) {
-            val chg = rec["chg_pct"] as? Double
+            val chg = rec.num("chg_pct")
             if (chg != null && (chg < chgLo || chg > chgHi)) {
                 rejected.add(rec + mapOf("reject_reason" to "涨幅${chg}% 不在 [${chgLo},${chgHi}]"))
                 continue
             }
-            val pos = rec["pos240_pct"] as? Double
+            val pos = rec.num("pos240_pct")
             if (pos != null && pos > posMax) {
                 rejected.add(rec + mapOf("reject_reason" to "位置${pos}% > ${posMax}%"))
                 continue
             }
-            val vr = rec["vratio"] as? Double
+            val vr = rec.num("vratio")
             if (vr != null && (vr < vrLo || vr > vrHi)) {
                 rejected.add(rec + mapOf("reject_reason" to "量比${vr} 不在 [${vrLo},${vrHi}]"))
                 continue
@@ -219,14 +222,18 @@ object ScenarioEngine {
      * 按场景权重重新计算综合分（移植 rescore）
      */
     fun rescore(rec: Map<String, Any?>, dimWeights: Map<String, Double>): Double {
-        val dims = rec["dims"] as? Map<*, *> ?: return (rec["composite"] as? Double) ?: 0.0
+        val dims = rec["dims"] as? Map<*, *> ?: return rec.num("composite") ?: 0.0
         val wsum = dimWeights.values.sum()
-        if (wsum < 1e-9) return (rec["composite"] as? Double) ?: 0.0
+        if (wsum < 1e-9) return rec.num("composite") ?: 0.0
         var total = 0.0
         for ((k, w) in dimWeights) {
-            val v = dims[k] as? Double ?: 50.0
+            // 维度分同样可能是 Int；取不到才退 50（中性），不能因为类型把整分算错
+            val v = (dims[k] as? Number)?.toDouble() ?: 50.0
             total += v * w
         }
         return total / wsum
     }
 }
+
+/** JSON/Map 里取数值：Int / Long / Double / Float 一律按 Number 归一，别再 `as? Double`。 */
+internal fun Map<String, Any?>.num(key: String): Double? = (this[key] as? Number)?.toDouble()
