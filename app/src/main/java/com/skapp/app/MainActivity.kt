@@ -35,6 +35,9 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         // 尽最早安装崩溃捕获：闪退原因未知时，这是唯一能拿到堆栈的途径
         com.skapp.app.ui.CrashGuard.install(this)
+        // 上次若崩过，把原始堆栈导出到 Download：用户不连电脑就能把日志发出来。
+        // 放后台线程——MediaStore 写入要几百毫秒，不能拖住首帧。
+        Thread { com.skapp.app.ui.CrashGuard.exportPending(applicationContext) }.start()
         enableEdgeToEdge()
         setContent {
             MaterialTheme(colorScheme = SkappLightColors) {

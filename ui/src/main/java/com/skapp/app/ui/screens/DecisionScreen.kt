@@ -33,10 +33,15 @@ import com.skapp.app.ui.UiState
 @Composable
 fun DecisionScreen(vm: SkappViewModel, state: UiState) {
     val d = state.decision
-    // 进页面就自动算一次因子否决板（内部有缓存与去重，重复进入不会重复拉云端）
-    LaunchedEffect(Unit) { vm.loadFactorBoard() }
     // 上次崩溃的现场：直接摊在页面最上方，用户截图即可定位，不需要 adb
     val ctx = LocalContext.current
+    // 闪退二分开关（诊断页可关）：决策页一进就崩、红卡也看不到时，靠排除法定位哪张卡的问题
+    val diag = remember { ctx.getSharedPreferences("skapp_diag", android.content.Context.MODE_PRIVATE) }
+    val showFactor = remember { diag.getBoolean("show_factor_card", true) }
+    val showSector = remember { diag.getBoolean("show_sector_card", true) }
+    // 进页面就自动算一次因子否决板（内部有缓存与去重，重复进入不会重复拉云端）
+    // 卡片被关掉时连请求也不发，否则二分时网络仍在跑，分不清是渲染还是数据
+    LaunchedEffect(Unit) { if (showFactor) vm.loadFactorBoard() }
     val crash = remember { com.skapp.app.ui.CrashGuard.lastCrash(ctx) }
     LazyColumn(
         Modifier.fillMaxWidth().padding(12.dp),
@@ -59,6 +64,12 @@ fun DecisionScreen(vm: SkappViewModel, state: UiState) {
                             crash.take(700),
                             style = MaterialTheme.typography.bodySmall,
                             color = Color(0xFF8B2500),
+                        )
+                        Text(
+                            "完整堆栈已导出到 Download/skapp_crash_*.txt（重启后生成），" +
+                                "直接把这个文件发我即可；截图本页也可以。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color.Gray,
                         )
                     }
                 }
@@ -141,10 +152,10 @@ fun DecisionScreen(vm: SkappViewModel, state: UiState) {
         item { SmartMoneyCard(state, vm) }
 
         // ── 板块主线：云端 sector_engine 的 27 个板块分档（与因子否决并列的第二道过滤）──
-        item { SectorBoardCard(state) }
+        if (showSector) item { SectorBoardCard(state) }
 
         // ── 因子否决：云端 v3 标定权重 × 端上 16 指标，外加样本外校准闸门 ──
-        item { FactorBoardCard(state, vm) }
+        if (showFactor) item { FactorBoardCard(state, vm) }
 
         if (d.cards.isNotEmpty()) {
             item { SectionHeader("决策卡") }

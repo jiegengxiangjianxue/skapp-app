@@ -1,6 +1,10 @@
 package com.skapp.app.ui
 
+import android.content.ContentValues
 import android.content.Context
+import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
 import android.util.Log
 import java.io.File
 import java.text.SimpleDateFormat
@@ -10,18 +14,28 @@ import java.util.Locale
 /**
  * 崩溃现场记录。
  *
- * 起因：线上报「容易闪退，原因未知」，而这个 App 没有集成任何崩溃上报，
+ * 起因：线上报「打开决策页就闪退」，而这个 App 没有集成任何崩溃上报，
  * adb / logcat 又拿不到（用户设备没开 root/Shizuku），等于两眼一黑。
- * 这里只做一件事：把最后一次未捕获异常的堆栈落到应用私有目录，
- * 下次启动时由诊断入口读出来——不需要网络、不需要三方 SDK、不收集任何用户数据。
+ *
+ * 两段式设计（2026-10-27 加固）：
+ *   1. 崩溃发生时（uncaught handler 里）只做最快的本地写 —— 此时进程随时被系统杀掉，
+ *      碰 ContentResolver / MediaStore 很可能来不及完成，所以**不**在这里写 Download。
+ *   2. 下次启动时由 exportPending() 把原始记录复制到 Download。
+ *      这时进程健康、可以慢，用户不连电脑、不开 adb，用文件管理器就能把日志发出来。
  *
  * 记录内容刻意保持最小：时间、线程名、异常堆栈。不写设备标识、不写业务数据。
- * 只保留最近一次（覆盖写），不做累积上传。
+ * 每次崩溃独立成文件（不互相覆盖），导出成功后删除源文件，避免重复导出。
  */
 object CrashGuard {
 
     private const val FILE_NAME = "crash_last.txt"
+    private const val PREFIX = "crash_"
     private const val TAG = "CrashGuard"
+
+    /** 最近一次崩溃的导出结果，供诊断页/红卡展示，避免用户找不到文件 */
+    @Volatile
+    var lastExportNote: String? = null
+        private set
 
     /** 在 Application/Activity 启动最早处安装；重复调用无副作用 */
     @Volatile
@@ -41,14 +55,66 @@ object CrashGuard {
     }
 
     private fun write(context: Context, threadName: String, error: Throwable) {
-        val ts = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.CHINA).format(Date())
+        val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.CHINA).format(Date())
         val body = buildString {
-            append(ts).append('\n')
+            append(stamp).append('\n')
             append("thread: ").append(threadName).append('\n')
             append(Log.getStackTraceString(error))
         }
+        // 独立文件：连续闪退几次也不会互相覆盖，能看出是不是同一个栈
+        runCatching { File(context.filesDir, "$PREFIX$stamp.txt").writeText(body) }
+            .onFailure { Log.w(TAG, "崩溃原始文件写入失败: ${it.message}") }
+        // 红卡读这一份（只保留最近一次）
         File(context.filesDir, FILE_NAME).writeText(body)
     }
+
+    /**
+     * 下次启动调用：把上次崩溃的原始记录导出到 Download。
+     *
+     * API 29+ 走 MediaStore（公共 Download 目录，无需存储权限）；
+     * API 26~28 退到应用外部目录（Android/data/<pkg>/files/Download）——
+     * 那里不需要权限，文件管理器也能进得去。
+     */
+    fun exportPending(context: Context) {
+        runCatching {
+            val files = context.filesDir.listFiles { f ->
+                f.name.startsWith(PREFIX) && f.name.endsWith(".txt") && f.length() > 0L
+            } ?: return
+            if (files.isEmpty()) return
+            val exported = ArrayList<String>()
+            files.sortedBy { it.name }.forEach { f ->
+                if (saveToDownload(context, "skapp_${f.name}", f.readText())) {
+                    exported.add("skapp_${f.name}")
+                    runCatching { f.delete() }
+                }
+            }
+            lastExportNote = if (exported.isEmpty()) {
+                "崩溃日志已记录，但导出到 Download 失败"
+            } else {
+                "崩溃日志已导出到 Download/" + exported.joinToString("、")
+            }
+        }.onFailure { Log.w(TAG, "导出崩溃日志失败: ${it.message}") }
+    }
+
+    private fun saveToDownload(context: Context, name: String, body: String): Boolean = runCatching {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val resolver = context.contentResolver
+            val values = ContentValues().apply {
+                put(MediaStore.Downloads.DISPLAY_NAME, name)
+                put(MediaStore.Downloads.MIME_TYPE, "text/plain")
+                put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+            }
+            val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+                ?: return@runCatching false
+            resolver.openOutputStream(uri)?.use { it.write(body.toByteArray()) }
+                ?: return@runCatching false
+            true
+        } else {
+            val dir = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: context.filesDir
+            File(dir, name).writeText(body)
+            true
+        }
+    }.getOrDefault(false)
 
     /** 读取上次崩溃现场；没有则返回 null */
     fun lastCrash(context: Context): String? = runCatching {
@@ -56,7 +122,7 @@ object CrashGuard {
         if (!f.exists() || f.length() == 0L) null else f.readText()
     }.getOrNull()
 
-    /** 用户看完后清掉，避免下次启动又弹 */
+    /** 用户看完后清掉，避免下次启动又弹（原始 crash_*.txt 保留，等导出） */
     fun clear(context: Context) {
         runCatching { File(context.filesDir, FILE_NAME).delete() }
     }

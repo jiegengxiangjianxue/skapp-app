@@ -1,5 +1,6 @@
 package com.skapp.app.ui.screens
 
+import android.content.Context
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -13,6 +14,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -22,6 +24,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.skapp.app.data.RemoteSources
@@ -56,6 +59,7 @@ fun DiagScreen(vm: SkappViewModel, state: UiState) {
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Text("数据源自检", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        DecisionCardToggles()
         SourceLedgerCard(state, vm)
         val stats = state.registryStats
         val registry = rows.firstOrNull { it.first == "源注册表" }?.second
@@ -76,6 +80,55 @@ fun DiagScreen(vm: SkappViewModel, state: UiState) {
                     )
                 }
             }
+        }
+    }
+}
+
+/**
+ * 决策页两张新卡片的单独开关 —— 专为二分定位闪退用。
+ *
+ * 背景：决策页一进就崩，红卡都没机会渲染，只能靠排除法。
+ * 先关一张进一次，再换另一张，哪张开着会崩就是哪张的锅。
+ * 开关落 SharedPreferences，重启 App 依然生效。
+ */
+@Composable
+private fun DecisionCardToggles() {
+    val ctx = LocalContext.current
+    val sp = remember { ctx.getSharedPreferences("skapp_diag", Context.MODE_PRIVATE) }
+    var factor by remember { mutableStateOf(sp.getBoolean("show_factor_card", true)) }
+    var sector by remember { mutableStateOf(sp.getBoolean("show_sector_card", true)) }
+
+    Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors()) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("决策页卡片（闪退二分用）", fontWeight = FontWeight.SemiBold)
+            Text(
+                "决策页一进就闪退时，逐个关掉再进：关掉哪张就不崩，哪张就是原因。",
+                style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+            )
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text("因子否决卡", style = MaterialTheme.typography.bodySmall)
+                Switch(checked = factor, onCheckedChange = {
+                    factor = it
+                    sp.edit().putBoolean("show_factor_card", it).apply()
+                })
+            }
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text("板块主线卡", style = MaterialTheme.typography.bodySmall)
+                Switch(checked = sector, onCheckedChange = {
+                    sector = it
+                    sp.edit().putBoolean("show_sector_card", it).apply()
+                })
+            }
+            Text(
+                "当前：因子" + (if (factor) "开" else "关") + " · 板块" + (if (sector) "开" else "关"),
+                style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium,
+            )
         }
     }
 }
