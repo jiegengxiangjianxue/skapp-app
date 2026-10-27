@@ -16,6 +16,12 @@ on:
       - 'app/**'
       - 'ui/**'
       - 'engine/**'
+      - 'engine-core/**'
+      - 'engine-net/**'
+      - 'engine-algo/**'
+      - 'engine-runtime/**'
+      - 'testdata/**'
+      - 'tools/**'
       - 'gradle/**'
       - 'build.gradle.kts'
       - 'settings.gradle.kts'
@@ -155,26 +161,50 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Guard - engine module must stay Android-free
+      - name: Guard - engine layers must stay Android-free and one-way
         run: |
           set -euo pipefail
-          if grep -rn "^import android\.\|^import androidx\." engine/src/ ; then
-            echo "::error:::engine 出现 Android 依赖，已破坏「引擎可独立构建」的边界"
+          # 四层 + 聚合层都不能沾 Android，否则「引擎可独立构建」不成立
+          if grep -rn "^import android\.\|^import androidx\." engine*/src/ ; then
+            echo "::error::引擎层出现 Android 依赖，已破坏「可独立构建」的边界"
             exit 1
           fi
-          if grep -q 'project(":ui")' engine/build.gradle.kts ; then
-            echo "::error:::engine 不得依赖 :ui（依赖方向必须是 :app -> :ui -> :engine）"
+          if grep -q 'project(":ui")' engine*/build.gradle.kts ; then
+            echo "::error::引擎层不得依赖 :ui（依赖方向必须是 :app -> :ui -> :engine）"
             exit 1
           fi
-          echo "engine module is Android-free and does not depend on :ui"
+          # 依赖方向单向：core ← net ← algo ← runtime ← 聚合，反向依赖直接红
+          python3 - <<'PYCODE'
+          import re, pathlib, sys
+          allowed = {
+              "engine-core": set(),
+              "engine-net": {"engine-core"},
+              "engine-algo": {"engine-core", "engine-net"},
+              "engine-runtime": {"engine-core", "engine-net", "engine-algo"},
+              "engine": {"engine-runtime"},
+          }
+          bad = []
+          for mod, ok in allowed.items():
+              f = pathlib.Path(mod) / "build.gradle.kts"
+              if not f.exists():
+                  bad.append(f"{mod}: 缺 build.gradle.kts")
+                  continue
+              for d in re.findall(r'project\(":([a-z-]+)"\)', f.read_text()):
+                  if d.startswith("engine") and d not in ok:
+                      bad.append(f"{mod} 反向依赖了 :{d}（只允许 {sorted(ok) or '无'}）")
+          if bad:
+              print("::error::" + "；".join(bad))
+              sys.exit(1)
+          print("engine layers are Android-free and depend only backwards")
+          PYCODE
 
       # 守卫的判定逻辑（阈值/去重/内存分级）必须一直有断言覆盖——
       # 测试文件被删掉时 :engine:test 依然会「通过」，所以要显式把它钉住。
       - name: Guard - health core tests must stay
         run: |
           set -euo pipefail
-          TEST=engine/src/test/kotlin/com/skapp/app/data/health/ProcessHealthCoreTest.kt
-          CORE=engine/src/main/java/com/skapp/app/data/health/ProcessHealthCore.kt
+          TEST=engine-core/src/test/kotlin/com/skapp/app/data/health/ProcessHealthCoreTest.kt
+          CORE=engine-core/src/main/java/com/skapp/app/data/health/ProcessHealthCore.kt
           test -f "$TEST"
           test -f "$CORE"
           for mark in "stall threshold" "stall progression records every repeat interval" \
@@ -185,14 +215,33 @@ jobs:
           grep -q "classifyMemory" "$CORE"
           echo "health core + tests present"
 
-      - name: Compile engine module
+      # 数据来源守卫：分析链路只吃实时数据，云端只能经 Db 层进门（用户明确约束）。
+      # 这条守卫是「不要使用快照和云端」这句话的可执行版本，放宽它等于悄悄改需求。
+      - name: Guard - analysis must not read cloud snapshots
+        run: python3 tools/layer_source_guard.py
+
+      # ── 分层构建：一层一层编译/单测，哪一层坏了当场就能看出来 ──
+      # 顺序就是依赖方向；前排的层不过，后面的层不用看（和本地开发节奏一致）。
+      - name: Layer 1 - core (models / market hours / json)
+        run: ./gradlew :engine-core:test --no-daemon --stacktrace
+
+      - name: Layer 2 - net (live market / quote / kline / news links)
+        run: ./gradlew :engine-net:test --no-daemon --stacktrace
+
+      - name: Layer 3 - algo (indicators / factors / 12 engines)
+        run: ./gradlew :engine-algo:test --no-daemon --stacktrace
+
+      - name: Layer 4 - runtime (cache / screener / picks output)
+        run: ./gradlew :engine-runtime:test --no-daemon --stacktrace
+
+      - name: Compile aggregate module
         run: ./gradlew :engine:compileKotlin --no-daemon --stacktrace
 
       # 引擎算法必须真跑一遍 fixture：只「编译通过」挡不住把权重解析成等权、
       # 或把均线空头排列读成买点这类方向性错误。
       # 其中 PerfProbeTest 是性能基线（故意只打印不断言，慢机型不误伤）：
       # 给「要不要上 Rust/NDK」提供可复核数据，见 docs/adr/0001-cloud-python-vs-ondevice-kotlin.md
-      - name: Run engine algorithm tests
+      - name: Combine - full engine test suite
         run: ./gradlew :engine:test --no-daemon --stacktrace
 
       # org.json 越界调用守卫（vc19 真机闪退的根因就是它）。
@@ -202,7 +251,9 @@ jobs:
         run: |
           set -euo pipefail
           python3 tools/org_json_api_guard.py --self-test
-          python3 tools/org_json_api_guard.py engine/build/classes
+          python3 tools/org_json_api_guard.py \
+            engine-core/build/classes engine-net/build/classes \
+            engine-algo/build/classes engine-runtime/build/classes
 
   # ── 4. 后端 UI + 密集渲染层（:app Kotlin 编译，只做类型检查不打包）────────
   ui-render-gate:
@@ -279,8 +330,8 @@ jobs:
           grep -q "private fun MinuteChart" ui/src/main/java/com/skapp/app/ui/screens/StockDetailSheet.kt
           grep -q "private fun KlineChart" ui/src/main/java/com/skapp/app/ui/screens/StockDetailSheet.kt
           grep -q "private fun LinkageBar" ui/src/main/java/com/skapp/app/ui/screens/StockDetailSheet.kt
-          grep -q "minuteTrendRich" engine/src/main/java/com/skapp/app/data/MarketDataClient.kt
-          grep -q "lastKlineSource" engine/src/main/java/com/skapp/app/data/MarketDataClient.kt
+          grep -q "minuteTrendRich" engine-net/src/main/java/com/skapp/app/data/MarketDataClient.kt
+          grep -q "lastKlineSource" engine-net/src/main/java/com/skapp/app/data/MarketDataClient.kt
           echo "render + data layer markers ok"
 
       # vc19 守卫：CrashGuard 只能抓 Java 未捕获异常，ANR / 低内存被回收 / native 崩溃它看不到。

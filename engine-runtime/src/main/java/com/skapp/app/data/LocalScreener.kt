@@ -1,0 +1,171 @@
+package com.skapp.app.data
+
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.withContext
+
+/**
+ * 本地实时选股引擎 —— 在设备上完成「实时收集数据 → 算法分析 → 出结果」。
+ *
+ * 用户核心诉求：推股/决策不能再用云端旧快照，要在手机上实时算。
+ *
+ * 数据链（全部实时，无云端快照）：
+ *   1) 东财 clist 批量拉全市场实时行情（价格/涨跌幅/量比/市值/PE，一次 5000 只）
+ *   2) 预筛（放量 + 涨幅区间 + 非 ST）→ 候选池
+ *   3) 对候选池前 N 只逐只拉日 K（腾讯→东财），本地 12 引擎 + 29 因子
+ *   4) 按 composite 排序输出
+ *
+ * 红线：只用真实拉到的数据；拉不到的标 insufficient，不编造。
+ */
+object LocalScreener {
+
+    /** 主板代码前缀（推荐输出红线：600/601/603/605/000/001/002，排除 300/301/688/北交所） */
+    private val MAIN_BOARD_PREFIXES = setOf("600", "601", "603", "605", "000", "001", "002")
+
+    /** 筛选条件 */
+    data class Criteria(
+        val minChgPct: Double = 1.0,
+        val maxChgPct: Double = 9.6,   // 推股不追涨停：主板涨停附近(≥9.6%)不可买入
+        val minVolRatio: Double = 1.2,
+        val minScore: Double = 55.0,
+        val excludeST: Boolean = true,
+        val maxCandidates: Int = 40,   // 逐只拉 K 线的上限（控制耗时/流量）
+        val klineCount: Int = 120,
+    )
+
+    /** 一只股票的实时分析结果 */
+    data class Screened(
+        val code: String,
+        val name: String?,
+        val price: Double?,
+        val pctChg: Double?,
+        val volRatio: Double?,
+        val turnover: Double?,
+        val pe: Double?,
+        val mv: Double?,
+        val engine: LocalEngineResult?,
+        val centralScore: Double? = engine?.centralScore ?: engine?.composite,
+        val resonanceRatio: Double? = engine?.resonanceRatio,
+        val centralSummary: String? = engine?.summary,
+        val detailStatus: String,     // ok | insufficient
+        val reason: String? = null,
+        val buyable: Boolean? = null,
+        val snapshotStatus: String = "live",
+    )
+
+    /**
+     * 全市场实时快照（Map 形态，兼容既有调用方）。
+     *
+     * 实现在 [LiveMarket]：全市场只拉一次、多处共享同一时点。
+     * 新代码请直接用 [LiveMarket.snapshot] 的强类型 [LiveMarket.Row]。
+     */
+    suspend fun marketSnapshot(pn: Int = 1, pz: Int = 100): List<Map<String, Any?>> =
+        LiveMarket.snapshot().map { r ->
+            mapOf<String, Any?>(
+                "code" to r.code,
+                "name" to r.name,
+                "price" to r.price,
+                "pctChg" to r.pctChg,
+                "volRatio" to r.volRatio,
+                "turnover" to r.volumeLots,   // 历史字段名：当年映射的是 f5 成交量（手）
+                "volume" to r.amount,         // 历史字段名：当年映射的是 f6 成交额（元）
+                "amplitude" to r.amplitude,
+                "turnoverRate" to r.turnoverRate,
+                "pe" to r.pe,
+                "mv" to r.mv,
+                "mainNet" to r.mainNet,
+            )
+        }
+
+    /**
+     * 实时选股：市场快照 → 预筛 → 逐只本地引擎 → 排序。
+     * mode: "score" 常规（评分达标池） | "all" 全分析池（共振/评分页用） | "limitup" 涨停扫描
+     * dropLastBar: 剔除日 K 的最后一根（盘中最后一根是当日未完成 bar）。
+     *   盘前口径必须置 true —— 盘前推股只能看「截至上一交易日收盘」的指标，
+     *   否则会把盘中实时当收盘值，等于用未来数据推过去。
+     */
+    suspend fun screen(c: Criteria = Criteria(), onProgress: (String) -> Unit = {},
+                       mode: String = "score", dropLastBar: Boolean = false): List<Screened> = coroutineScope {
+        onProgress("正在实时拉取全市场行情…")
+        val snap = LiveMarket.snapshot()
+        if (snap.isEmpty()) return@coroutineScope emptyList()
+        val limitup = mode == "limitup"
+        onProgress("全市场快照 ${snap.size} 只，预筛中（${if (limitup) "涨停扫描" else "涨幅/量比/非ST/主板"}）…")
+
+        // 预筛（含主板前缀红线过滤，排除 300/301/688/北交所）
+        val cands = snap.filter { row ->
+            val chg = row.pctChg ?: return@filter false
+            val name = row.name.orEmpty()
+            val st = c.excludeST && (name.contains("ST", ignoreCase = true) ||
+                name.contains("退", ignoreCase = true))
+            val main = row.code.take(3) in MAIN_BOARD_PREFIXES && !st
+            when {
+                limitup -> main && chg >= 9.5
+                else -> main && chg >= c.minChgPct && chg < c.maxChgPct &&
+                    // 跨模块属性没法智能转换，先落局部值
+                    (row.volRatio?.let { it >= c.minVolRatio } != false)
+            }
+        }.sortedByDescending { it.mainNet ?: 0.0 }
+            .take(if (limitup) 50 else c.maxCandidates)
+
+        onProgress("预筛命中 ${cands.size} 只，逐只拉 K 线 + 本地引擎计算…")
+
+        // 逐只拉 K 线 + 本地引擎（并发 4，避免打满）
+        val out = ArrayList<Screened>()
+        cands.chunked(4).forEach { batch ->
+            val results = batch.map { m ->
+                async(Dispatchers.IO) {
+                    val code = m.code
+                    val barsRaw = DataCache.kline(code, "qfq", c.klineCount)
+                    // 盘前口径：最后一根通常是当日未完成 bar（盘中）或昨日收盘（盘前），
+                    // 统一剔除最后一根，保证「盘前推股」口径不随打开时间漂移。
+                    val bars = if (dropLastBar && barsRaw.size > 1) barsRaw.dropLast(1) else barsRaw
+                    val eng = if (bars.size >= 30) DataCache.engine(code, "qfq", bars) else null
+                    Screened(
+                        code = code,
+                        name = m.name,
+                        price = m.price,
+                        pctChg = m.pctChg,
+                        volRatio = m.volRatio,
+                        // 对外语义保持「成交额」：界面上的「成交」列读的是 amount
+                        turnover = m.amount,
+                        pe = m.pe,
+                        mv = m.mv,
+                        engine = eng,
+                        detailStatus = if (eng != null) "ok" else "insufficient",
+                        reason = if (eng == null) "K线不足，无法本地计算" else null,
+                        buyable = (m.price?.let { it > 0.0 } == true) &&
+                            (m.pctChg ?: Double.POSITIVE_INFINITY) < c.maxChgPct,
+                        snapshotStatus = "live",
+                    )
+                }
+            }.mapNotNull { runCatching { it.await() }.getOrNull() }
+            out.addAll(results)
+            onProgress("本地引擎已分析 ${out.size}/${cands.size} 只…")
+        }
+
+        when (mode) {
+            // 涨停仅观察/归因，不进入普通推荐出口。
+            "limitup" -> return@coroutineScope out.filter { (it.pctChg ?: 0.0) >= 9.5 }
+                .sortedByDescending { it.pctChg ?: 0.0 }
+            // 共振页返回全部分析结果（含未达标），由 UI 自行排序。
+            "all" -> return@coroutineScope out.sortedByDescending { it.centralScore ?: (it.pctChg ?: 0.0) }
+        }
+        val scored = out.filter {
+            it.detailStatus == "ok" && it.centralScore != null &&
+                it.centralScore >= c.minScore && it.buyable == true &&
+                (it.pctChg ?: Double.POSITIVE_INFINITY) < c.maxChgPct &&
+                // 普通推荐不接受涨停扫描结果，即使上游误标了可买。
+                (it.pctChg ?: Double.POSITIVE_INFINITY) < 9.5
+        }.sortedByDescending { it.centralScore ?: 0.0 }
+        if (scored.isNotEmpty()) return@coroutineScope scored
+        // 评分不足时只展示可买且有可用本地引擎的实时结果，不把 insufficient 伪装成推荐。
+        onProgress("评分达标 0 只，暂无可买推荐（数据不足或过滤涨停）")
+        emptyList()
+    }
+    private fun standardCode(raw: String?): String? {
+        val digits = raw.orEmpty().filter(Char::isDigit)
+        return digits.takeLast(6).takeIf { it.length == 6 }
+    }
+}

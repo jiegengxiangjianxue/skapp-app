@@ -53,6 +53,11 @@ BANNED = {
 CONTROL_METHODS = {"opt", "optJSONObject", "optString", "optInt", "keys", "length", "get"}
 
 DEFAULT_DIRS = [
+    # 引擎拆成四层后，每一层都要单独扫：漏扫一层就等于给那一层开了后门
+    "engine-core/build/classes",
+    "engine-net/build/classes",
+    "engine-algo/build/classes",
+    "engine-runtime/build/classes",
     "engine/build/classes",
     "ui/build/tmp/kotlin-classes",
     "ui/build/intermediates",

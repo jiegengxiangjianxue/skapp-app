@@ -13,6 +13,10 @@ dependencyResolutionManagement {
     }
 }
 rootProject.name = "skapp"
+include(":engine-core")
+include(":engine-net")
+include(":engine-algo")
+include(":engine-runtime")
 include(":engine")
 include(":ui")
 include(":app")

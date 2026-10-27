@@ -3,7 +3,7 @@
 - **状态**：Accepted
 - **日期**：2026-10-27
 - **决策者**：项目负责人 + 开发
-- **相关**：`docs/RELEASE.md`（模块边界）、`engine/src/test/kotlin/com/skapp/app/data/PerfProbeTest.kt`（性能基线）、`stocks-ai-view`（云端仓）
+- **相关**：`docs/RELEASE.md`（模块边界）、`engine-algo/src/test/kotlin/com/skapp/app/data/PerfProbeTest.kt`（性能基线）、`stocks-ai-view`（云端仓）
 
 ## 背景
 
@@ -70,7 +70,7 @@
 
 ## 参考
 
-- 基线用例：`engine/src/test/kotlin/com/skapp/app/data/PerfProbeTest.kt`（`./gradlew :engine:test` 执行，已纳入 CI `engine-kotlin` 阶段）
+- 基线用例：`engine-algo/src/test/kotlin/com/skapp/app/data/PerfProbeTest.kt`（`./gradlew :engine-algo:test` 或 `:engine:test` 执行，已纳入 CI `engine-kotlin` 阶段）
 - 模块守卫：CI「Guard - engine module must stay Android-free」
 - 发版与模块边界：`docs/RELEASE.md`
 - 数据格式侧的同源决策：ADR-0002

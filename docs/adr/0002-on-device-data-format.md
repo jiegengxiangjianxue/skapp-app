@@ -3,7 +3,7 @@
 - **状态**：Accepted
 - **日期**：2026-10-27
 - **决策者**：项目负责人 + 开发
-- **相关**：ADR-0001（换实现前先排除数据格式与调度）、`engine/src/test/kotlin/com/skapp/app/data/PerfProbeTest.kt`（新增 `JSON 解析耗时` 探针）、`RemoteSources.kt`（产物地址）、`SiteBoardClient.pools()`（并发拉取消费方）
+- **相关**：ADR-0001（换实现前先排除数据格式与调度）、`engine-algo/src/test/kotlin/com/skapp/app/data/PerfProbeTest.kt`（新增 `JSON 解析耗时` 探针）、`engine-net/.../RemoteSources.kt`（产物地址）、`SiteBoardClient.pools()`（并发拉取消费方）
 
 ## 背景
 
@@ -62,8 +62,8 @@
 
 ## 参考
 
-- 基线探针：`engine/src/test/kotlin/com/skapp/app/data/PerfProbeTest.kt`（`./gradlew :engine:test`，已纳入 CI `engine-kotlin` 阶段）
-- 产物地址登记：`engine/src/main/java/com/skapp/app/data/RemoteSources.kt`
+- 基线探针：`engine-algo/src/test/kotlin/com/skapp/app/data/PerfProbeTest.kt`（`./gradlew :engine-algo:test`，已纳入 CI `engine-kotlin` 阶段）
+- 产物地址登记：`engine-net/src/main/java/com/skapp/app/data/RemoteSources.kt`
 - 并发拉取消费方：`SiteBoardClient.pools()`（18 个 `async(Dispatchers.IO)`）
 - 已用 JSONL+gzip 的先例：`engine_v5_<YYYYMM>.jsonl.gz`
 - 语言选型与调度优先级：ADR-0001
