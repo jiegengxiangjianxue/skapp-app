@@ -120,11 +120,18 @@ fun DashboardScreen(vm: SkappViewModel, state: UiState) {
 
         item {
             if (state.marketPulse.isNotEmpty() || state.marketPulseLoading) {
-                SectionTitle("本地实时异动")
+                SectionTitle("本地异动观察（非买入建议）")
                 Text(
-                    "全市场预筛 · ${state.marketPulseTs ?: "暂无时点"} · 规则归因前置，深度分析需点选个股",
+                    "全市场预筛 · ${state.marketPulseTs ?: "暂无时点"} · " +
+                        "排序：横截面相对强度（涨幅分位 45% + 量比分位 35% + 资金分位 20%），连续 2 轮确认优先",
                     style = MaterialTheme.typography.bodySmall, color = Color.Gray,
                 )
+                if (state.pulseDropped.isNotEmpty()) {
+                    Text(
+                        "本轮掉出：${state.pulseDropped.joinToString("、")}",
+                        style = MaterialTheme.typography.labelSmall, color = Color.Gray,
+                    )
+                }
                 if (state.marketPulseLoading) CircularProgressIndicator(modifier = Modifier.height(20.dp), strokeWidth = 2.dp)
                 state.marketPulse.take(10).forEach { row ->
                     Card(
@@ -139,8 +146,24 @@ fun DashboardScreen(vm: SkappViewModel, state: UiState) {
                                     style = MaterialTheme.typography.bodySmall, color = Color.Gray,
                                 )
                                 Text(
-                                    "涨幅 ${row.pctChg?.let { "%+.2f%%".format(it) } ?: "暂无数据"} · 涨速 ${row.speed?.let { "%+.2f%%".format(it) } ?: "首轮暂无"} · 判断 ${outlookText(row.outlook)}",
+                                    "强度 ${row.relStrength?.let { "%.0f".format(it) } ?: "暂无"} · " +
+                                        "涨幅 ${row.pctChg?.let { "%+.2f%%".format(it) } ?: "暂无数据"} · " +
+                                        "量比 ${row.volRatio?.let { "%.2f".format(it) } ?: "暂无数据"} · " +
+                                        "判断 ${outlookText(row.outlook)}",
                                     style = MaterialTheme.typography.bodySmall,
+                                )
+                                Text(
+                                    when {
+                                        row.streak >= 2 -> "连续 ${row.streak} 轮同向（已确认）"
+                                        else -> "本轮新进（未经 2 轮确认，仅观察）"
+                                    } + " · 涨速 " + (row.speed?.let { "%+.2f%%".format(it) } ?: "暂无") +
+                                        when (row.speedSource) {
+                                            "tick" -> "（30 秒快照差）"
+                                            "field" -> "（东财字段·首轮替代）"
+                                            else -> ""
+                                        },
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = if (row.streak >= 2) Color.Gray else MaterialTheme.colorScheme.primary,
                                 )
                                 Text(row.outlookReason ?: "暂无推断依据", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
                                 if (row.eventTitle != null) Text(

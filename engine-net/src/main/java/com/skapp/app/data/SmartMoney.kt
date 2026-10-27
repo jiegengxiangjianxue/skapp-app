@@ -92,11 +92,11 @@ object SmartMoney {
     }
 
     /**
-     * 取数统一走 CloudFeed：共享缓存（10 分钟）、按文件 ts 判陈旧、失败退回上一版快照。
+     * 取数统一走数据库层（ETF 份额是交易所每日披露的库数据，端上算不出来）。
      * 以前这里是自己开连接，云端抖动时直接返回 null，界面就成了「暂无数据」。
      */
     suspend fun fetch(force: Boolean = false): Signal? {
-        val doc = CloudFeed.load(CloudFeed.Doc.ETF_SHARES, force)
+        val doc = Db.etfSharesState(force)
         val json = doc.json ?: return null
         return runCatching { parse(json.toString()) }.getOrNull()
             ?.copy(staleText = if (doc.stale) "云端数据 ${doc.tsText}（可能未更新）" else null)

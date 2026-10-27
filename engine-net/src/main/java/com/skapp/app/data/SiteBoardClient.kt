@@ -656,11 +656,10 @@ object SiteBoardClient {
     suspend fun repriceLive(pools: List<Pool>): List<Pool> = coroutineScope {
         val allCodes = pools.flatMap { p -> p.items.mapNotNull { canonicalCode(it.code) } }.distinct()
         if (allCodes.isEmpty()) return@coroutineScope pools
-        val quotes = runCatching { SkappApi.fetchQuotes(allCodes.map { SkappApi.prefixed(it) }) }
-            .getOrDefault(emptyMap())
+        // 走 LiveQuote：先在全市场快照里取（零额外请求），快照没覆盖的才补拉
+        val quotes = runCatching { LiveQuote.quotes(allCodes) }.getOrDefault(emptyMap())
         if (quotes.isEmpty()) return@coroutineScope pools
-        val byNorm = HashMap<String, Quote>()
-        quotes.forEach { (k, v) -> SkappApi.normalize(k)?.let { n -> byNorm[n] = v } }
+        val byNorm = HashMap<String, Quote>(quotes)
         val liveTs = quotes.values.mapNotNull { it.ts }.maxOrNull()
         pools.map { pool ->
             var repriced = 0

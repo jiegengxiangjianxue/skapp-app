@@ -272,3 +272,67 @@ Pivot/MA/SuperTrend/ElderForce/Vortex/RSI + 本地补的 MACD/RSV），缺的是
 | 决策页一进就闪退（vc18 及以前） | ✅ 2026-10-27（vc19 修复） | 根因：`java.lang.NoSuchMethodError: No method toMap()Ljava/util/Map; in class Lorg/json/JSONObject;`（`SkappApi.kt:626`）。Kotlin **成员优先于扩展**，自写的 `private fun JSONObject.toMap()` 是死代码，调用被解析成 `org.json:json` jar 的成员；而 Android 平台内置 org.json 没有 `toMap()`（android-35 的 JSONObject 只有 48 个方法，那个 jar 有 101 个）。→ 统一改名为 `toPlainMap()/toPlainList()/toPlainMapList()`，4 份重复实现合并到 `JsonPlain.kt`；新增 `tools/org_json_api_guard.py` 按字节码＋android.jar 方法集比对，CI 双段生效 |
 | ANR / 低内存被回收 / native 崩溃三种死法没有任何现场 | ✅ 2026-10-27（vc19 新增） | `CrashGuard` 只抓 Java 未捕获异常。新增 `HealthGuard`：主线程心跳（5s 停顿即当场落盘主线程栈）+ 内存水位采样（80%/92% 分级，系统 lowMemory 一律记），见 `docs/HEALTH-GUARD.md`。诊断页加「运行健康」卡片可看状态/一键导出 |
 | 改 `ui/` 的提交不触发 CI | ✅ 2026-10-27 | `android-build.yml` 的 `paths` 漏了 `ui/**`（2026-10-27 拆出 :ui 模块后一直没补），只改界面层的推送不会跑任何门禁 |
+
+## 实时总结（本地推股 / 异动榜 / 启动） 2026-10-27
+
+| 问题 | 状态 | 说明 |
+|---|---|---|
+| 盘前推股、午盘推股是云端产物 | ✅ 2026-10-27 | 新增 `LocalPicks`（engine）：设备直连行情 + 本地 12 引擎/29 因子 → `StructuredPickArtifact`；实时总结两张卡改成「（本地）」，云端 `premarketPicks/middayPicks` 不再上屏 |
+| 盘前卡口径会随手打开时间漂移 | ✅ 2026-10-27 | `LocalScreener.screen(dropLastBar=true)` 剔除当日未完成日 K，盘前卡任意时点重算都只看到「截至上一交易日收盘」；口径写进卡片与 `metadata.droppedLastBar`，见 ADR-0003 |
+| 推股卡可能把未达标票端给用户 | ✅ 2026-10-27 | `LocalPicks` 只让 `centralScore ≥ 55` 且未涨停的票进 `picks`；未达标的只进 `metadata.observed` 并标注「不构成推荐」，picks 为空时 `status=insufficient` + 具体原因（不编造） |
+| 异动榜每 30 秒整表乱跳 | ✅ 2026-10-27 | 排序键从「30 秒涨速」换成横截面相对强度（涨幅分位 45% + 量比分位 35% + 资金分位 20%）；涨速降级为辅助/归因，并区分 `speedSource=tick/field`（原来两种口径混在同一个 `speed` 字段） |
+| 新进榜的票和持续走强的票没法区分 | ✅ 2026-10-27 | 新增 `streak`（连续同向轮数）与 `isNew`：未确认的新进榜先扣 12 分沉底，连续 2 轮才上主榜；掉出榜取前 3 只在看板显示「本轮掉出」 |
+| 冷启动首页卡顿 | ✅ 2026-10-27 | `warmUpAll` 从 6 路并发改成 3 批串行（批间 200ms 让出），首屏先拿自选行情 + 指数；`loadBoard/loadPicks` 加 Job 级 in-flight 去重，页面 `LaunchedEffect` 与预热不再各拉一遍 |
+
+成本口径（本轮刻意保留的取舍）：
+- 异动榜仍是 30 秒一轮全市场快照（约 11 页/轮），改动只换排序键与去抖，没有加请求；
+- 本地推股一次 = 1 轮全市场快照 + 候选池≤40 只日 K，日 K 走 6 小时缓存 → 盘前、午盘各只跑一次，当日存档落 SharedPreferences，重启只恢复不重算；
+- 异动榜只回答「现在谁在动」，不是买入结论；本地推股只回答「本地算法达标的有哪些」，也不是买入建议，两处文案都已写死这句话。
+
+## 构建结构：引擎分层 2026-10-27
+
+| 问题 | 状态 | 说明 |
+|---|---|---|
+| 引擎是 8783 行单模块，改一处整包重编、坏了一处分不清哪层 | ✅ 2026-10-27 | 拆成 `:engine-core` / `:engine-net` / `:engine-algo` / `:engine-runtime` + `:engine` 聚合层，单向依赖（core←net←algo←runtime←聚合），`api()` 逐级上浮，`:ui`/`:app` 零改动。见 ADR-0004 |
+| 分层只是注释里的口头约定 | ✅ 2026-10-27 | 强制力来自 Gradle 依赖本身（algo 想用 runtime 的缓存直接「未解析引用」）；CI 再加脚本校验反向依赖 + 四层禁 Android import |
+| 模型层倒挂依赖网络层（`SymbolIndex` → `SkappApi.normalize`） | ✅ 2026-10-27 | 归一化下沉为 core 的 `Code.normalize`，`SkappApi.normalize` 保留入口委托；同模块里这种反向依赖永远编译得过，拆了才看见 |
+| `JsonPlain` 的 `internal` 扩展跨不了模块 | ✅ 2026-10-27 | `toPlainMap/toPlainList/toPlainMapList` 改 public（纯转换函数，公开不影响不变量） |
+| 测试 fixture 每个模块抄一份、路径写死 | ✅ 2026-10-27 | 统一挪到仓库根 `testdata/`，各模块 build 通过 `skapp.fixtures` 系统属性指路 |
+| 盘前/午盘推股改本地后，云端两路请求还在白跑 | ✅ 2026-10-27 | 删掉 `SkappApi.fetchStructuredPicks` / `parseStructuredPick` / `RemoteSources.premarketPicks|middayPicks` 与 UiState 两个字段；刷新少拉 2 个 JSON |
+
+分层验证命令（也是 CI 的执行顺序）：
+`:engine-core:test` → `:engine-net:compileKotlin` → `:engine-algo:test` → `:engine-runtime:test` → `:engine:test`（组合冒烟）→ `:ui:compileDebugKotlin`。
+本机 2026-10-27 全量跑通：40 个用例全绿（core 15 / algo 21 / runtime 6 / 组合冒烟 2 —— 部分用例重名按方法计）。
+
+## 数据来源实时化 2026-10-27
+
+| 问题 | 状态 | 说明 |
+|---|---|---|
+| 全市场行情被选股/策略卡/界面各拉一遍，三处时点还不一致 | ✅ 2026-10-27 | 上收为 `LiveMarket`（唯一实时行情源，盘中 5s TTL），请求数 3×N → 1×N，同一次刷新看到同一时点 |
+| 市场状态读云端 `api/market` + `cycle_pool_v2`，盘中看到的是收盘快照 | ✅ 2026-10-27 | 新增 `MarketStateEngine.computeLive()`：phase 来自 `LivePulse` 实时算、global 走实时外围指数；缺件如实进 missingInputs，权重按可用部件归一（旧实现缺件时把权重永久抹掉，E 偏保守且无法解释） |
+| 云端调用散在十几个文件，「哪段分析偷读快照」查不出来 | ✅ 2026-10-27 | 收口为 `Db`：`CloudFeed.` 只剩 `CloudFeed.kt` + `Db.kt` 两个文件；`SectorLink`/`SignalCalibration`/`SmartMoney`/`BanProb`/`EngineFeed`/`SkappViewModel` 全改经 `Db` |
+| 涨停判定写死 0.35 余量，30cm 板永远判不出涨停 | ✅ 2026-10-27 | 余量改为上限的 3.5%（10→0.35 / 20→0.7 / 30→1.05），ST 5cm 另设 0.2 下限；按板块上限判定 |
+| `AskEngine` / `NewsCalcEngine` 用 `SkappApi.normalize` 做纯字符串归一 | ✅ 2026-10-27 | 改用 core 的 `Code.normalize`；顺带清掉 algo/runtime 对 net 类名的非必要依赖 |
+| 约束只写在文档里，没人拦得住回退 | ✅ 2026-10-27 | `tools/layer_source_guard.py` 进 CI：分析层出现 `SkappApi.` / 绕过 Db 用 `CloudFeed.` 直接红 |
+| **界面层仍有 41 处云端调用**（决策卡/池页/主题报告/收盘复盘展示） | 🚧 待迁移 | 守卫只报数量不失败，作为待迁移清单逐轮收敛 |
+| **`EngineFeed` 仍是云端归档解析器**（engine_v5/rps/strategy/phase/global/aipick） | 🚧 待迁移 | 入口已收进 Db；还需一段本地装配（LocalScreener 结果 + LivePulse → 同构 payload）才谈得上「当日引擎池本地化」 |
+| cycle_v2（板块周期池）实时不可得 | 🚧 已知缺口 | 需板块历史序列；目前如实标 missing，不用 0 冒充中性 |
+
+### 第二轮（a→c→b）
+
+| 问题 | 状态 | 说明 |
+|---|---|---|
+| 当日引擎池仍读云端 engine_v5/decision 归档 | ✅ 2026-10-27 | 新增 `EngineFeedLive`：实时脉搏 + 本地 12 引擎 → 同构 payload（`source=live`）。cycle_pool/rps/strategy/ai_pick 与连板高度等实时不可得的项进 `missing` 并写明原因，不用 0 或旧值冒充 |
+| 「实时」只是点一下刷新，没有持续在跑 | ✅ 2026-10-27 | `MarketHeartbeat`：30s 全股盘口（~11 页批量请求）+ 5min 候选池深算；节拍抽成 `HeartbeatPolicy` 纯类（5 项测试）；与原有 `startMarketPulseLoop` 合并，不再双开循环 |
+| 首屏推股/市场/决策读云端快照 | ✅ 2026-10-27 | `LocalSnapshot`：`LocalPicks` 产物→`TodayPicks`、`LivePulse`→`MarketSnapshot`、`LivePulse+候选`→`Decision`；无数据时明确标 unavailable，不给中性结论糊过去 |
+| 界面仍有云端调用（池页/板块/主题/消息面） | 🚧 41→38 处 | 剩余 38 处集中在这四类展示，下一轮迁移；守卫继续只报数量不失败 |
+
+### 第三轮（B 收尾）
+
+| 问题 | 状态 | 说明 |
+|---|---|---|
+| 看板/板块强弱读云端 latest.json 归档 | ✅ 2026-10-27 | `LocalSectors`：全市场快照 × `stock_sector_map`/`industry_map_em` 现算板块涨幅/成交额/涨停/龙头；涨停按各板上限（10/20/30%）判定；未映射股票单独计数不塞板块；概念板块端上无归属表，`degradedReason` 明说 |
+| 自选/推股补价每块各拉一次批量报价 | ✅ 2026-10-27 | `LiveQuote`：先吃 `LiveMarket` 快照（零额外请求），覆盖不到的（港股/停牌/新股）才补拉一次 |
+| 界面到处 `SkappApi.normalize/prefixed/directSymbol` | ✅ 2026-10-27 | 下沉到 core `Code`：纯字符串规则不该依赖网络层，这也是界面绕过库层取数的入口 |
+| 界面直接调云端（38 处） | ✅ 2026-10-27 | 全部收敛：实时走 `LiveMarket/LiveQuote/LivePulse/LocalSnapshot/LocalSectors`，归档/配置/明细走 `DbTables`；守卫改为硬失败，界面层调用点 0 处 |
+| 守卫把类型引用当取数点 | ✅ 2026-10-27 | 只统计调用（`SkappApi.xxx()`、`EngineFeed.loadAll(`、`SiteBoardClient.xxx()`、`SmartMoney.fetch(`），`SiteBoardClient.Pool` 这类渲染类型不误伤 |

@@ -98,16 +98,6 @@ object SkappApi {
         out
     }
 
-    /**
-     * 结构化推股（盘前/午盘）云端入口——**过渡兼容垫片**。
-     *
-     * 拆分时这条链路的云端解析（parseStructuredPick）已随 CloudFeed 一起下掉，改由端上
-     * `LocalPicks` 产出结构化推股；但界面侧切换在这条提交之后，故先留一个空实现顶着，
-     * 避免中间提交「引用了不存在的符号」。界面切换完成后（B 提交）即删除。
-     */
-    @Deprecated("结构化推股已改为端上 LocalPicks 产物，此入口仅过渡兼容")
-    suspend fun fetchStructuredPicks(): Map<String, StructuredPickArtifact> = emptyMap()
-
     /** 代码表失败时仍允许按 A 股代码直接查询，避免把“代码表不可达”误报为无匹配。 */
     fun directSymbol(raw: String): SymbolEntry? {
         val code = normalize(raw) ?: return null

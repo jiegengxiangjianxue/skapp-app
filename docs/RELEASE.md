@@ -24,13 +24,26 @@
 :app  —— MainActivity + AndroidManifest + res/（壳）
 :ui   —— Compose 界面层：MainScreen / SkappViewModel / components / screens / GlassUi
          + 4 个 Android 侧 client（AiRouter / GitCodeAiClient / GitHubModelsClient / AllSourcesClient）
-:engine —— 纯 Kotlin/JVM 引擎与分析层，禁止 import android.* / androidx.*，禁止依赖 :ui
+:engine —— 聚合层：只 api() 暴露下面四层，:ui / :app 的唯一入口（本身无源码）
+  ↑
+:engine-runtime —— 缓存 / 全市场筛选 / 盘前午盘推股产出（唯一允许「组合」的层）
+  ↑
+:engine-algo —— 指标 / 因子标定 / 12 引擎 / 情景与校准（纯计算）
+  ↑
+:engine-net  —— 云端 JSON、行情快照、日 K、资金流、消息抓取（只取数）
+  ↑
+:engine-core —— 数据模型 / 交易时段 / JSON 扁平化 / 进程健康核心（零依赖）
 ```
 
+四层 + 聚合层一律禁止 `import android.* / androidx.*`，禁止依赖 `:ui`；依赖方向由 CI 脚本校验，反向依赖直接红。
+
 守卫（CI 自动执行）：
-- `engine-gate`：`:engine` 出现 `import android.` / `import androidx.` 直接失败；`:engine` 不得 `project(":ui")`
-- `engine-kotlin`：健康守卫的判定逻辑与测试必须存在（`ProcessHealthCore*`），防被当死代码清掉；
-  另有 `tools/org_json_api_guard.py` 黑名单模式守在编译后
+- `engine-gate`：任一引擎层出现 `import android.` / `import androidx.` 直接失败；任一引擎层不得 `project(":ui")`；
+  反向依赖（如 `:engine-algo` 依赖 `:engine-runtime`）由脚本校验
+- `engine-kotlin`：按层构建 `:engine-core:test` → `:engine-net:compileKotlin` → `:engine-algo:test`
+  → `:engine-runtime:test` → `:engine:test`（组合冒烟）；
+  健康守卫的判定逻辑与测试必须存在（`engine-core/.../ProcessHealthCore*`），防被当死代码清掉；
+  另有 `tools/org_json_api_guard.py` 黑名单模式守在编译后（逐层扫描四个模块的 class 目录）
 - `ui-render-gate`：先 `:ui:compileDebugKotlin` 再 `:app:compileDebugKotlin`，UI 类型错误会报成 UI 错误而不是「APK 构建失败」
 - `ui-render-gate`：`HealthGuard` 必须被 `MainActivity` 安装、且不得碰 `crash_*` / `crash_last.txt`（通道隔离）
 - `ui-render-gate`：`tools/org_json_api_guard.py --android-jar <android.jar>` 白名单模式，
@@ -39,8 +52,12 @@
 ## 本地可做的验证（aarch64 容器，不能打 APK）
 
 ```bash
-# 引擎（纯 JVM，完整编译）
-./gradlew :engine:compileKotlin --offline
+# 引擎分层验证（纯 JVM，按依赖顺序一层层过）
+./gradlew :engine-core:test --offline
+./gradlew :engine-net:compileKotlin --offline
+./gradlew :engine-algo:test --offline
+./gradlew :engine-runtime:test --offline
+./gradlew :engine:test --offline          # 组合冒烟
 
 # 界面层（library 模块，资源处理可用）
 ./gradlew :ui:compileDebugKotlin

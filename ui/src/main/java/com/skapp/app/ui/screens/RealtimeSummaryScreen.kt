@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -22,9 +23,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.skapp.app.data.CloseReview
+import com.skapp.app.data.LocalPicks
 import com.skapp.app.data.PickSignal
 import com.skapp.app.data.StructuredPickArtifact
-import com.skapp.app.data.MarketHours
 import com.skapp.app.ui.SkappViewModel
 import com.skapp.app.ui.UiState
 
@@ -36,6 +37,8 @@ fun RealtimeSummaryScreen(vm: SkappViewModel, state: UiState) {
         if (state.screened.isEmpty() && !state.screening) vm.runScreen("all")
         if (state.marketPulse.isEmpty()) vm.refreshPulse()
         vm.refreshLocalAnalytics()
+        // 本地推股：当前时段还没有当日存档才真的算一次（有存档直接复用，不重复拉行情）
+        vm.ensureLocalPicks()
     }
     LazyColumn(
         modifier = Modifier.fillMaxWidth(),
@@ -58,8 +61,31 @@ fun RealtimeSummaryScreen(vm: SkappViewModel, state: UiState) {
         item { SummaryTextCard(state.summary) }
         // 本地部分置顶：本地深算候选（次日视角）排在所有云端产物之前
         item { TomorrowPicksCard(state, vm) }
-        item { PickArtifactCard("盘前推股（云端）", state.premarketPicks, today, vm) }
-        item { PickArtifactCard("午盘推股（云端）", state.middayPicks, today, vm) }
+        // 盘前/午盘推股改为本地深算（设备直连行情 + 12 引擎），不再依赖云端 CI 产物
+        item {
+            LocalPickCard(
+                title = "盘前推股（本地）",
+                artifact = state.localPremarketPicks,
+                basis = "口径：截至上一交易日收盘（已剔除当日未完成日 K）",
+                today = today,
+                loading = state.localPicksLoading,
+                msg = state.localPicksMsg,
+                vm = vm,
+                session = LocalPicks.Session.PREMARKET,
+            )
+        }
+        item {
+            LocalPickCard(
+                title = "午盘推股（本地）",
+                artifact = state.localMiddayPicks,
+                basis = "口径：当日实时行情（含当日未完成日 K）",
+                today = today,
+                loading = state.localPicksLoading,
+                msg = state.localPicksMsg,
+                vm = vm,
+                session = LocalPicks.Session.MIDDAY,
+            )
+        }
         item { CloseReviewCard(state.closeReview, today) }
         item { WinrateCard(state) }
     }
@@ -128,41 +154,79 @@ private fun TomorrowPicksCard(state: UiState, vm: SkappViewModel) {
 }
 
 @Composable
-private fun PickArtifactCard(
+private fun LocalPickCard(
     title: String,
     artifact: StructuredPickArtifact,
+    basis: String,
     today: String,
+    loading: Boolean,
+    msg: String?,
     vm: SkappViewModel,
-    fallback: StructuredPickArtifact? = null,
+    session: LocalPicks.Session,
 ) {
-    val stale = artifact.date != today || artifact.picks.isEmpty()
-    val shown = if (stale && fallback != null) fallback else artifact
-    val sourceDate = shown.date ?: shown.generatedAt?.take(10)
-    val current = sourceDate == today
-    val premarket = title.contains("盘前")
-    val premarketActive = MarketHours.phase() in setOf(MarketHours.Phase.PRE_OPEN, MarketHours.Phase.AUCTION_OPEN)
-    val visibleForSession = !premarket || premarketActive || (stale && fallback != null)
     Card(colors = CardDefaults.cardColors()) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(title, fontWeight = FontWeight.SemiBold)
-            Text("生成 ${shown.generatedAt ?: "暂无数据"} · 计算 ${shown.calculationTime ?: "暂无数据"}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-            val reasonText = shown.reason
-            if (!stale && reasonText != null && shown.status != "ok") {
-                Text(reasonText, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(title, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                Text(
+                    "重算",
+                    Modifier.clickable { vm.refreshLocalPicks(session) }.padding(horizontal = 6.dp),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary,
+                )
             }
-            if (shown.picks.isEmpty() || !current || !visibleForSession) {
-                val message = when {
-                    !current -> "暂无数据：源日期 ${sourceDate ?: "未知"}，不是当前交易日。"
-                    premarket && !premarketActive -> "盘前推股时段已结束；当前请查看本地实时推股或等待午盘推股。"
-                    else -> shown.reason ?: "暂无数据：该时段没有可展示推股。"
+            Text(basis, style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+            Text(
+                "生成 ${artifact.generatedAt?.replace("T", " ")?.take(19) ?: "暂无数据"} · " +
+                    "计算时点 ${artifact.calculationTime?.replace("T", " ")?.take(19) ?: "暂无数据"}",
+                style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+            )
+            if (loading) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(modifier = Modifier.height(14.dp), strokeWidth = 2.dp)
+                    Text(
+                        msg ?: "正在本地深算…",
+                        Modifier.padding(start = 8.dp),
+                        style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+                    )
                 }
-                Text(message, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+            }
+            val staleDate = artifact.date != null && artifact.date != today
+            if (staleDate && artifact.picks.isNotEmpty()) {
+                Text(
+                    "存档日期 ${artifact.date}，不是今日；仅作历史参考，不当今日名单用。",
+                    style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error,
+                )
+            }
+            if (artifact.picks.isEmpty()) {
+                Text(
+                    artifact.reason ?: msg ?: "暂无数据：本地深算尚未产出（当前非生成时段）。",
+                    style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+                )
             } else {
-                Text("引擎：${shown.engine ?: "暂无数据"} · ${shown.picks.size} 条", style = MaterialTheme.typography.bodySmall)
-                if (stale) {
-                    Text(shown.reason ?: "原产物过期，已用今日引擎候选回填", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+                Text(
+                    "数据源：${artifact.engine ?: "本地深算"} · ${artifact.picks.size} 条达标（均未涨停）",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                itemsPreview(artifact.picks, vm)
+                // 未达标只当观察位展示，并显式标注不构成推荐
+                val observed = (artifact.metadata["observed"] as? List<*>)
+                    ?.mapNotNull { it as? Map<*, *> }
+                    .orEmpty()
+                if (observed.isNotEmpty()) {
+                    Text(
+                        "未达标观察（评分<55 或涨幅已达涨停附近，不构成推荐）：" + observed.joinToString("、") { o ->
+                            val name = o["name"]?.toString().orEmpty().ifBlank { o["code"]?.toString().orEmpty() }
+                            val score = (o["score"] as? Number)?.let { "%.1f".format(it) } ?: "暂无分"
+                            "$name（$score）"
+                        },
+                        style = MaterialTheme.typography.labelSmall, color = Color.Gray,
+                    )
                 }
-                itemsPreview(shown.picks, vm)
+                Text(
+                    "以上为本地算法候选（12 引擎 / 29 因子），不是买入建议；交易决策需自行复核。",
+                    style = MaterialTheme.typography.labelSmall, color = Color.Gray,
+                )
             }
         }
     }

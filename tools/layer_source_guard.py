@@ -14,8 +14,14 @@
 2. **算法/产出层不得直接打云端接口**：`engine-algo` / `engine-runtime` 里出现
    `SkappApi.` 即违规。取数走 `LiveMarket`（实时）或 `Db`（库表）。
 
-3. **界面层暂列观察名单**：`:ui` 还有历史遗留的云端调用点（决策页/池页等），
-   本守卫对它们只报数量不失败——这些是「待迁移清单」，逐轮收敛，不许再增长。
+3. **界面层不许有云端调用**（第二轮起硬性）：`:ui` / `:app` 里出现
+   `SkappApi.xxx()` / `SiteBoardClient.xxx()` / `EngineFeed.loadAll(` / `SmartMoney.fetch(`
+   即失败。界面要么读库表门面 `DbTables`（归档/配置表），要么读实时层
+   （`LiveMarket` / `LiveQuote` / `LivePulse` / `LocalScreener` / `LocalSnapshot` / `LocalSectors`）。
+
+   **只统计调用，不统计类型引用**：`SiteBoardClient.Pool`、`EngineFeed.EngineV5Top`
+   这类只是界面用来渲染的数据类型，不属于「取数点」。早先按 `EngineFeed.` 子串统计，
+   把 EnginesScreen 里 10 处类型标注也算成云端调用，数字虚高、迁移方向被带偏。
 
 ## 为什么按文件路径而不是按包名
 
@@ -25,6 +31,7 @@
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -81,8 +88,24 @@ def main() -> int:
             continue
         errors.append(f"{rel}:{line_no} 分析层直连云端接口（应走 LiveMarket / Db）：{line}")
 
-    watch = [h for h in scan("SkappApi.") + scan("EngineFeed.") if h[0].startswith(WATCH_PREFIXES)]
-    watch_files = sorted({rel for rel, _, _ in watch})
+    # ── 规则 3：界面层不得直接调云端 ──
+    UI_CLOUD_NEEDLES = ("SkappApi.", "SiteBoardClient.", "EngineFeed.loadAll(", "SmartMoney.fetch(")
+    # 仅作为「类型」出现时不算取数点（界面要渲染这些结构体）
+    TYPE_NAMES = {"Pool", "PoolItem"}
+
+    ui_calls = []
+    for needle in UI_CLOUD_NEEDLES:
+        for rel, line_no, line in scan(needle):
+            if not rel.startswith(WATCH_PREFIXES):
+                continue
+            members = set(re.findall(r"SiteBoardClient\.(\w+)", line))
+            if members and members <= TYPE_NAMES:
+                continue
+            ui_calls.append((rel, line_no, line))
+
+    ui_files = sorted({rel for rel, _, _ in ui_calls})
+    for rel, line_no, line in ui_calls:
+        errors.append(f"{rel}:{line_no} 界面层直接调云端（应走 DbTables / 实时层）：{line}")
 
     if errors:
         print("::error::数据来源守卫未通过——分析链路不得直接吃云端快照/云端接口")
@@ -92,10 +115,7 @@ def main() -> int:
         return 1
 
     print(f"数据来源守卫通过：云端调用已收敛到 Db 层（{len(CLOUDFEED_ALLOWED)} 个文件）。")
-    if watch_files:
-        print(f"界面层待迁移云端调用点：{len(watch)} 处 / {len(watch_files)} 个文件（不失败，仅记录）：")
-        for f in watch_files[:10]:
-            print("  - " + f)
+    print(f"界面层云端调用点：{len(ui_calls)} 处（0 为达标）")
     return 0
 
 
