@@ -670,7 +670,9 @@ class SkappViewModel : ViewModel() {
                         heartbeatAt = tick.at,
                         heartbeatLabel = tick.error ?: tick.pulse.label,
                     )
-                    runCatching { com.skapp.app.data.MarketStateEngine.computeLive(tick.pulse) }
+                    // 把心跳同一份快照算出的板块强弱传下去：cycle_v2 不再恒为 0，
+                    // 也不会为了一个分数再聚合一遍全市场
+                    runCatching { com.skapp.app.data.MarketStateEngine.computeLive(tick.pulse, tick.sectors) }
                         .getOrNull()
                         ?.let { ms ->
                             _state.value = _state.value.copy(marketState = ms, marketStateLoading = false)

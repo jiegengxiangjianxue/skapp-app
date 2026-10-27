@@ -792,7 +792,13 @@ object MarketDataClient {
             ag = (ag * (n - 1) + g) / n
             al = (al * (n - 1) + l) / n
         }
-        return if (al == 0.0) 100.0 else 100.0 - 100.0 / (1 + ag / al)
+        // 没有任何下跌（al=0）且有过上涨 → 100；**但完全不动（ag 也为 0）要返回 50**，
+        // 否则横盘股会被判「RSI 超买」而扣分，属于方向性错误。
+        return when {
+            al == 0.0 && ag == 0.0 -> 50.0
+            al == 0.0 -> 100.0
+            else -> 100.0 - 100.0 / (1 + ag / al)
+        }
     }
 
     /** KDJ(9,3,3) */
@@ -819,6 +825,21 @@ object MarketDataClient {
         val cur = bars.last().vol
         val avg = bars.dropLast(1).takeLast(n).map { it.vol }.average()
         return if (avg <= 0) null else cur / avg
+    }
+
+    /**
+     * 盘中折算量比。
+     *
+     * 标准「量比」= (现量 / 已开市分钟) ÷ (过去 N 日均量 / 240)。
+     * 盘中最后一根日 K 还没走完，直接用 [volumeRatio] 会比收盘后小一大截
+     * （9:40 只走了 10 分钟），量能引擎因此把「正常放量」读成「缩量」。
+     *
+     * @param elapsedMinutes 已开市的连续竞价分钟数（1..239）；不在这个区间就退回原始量比
+     */
+    fun volumeRatioPaced(bars: List<KBar>, n: Int = 5, elapsedMinutes: Int): Double? {
+        val raw = volumeRatio(bars, n) ?: return null
+        if (elapsedMinutes !in 1 until 240) return raw
+        return raw * 240.0 / elapsedMinutes
     }
 
     /** 布林带(20, 2) */

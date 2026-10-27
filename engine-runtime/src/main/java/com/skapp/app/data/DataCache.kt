@@ -18,7 +18,15 @@ object DataCache {
 
     private const val QUOTE_TTL_MS = 30_000L
     private const val MINUTE_TTL_MS = 60_000L
-    private const val DAY_TTL_MS = 6 * 60 * 60_000L      // 日 K / 资金流：半天
+    private const val DAY_TTL_MS = 6 * 60 * 60_000L      // 日 K / 资金流：半天（收盘后够用）
+    /**
+     * 盘中日 K 缓存只能活 60 秒。
+     *
+     * 之前日 K 一律按 6 小时缓存，盘中最后一根 bar 从 9:31 一直冻到 15:00——
+     * 「实时分析」用的是上午十点的价格和成交量，量比/量能/振幅全是旧的。
+     * 收盘后没有新 bar 进来，仍然用长 TTL，避免无意义重复拉取。
+     */
+    private const val KLINE_INTRADAY_TTL_MS = 60_000L
     private const val BOARDS_TTL_MS = 24 * 60 * 60_000L  // 板块归属：一天
 
     private val store = HashMap<String, CacheEntry>()
@@ -53,11 +61,15 @@ object DataCache {
 
     fun klineKey(code: String, adjust: String, count: Int) = "kline:$code:$adjust:$count"
 
+    /** 盘中/竞价时段用短 TTL，其余时段用长 TTL。 */
+    private fun dayTtlMs(): Long =
+        if (MarketHours.isTrading() || MarketHours.isAuction()) KLINE_INTRADAY_TTL_MS else DAY_TTL_MS
+
     suspend fun kline(code: String, adjust: String, count: Int, force: Boolean = false): List<KBar> {
         val key = klineKey(code, adjust, count)
         if (!force) get<List<KBar>>(key)?.let { return it }
         val bars = MarketDataClient.dayKline(code, count, adjust)
-        put(key, bars, DAY_TTL_MS)
+        put(key, bars, dayTtlMs())
         return bars
     }
 
@@ -85,11 +97,22 @@ object DataCache {
         return b
     }
 
+    /**
+     * 本地引擎结果（由日 K 派生）。
+     *
+     * 缓存键必须带上**最后一根 bar 的指纹**：盘中 bar 数量不变、只是数值在更新，
+     * 老键（只看 bars.size）会命中上午算出来的旧评分，一整天都不刷新。
+     * 换新键时顺手清掉同股旧键，避免盘中每分钟攒一份结果把内存吃掉。
+     */
     fun engine(code: String, adjust: String, bars: List<KBar>): LocalEngineResult {
-        val key = "engine:$code:$adjust:${bars.size}"
+        val last = bars.lastOrNull()
+        val fp = "${bars.size}:${last?.date}:${last?.close}:${last?.vol}"
+        val prefix = "engine:$code:$adjust:"
+        val key = "$prefix$fp"
         get<LocalEngineResult>(key)?.let { return it }
+        invalidatePrefix(prefix)
         val r = LocalEngine.analyze(bars)
-        put(key, r, DAY_TTL_MS)
+        put(key, r, dayTtlMs())
         return r
     }
 

@@ -37,7 +37,10 @@ data class TechnicalFactors(
 
 object TechnicalCalc {
 
-    fun compute(bars: List<KBar>): TechnicalFactors? {
+    /**
+     * @param now 判断「最后一根是不是今天的未完成 bar」用；盘中会按已开市分钟折算量比
+     */
+    fun compute(bars: List<KBar>, now: java.util.Date = java.util.Date()): TechnicalFactors? {
         if (bars.size < 30) return null
         val close = bars.last().close
         val ma5 = MarketDataClient.ma(bars, 5).lastOrNull()
@@ -53,7 +56,12 @@ object TechnicalCalc {
             macdDif = dif.lastOrNull(), macdDea = dea.lastOrNull(), macdHist = hist.lastOrNull(),
             rsi14 = MarketDataClient.rsi(bars, 14),
             k = k, d = d, j = j,
-            volRatio = MarketDataClient.volumeRatio(bars, 5),
+            volRatio = run {
+                // 盘中最后一根未走完：直接比「现量/均量」会把放量读成缩量，按已走分钟折算
+                val mins = MarketHours.intradayMinutesFor(bars.last().date, now)
+                if (mins != null) MarketDataClient.volumeRatioPaced(bars, 5, mins)
+                else MarketDataClient.volumeRatio(bars, 5)
+            },
             bollLower = bl, bollMid = bm, bollUpper = bu,
             atr14 = atr(bars, 14),
             volMa5 = bars.takeLast(5).map { it.vol }.average(),
@@ -114,8 +122,8 @@ data class LocalEngineResult(
  */
 object LocalEngine {
 
-    fun analyze(bars: List<KBar>): LocalEngineResult {
-        val f = TechnicalCalc.compute(bars)
+    fun analyze(bars: List<KBar>, now: java.util.Date = java.util.Date()): LocalEngineResult {
+        val f = TechnicalCalc.compute(bars, now)
         val engines = listOfNotNull(
             f?.let { trendEngine(it) },
             f?.let { momentumEngine(it) },
@@ -146,9 +154,12 @@ object LocalEngine {
         val bullCount = valid.count { it.signal == "bullish" }
         val bearCount = valid.count { it.signal == "bearish" }
         val neutralCount = valid.count { it.signal == "neutral" }
-        val resonanceRatio = weighted.takeIf { it.isNotEmpty() }?.let {
-            maxOf(bullCount, bearCount, neutralCount).toDouble() / valid.size
-        }
+        // 共振 = **方向一致度**，不是「最大阵营占比」。
+        //
+        // 旧口径 maxOf(bull, bear, neutral)/valid 在「12 个引擎全中性」时给出 100%，
+        // 于是「毫无方向」被当成「高度共振」，还顺着 confidence 进了决策卡。
+        // 中性票本来就不构成方向，不能计入一致度。
+        val resonanceRatio = resonanceOf(bullCount, bearCount, valid.size)
         val direction = when {
             valid.isEmpty() -> "insufficient"
             bullCount > bearCount && bullCount > neutralCount -> "偏多"
@@ -174,6 +185,15 @@ object LocalEngine {
             status = if (weightedComposite == null) "insufficient" else "ok",
         )
     }
+
+    /**
+     * 共振（方向一致度）= max(偏多票, 偏空票) / 有效引擎数。
+     *
+     * 抽出来是为了能钉住口径：中性票不构成方向，绝不能计入「一致度」；
+     * 旧实现取 max(bull, bear, neutral)，于是「12 个引擎全中性」被算成 100% 共振。
+     */
+    internal fun resonanceOf(bull: Int, bear: Int, valid: Int): Double? =
+        if (valid <= 0) null else maxOf(bull, bear).toDouble() / valid
 
     // ── 引擎 1: 趋势（均线排列 + 价格位置）────────────────
     private fun trendEngine(f: TechnicalFactors): EngineScore {

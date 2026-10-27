@@ -20,7 +20,7 @@ import java.util.Locale
  */
 object LiveQuote {
 
-    private val iso = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.CHINA)
+    private val iso get() = CstTime.fmt("yyyy-MM-dd HH:mm:ss")
 
     /** 全市场快照行 → 报价模型。 */
     fun quoteOf(row: LiveMarket.Row): Quote = Quote(

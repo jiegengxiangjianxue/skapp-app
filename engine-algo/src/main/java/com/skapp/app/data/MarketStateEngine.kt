@@ -155,11 +155,44 @@ object MarketStateEngine {
             missing.add("global_indices.json (API不可达)")
             return 0.0
         }
-        val up = indices.count { (it["pctChg"] as? Double)?.let { it > 0 } == true }
+        // 按 Number 取再 toDouble：接口里可能是 Int/Float，`as? Double` 会静默变 false，
+        // 于是一个「外围普涨」的晚上被算成 -100（全跌），把 E 直接拽到防守区。
+        val up = indices.count { (it["pctChg"] as? Number)?.toDouble()?.let { p -> p > 0 } == true }
         val total = indices.size
         if (total == 0) return 0.0
         // 全球涨跌比例映射到 -50..+50
         return (up.toDouble() / total * 100 - 50) * 2.0
+    }
+
+    /**
+     * 板块周期分（cycle_v2）：成交额加权的「上涨板块占比」+「加权涨幅」。
+     *
+     * - 广度项：(加权上涨占比 − 0.5) × 80 → ±40
+     * - 涨幅项：加权板块涨幅 × 6，夹 ±30
+     *
+     * 按成交额加权而不是板块等权：钱在哪，才是当下市场的真实主张。
+     * 板块数据拿不到就返回 null（该输入本轮不参与权重归一），不填 0 假装中性。
+     */
+    internal fun cycleScore(sectors: LocalSectors.Result?, missing: MutableList<String>): Double? {
+        if (sectors == null || sectors.rows.isEmpty()) {
+            missing.add("cycle_v2 (板块强弱聚合不可得：需全市场快照 + 成分映射表)")
+            return null
+        }
+        val totalHeat = sectors.rows.sumOf { it.heat }
+        if (totalHeat <= 0.0) {
+            missing.add("cycle_v2 (板块成交额为空，无法加权)")
+            return null
+        }
+        var wUp = 0.0
+        var wChg = 0.0
+        for (r in sectors.rows) {
+            val upRatio = if (r.n > 0) r.up.toDouble() / r.n else 0.5
+            wUp += r.heat * upRatio
+            wChg += r.heat * (r.chg1d ?: 0.0)
+        }
+        wUp /= totalHeat
+        wChg /= totalHeat
+        return ((wUp - 0.5) * 80.0 + (wChg * 6.0).coerceIn(-30.0, 30.0)).coerceIn(-100.0, 100.0)
     }
 
     /**
@@ -187,7 +220,10 @@ object MarketStateEngine {
      *   3. 权重按**可用部件**归一到 1，避免缺件时 E 被系统性稀释（旧实现缺 cycle 时
      *      等于把 0.25 的权重永久抹掉，E 天然偏保守且无法解释）。
      */
-    suspend fun computeLive(pulseIn: LivePulse? = null): MarketState = withContext(Dispatchers.IO) {
+    suspend fun computeLive(
+        pulseIn: LivePulse? = null,
+        sectorsIn: LocalSectors.Result? = null,
+    ): MarketState = withContext(Dispatchers.IO) {
         val missing = mutableListOf<String>()
         // 心跳已经算过脉搏时直接复用，避免同一轮里再拉一次全市场
         val pulse = pulseIn ?: LivePulse.of(LiveMarket.snapshot())
@@ -196,14 +232,19 @@ object MarketStateEngine {
         val indices = MarketDataClient.globalIndices()
         val globalPart = globalScore(indices, missing)
 
-        missing.add("cycle_v2 (板块周期池需历史，本地实时不可得)")
+        // cycle_v2：以前直接写 0.0 并声明「不可得」，等于把 25% 权重凭空扔掉、
+        // 还让界面显示一个「板块 0 分」的假数字。板块横截面端上算得出来（成交额加权
+        // 上涨占比 + 加权涨幅），接进来即可；只有历史周期序列才是真缺。
+        val sectors = sectorsIn ?: runCatching { LocalSectors.compute() }.getOrNull()
+        val cyclePart = cycleScore(sectors, missing)
+        missing.add("cycle_v2.history (板块历史周期序列，端上无多日快照)")
         missing.add("picks.duckdb (win_loop)")
         missing.add("picks.duckdb (kelly)")
 
         val parts = mapOf(
             "market_phase" to pulse.phaseScore,
             "global" to globalPart,
-            "cycle_v2" to 0.0,
+            "cycle_v2" to (cyclePart ?: 0.0),
             "win_loop" to 0.0,
             "kelly" to 0.0,
         )
@@ -214,7 +255,11 @@ object MarketStateEngine {
             "win_loop" to 0.15,
             "kelly" to 0.10,
         )
-        val available = listOf("market_phase", "global")
+        val available = buildList {
+            add("market_phase")
+            add("global")
+            if (cyclePart != null) add("cycle_v2")
+        }
         val totalWeight = available.sumOf { baseWeights[it] ?: 0.0 }
         val weights = baseWeights.mapValues { (k, v) -> if (k in available) v / totalWeight else 0.0 }
 
@@ -233,7 +278,7 @@ object MarketStateEngine {
 
         val state = stateOf(E, agree)
         MarketState(
-            ts = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.CHINA).format(System.currentTimeMillis()),
+            ts = CstTime.iso(),
             E = E,
             state = state,
             agreement = agree,
@@ -309,8 +354,7 @@ object MarketStateEngine {
         }
         
         // 时间戳
-        val ts = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.CHINA)
-            .format(System.currentTimeMillis())
+        val ts = CstTime.iso()
         
         MarketState(
             ts = ts,

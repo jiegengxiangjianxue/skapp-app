@@ -1,6 +1,8 @@
 package com.skapp.app.data
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 
@@ -52,6 +54,13 @@ object LiveMarket {
         val prevClose: Double? = null,  // f18 昨收
         val chg60d: Double? = null,     // f24 60 日涨跌幅 %
         val chgYtd: Double? = null,     // f25 年初至今涨跌幅 %
+        /**
+         * f22 涨速（%，东财约 5 分钟窗口）。
+         *
+         * 异动榜第一轮没有「上一轮快照」可比，必须有这个字段兜底；之前界面读了一个
+         * 快照里根本不存在的 "speed" 键，于是首轮整张异动榜都是「缺少连续快照」。
+         */
+        val speed: Double? = null,
     ) {
 
         /** 涨停价（元）：昨收 ×(1+上限)，两位小数。昨收缺失则为 null。 */
@@ -73,16 +82,24 @@ object LiveMarket {
                 val px = price ?: return false
                 return touchedLimitUp && px < lp - 0.011
             }
-        /** 涨跌幅上限：主板 10%（ST 5%）、创业板/科创板 20%、北交所 30%。 */
+        /**
+         * 涨跌幅上限：主板 10%（ST 5%）、创业板/科创板 20%（689 是科创板 CDR，同样 20%）、
+         * 北交所 30%。ST 只在主板是 5%，创业/科创板的 ST 仍是 20%。
+         */
         val limitCap: Double
             get() {
                 val base = when {
-                    code.startsWith("300") || code.startsWith("301") || code.startsWith("688") -> 20.0
+                    code.startsWith("300") || code.startsWith("301") ||
+                        code.startsWith("688") || code.startsWith("689") -> 20.0
                     code.startsWith("8") || code.startsWith("4") || code.startsWith("92") -> 30.0
                     else -> 10.0
                 }
                 return if (base == 10.0 && name != null && name.contains("ST", ignoreCase = true)) 5.0 else base
             }
+
+        /** 跌停价（元）：昨收 ×(1-上限)，两位小数。 */
+        val limitDownPrice: Double?
+            get() = prevClose?.let { p -> Math.round(p * (1 - limitCap / 100.0) * 100.0) / 100.0 }
 
         /**
          * 涨停判定的抖动余量。
@@ -95,19 +112,40 @@ object LiveMarket {
          */
         private val limitSlack: Double get() = (limitCap * 0.035).coerceAtLeast(0.2)
 
-        /** 是否涨停。 */
+        /**
+         * 是否涨停。
+         *
+         * **有昨收就按价判**（现价 ≥ 涨停价 − 0.005，0.005 只为浮点容差），
+         * 没有昨收才退回涨幅近似。原因：涨幅近似必须留余量（10cm 板真实涨幅可能只有 9.85%），
+         * 而这个余量会把 +9.7% 的**没涨停**股票也算成涨停——涨停家数、封板率、板块涨停池都会虚高。
+         */
         val atLimitUp: Boolean
             get() {
+                val lp = limitUpPrice
+                val px = price
+                if (lp != null && px != null && px > 0.0) return px >= lp - 0.005
                 val c = pctChg ?: return false
                 return c >= limitCap - limitSlack
             }
 
-        /** 是否跌停（判定与上涨同理）。 */
+        /** 是否跌停（判定与涨停同理：有昨收按价判）。 */
         val atLimitDown: Boolean
             get() {
+                val ld = limitDownPrice
+                val px = price
+                if (ld != null && px != null && px > 0.0) return px <= ld + 0.005
                 val c = pctChg ?: return false
                 return c <= -(limitCap - limitSlack)
             }
+
+        /**
+         * 是否在正常交易（有价格、有成交量）。
+         *
+         * 停牌票 clist 里照样有行，涨跌幅是 0 —— 直接算「平盘」会把平盘数虚增、
+         * 把中位涨幅往 0 拉、把板块均值稀释。统计口径要先过这一关。
+         */
+        val tradable: Boolean
+            get() = (price ?: 0.0) > 0.0 && (volumeLots ?: 0.0) > 0.0
 
         /** 主板 60/00/000 才算「可交易主板」，其余（创业板/科创板/北交所）默认排除。 */
         val mainBoard: Boolean
@@ -121,6 +159,9 @@ object LiveMarket {
     @Volatile private var cached: List<Row> = emptyList()
     @Volatile private var cachedAt = 0L
 
+    /** 快照互斥锁：同一时刻只允许一个协程真正去拉全市场。 */
+    private val fetchLock = Mutex()
+
     private fun ttlMs(): Long = if (MarketHours.isTrading() || MarketHours.isAuction()) 5_000L else 60_000L
 
     /**
@@ -130,16 +171,24 @@ object LiveMarket {
      * @return 真实抓取结果；网络全挂时返回空列表（**不返回假数据**，由上层显示「暂无数据」）
      */
     suspend fun snapshot(force: Boolean = false): List<Row> = withContext(Dispatchers.IO) {
-        val now = System.currentTimeMillis()
-        if (!force && cached.isNotEmpty() && now - cachedAt < ttlMs()) return@withContext cached
-        val fetched = fetchAll()
-        if (fetched.isNotEmpty()) {
-            cached = fetched
-            cachedAt = now
-            return@withContext fetched
+        val fresh = cached.takeIf { !force && it.isNotEmpty() && System.currentTimeMillis() - cachedAt < ttlMs() }
+        if (fresh != null) return@withContext fresh
+
+        // 并发去重：心跳深算、界面刷新、策略卡可能同时要快照。
+        // 没有这把锁时它们会各拉一遍十几页，而且拿到**不同时点**的数据；
+        // 抢到锁之后先复查缓存——前一个协程可能刚拉完。
+        val rows = fetchLock.withLock {
+            val again = cached.takeIf { !force && it.isNotEmpty() && System.currentTimeMillis() - cachedAt < ttlMs() }
+            if (again != null) return@withLock again
+            val fetched = fetchAll()
+            if (fetched.isNotEmpty()) {
+                cached = fetched
+                cachedAt = System.currentTimeMillis()
+            }
+            // 盘中拉不到时宁可给上一份，并保留真实抓取时间，让上层能标「陈旧」。
+            fetched.ifEmpty { cached }
         }
-        // 盘中拉不到时宁可给上一份，并保留真实抓取时间，让上层能标「陈旧」。
-        cached
+        rows
     }
 
     private fun fetchPage(page: Int): List<Row> {
@@ -147,7 +196,7 @@ object LiveMarket {
             "&fs=m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81+s:2048" +
             // f15/f18/f24/f25 一并取：RPS（60日/年初至今涨幅）与封板率（最高价 vs 涨停价）
             // 都要它们，放在同一次批量里不增加请求数。
-            "&fields=f2,f3,f5,f6,f7,f8,f9,f10,f12,f14,f15,f18,f20,f24,f25,f62"
+            "&fields=f2,f3,f5,f6,f7,f8,f9,f10,f12,f14,f15,f18,f20,f22,f24,f25,f62"
         val txt = httpGet(url) ?: return emptyList()
         val obj = runCatching { JSONObject(txt) }.getOrNull() ?: return emptyList()
         val arr = obj.optJSONObject("data")?.optJSONArray("diff") ?: return emptyList()
@@ -173,6 +222,7 @@ object LiveMarket {
                 prevClose = o.num("f18"),
                 chg60d = o.num("f24"),
                 chgYtd = o.num("f25"),
+                speed = o.num("f22"),
             )
         }
     }

@@ -2,8 +2,6 @@ package com.skapp.app.data
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import java.text.SimpleDateFormat
-import java.util.Date
 import java.util.Locale
 
 /**
@@ -55,11 +53,11 @@ object EngineFeedLive {
         onProgress("本地 12 引擎重算候选池…")
         val screened = LocalScreener.screen(criteria, onProgress, mode = "all")
 
-        onProgress("本地板块强弱与策略卡…")
-        val sectors = runCatching { LocalSectors.compute() }.getOrNull()
-        val strategy = LiveExtras.strategy()
-
+        onProgress("外围指数与本地板块强弱…")
         val indices = runCatching { MarketDataClient.globalIndices() }.getOrDefault(emptyList())
+        val sectors = runCatching { LocalSectors.compute() }.getOrNull()
+        // 外围指数只拉一次：策略卡的入市闸门与本轮 market_phase 用同一份数据
+        val strategy = LiveExtras.strategy(globalIndices = indices)
         val feeds = assemble(pulse, screened, indices, snapshot = snap, sectors = sectors, strategy = strategy)
 
         cached = feeds
@@ -92,8 +90,8 @@ object EngineFeedLive {
         /** 已算好的策略卡（[LiveExtras.strategy]）。 */
         strategy: EngineFeed.StrategyCard? = null,
     ): EngineFeed.EngineFeeds {
-        val date = SimpleDateFormat("yyyy-MM-dd", Locale.CHINA).format(Date(ts))
-        val iso = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.CHINA).format(Date(ts))
+        val date = CstTime.day(ts)
+        val iso = CstTime.iso(ts)
 
         val scored = screened.filter { (it.centralScore ?: 0.0) > 0.0 }
             .sortedByDescending { it.centralScore ?: 0.0 }
@@ -141,6 +139,8 @@ object EngineFeedLive {
                 "口径" to "本地实时（东财 clist 全市场盘口现算）",
                 "涨跌家数" to "${pulse.up}涨 / ${pulse.down}跌 / ${pulse.flat}平",
                 "涨停家数" to "${pulse.limitUp}",
+                // 停牌不计入涨跌平，单独说明，免得用户拿「涨+跌+平 ≠ 总数」去质疑数据
+                "停牌家数" to "${pulse.suspended}",
                 "跌停家数" to "${pulse.limitDown}",
                 "中位涨幅" to (pulse.medianPct?.let { String.format(Locale.CHINA, "%.2f%%", it) } ?: "不可得"),
                 "宽度" to (pulse.breadth?.let { String.format(Locale.CHINA, "%.0f%%", it * 100) } ?: "不可得"),

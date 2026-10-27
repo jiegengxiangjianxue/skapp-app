@@ -75,6 +75,8 @@ object LocalScreener {
                 "pe" to r.pe,
                 "mv" to r.mv,
                 "mainNet" to r.mainNet,
+                // 异动榜首轮的动量兜底（东财 f22 涨速）；缺了它首轮只能全标 insufficient
+                "speed" to r.speed,
             )
         }
 
@@ -94,7 +96,7 @@ object LocalScreener {
         onProgress("全市场快照 ${snap.size} 只，预筛中（${if (limitup) "涨停扫描" else "涨幅/量比/非ST/主板"}）…")
 
         // 预筛（含主板前缀红线过滤，排除 300/301/688/北交所）
-        val cands = snap.filter { row ->
+        val pool = snap.filter { row ->
             val chg = row.pctChg ?: return@filter false
             val name = row.name.orEmpty()
             val st = c.excludeST && (name.contains("ST", ignoreCase = true) ||
@@ -106,8 +108,12 @@ object LocalScreener {
                     // 跨模块属性没法智能转换，先落局部值
                     (row.volRatio?.let { it >= c.minVolRatio } != false)
             }
-        }.sortedByDescending { it.mainNet ?: 0.0 }
-            .take(if (limitup) 50 else c.maxCandidates)
+        }
+        // 预筛排序：多维度秩和，不再只用「主力净流入」一票定生死。
+        //   旧做法：按 mainNet 降序取前 N —— 候选池会被「大市值 + 已大额流入」的票锁死，
+        //   量比很高但主力净流出（换手/洗盘）的票永远进不了深算，推股结果偏得很有规律。
+        val cands = if (limitup) pool.sortedByDescending { it.pctChg ?: 0.0 }.take(50)
+        else preselect(pool, c.maxCandidates)
 
         onProgress("预筛命中 ${cands.size} 只，逐只拉 K 线 + 本地引擎计算…")
 
@@ -116,6 +122,8 @@ object LocalScreener {
         cands.chunked(4).forEach { batch ->
             val results = batch.map { m ->
                 async(Dispatchers.IO) {
+                    // 单只超时：一只票的 K 线接口卡住不该拖垮整轮全市场扫描
+                    kotlinx.coroutines.withTimeoutOrNull(PER_STOCK_TIMEOUT_MS) {
                     val code = m.code
                     val barsRaw = DataCache.kline(code, "qfq", c.klineCount)
                     // 盘前口径：最后一根通常是当日未完成 bar（盘中）或昨日收盘（盘前），
@@ -137,8 +145,11 @@ object LocalScreener {
                         reason = if (eng == null) "K线不足，无法本地计算" else null,
                         buyable = (m.price?.let { it > 0.0 } == true) &&
                             (m.pctChg ?: Double.POSITIVE_INFINITY) < c.maxChgPct,
-                        snapshotStatus = "live",
+                        // 快照新鲜度如实标出来：LiveMarket 拉不到新数据时会退回上一份缓存，
+                        // 那这时结果就不是「实时」而是「旧值」，界面必须能区分（5 分钟内算实时）
+                        snapshotStatus = if (m.ts > 0 && System.currentTimeMillis() - m.ts > 5 * 60_000L) "stale" else "live",
                     )
+                    }
                 }
             }.mapNotNull { runCatching { it.await() }.getOrNull() }
             out.addAll(results)
@@ -164,8 +175,36 @@ object LocalScreener {
         onProgress("评分达标 0 只，暂无可买推荐（数据不足或过滤涨停）")
         emptyList()
     }
-    private fun standardCode(raw: String?): String? {
-        val digits = raw.orEmpty().filter(Char::isDigit)
-        return digits.takeLast(6).takeIf { it.length == 6 }
+    /** 单只股票的 K 线 + 引擎计算超时（毫秒）。 */
+    private const val PER_STOCK_TIMEOUT_MS = 20_000L
+
+    /**
+     * 候选池预选：涨幅 / 量比 / 成交额 / 主力净流入 四维**秩和**，各占权重。
+     *
+     * 只用秩（percentile）不用原值，是因为四个量纲没法直接比：量比 3 倍与主力净流入 3 亿
+     * 谁更值得深算，只有「各自在本池里排第几」可以相加。权重上量比最高——
+     * 放量是本地引擎最能确认的先行信号，涨幅已经被预筛区间框住了。
+     */
+    internal fun preselect(pool: List<LiveMarket.Row>, limit: Int): List<LiveMarket.Row> {
+        if (pool.size <= limit) return pool
+        fun pct(get: (LiveMarket.Row) -> Double?): DoubleArray {
+            val idx = pool.indices.filter { get(pool[it]) != null }
+                .sortedByDescending { get(pool[it])!! }
+            val out = DoubleArray(pool.size) { 0.0 }
+            if (idx.size <= 1) {
+                idx.forEach { out[it] = 1.0 }
+                return out
+            }
+            idx.forEachIndexed { rank, i -> out[i] = 1.0 - rank.toDouble() / (idx.size - 1) }
+            return out
+        }
+        val vol = pct { it.volRatio }
+        val chg = pct { it.pctChg }
+        val amt = pct { it.amount }
+        val flow = pct { it.mainNet }
+        val scored = pool.mapIndexed { i, row ->
+            row to (0.35 * vol[i] + 0.25 * chg[i] + 0.20 * amt[i] + 0.20 * flow[i])
+        }
+        return scored.sortedByDescending { it.second }.take(limit).map { it.first }
     }
 }

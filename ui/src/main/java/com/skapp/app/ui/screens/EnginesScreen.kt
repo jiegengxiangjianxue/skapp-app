@@ -141,7 +141,7 @@ private fun LocalScreenSection(state: UiState, vm: SkappViewModel) {
 
 @Composable
 private fun FeedHeader(f: EngineFeed.EngineFeeds) {
-    val ts = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.CHINA).format(java.util.Date(f.ts))
+    val ts = com.skapp.app.data.CstTime.iso(f.ts)
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),

@@ -34,6 +34,8 @@ data class LivePulse(
     val label: String,
     val inflow: List<FlowRow>,
     val outflow: List<FlowRow>,
+    /** 停牌/无成交家数：不进涨跌平统计，单独计数，免得被当成「平盘」稀释情绪 */
+    val suspended: Int = 0,
 ) {
     data class FlowRow(
         val code: String,
@@ -46,7 +48,11 @@ data class LivePulse(
 
         fun of(rows: List<LiveMarket.Row>, topN: Int = 10): LivePulse {
             val ts = rows.maxOfOrNull { it.ts } ?: System.currentTimeMillis()
-            val chgs = rows.mapNotNull { it.pctChg }
+            // 停牌票 clist 里也有行、涨跌幅写 0，直接统计会把平盘虚增、中位涨幅拉向 0、
+            // 板块均值被稀释。统计口径一律只在「有价有量」的票上做。
+            val traded = rows.filter { it.tradable }
+            val suspended = rows.size - traded.size
+            val chgs = traded.mapNotNull { it.pctChg }
             val up = chgs.count { it > 0.01 }
             val down = chgs.count { it < -0.01 }
             val flat = chgs.size - up - down
@@ -57,9 +63,9 @@ data class LivePulse(
             val amount = rows.mapNotNull { it.amount }.takeIf { it.isNotEmpty() }?.sum()
             val mainTotal = rows.mapNotNull { it.mainNet }.takeIf { it.isNotEmpty() }?.sum()
 
-            val score = if (rows.isEmpty()) 0.0 else phaseScoreOf(breadth, median, limitUp, limitDown)
+            val score = if (traded.isEmpty()) 0.0 else phaseScoreOf(breadth, median, limitUp, limitDown)
             val label = when {
-                rows.isEmpty() -> "无数据"
+                traded.isEmpty() -> "无数据"
                 score >= 40 -> "强势"
                 score >= 15 -> "偏强"
                 score > -15 -> "平衡"
@@ -88,6 +94,7 @@ data class LivePulse(
                 label = label,
                 inflow = inflow,
                 outflow = outflow,
+                suspended = suspended,
             )
         }
 

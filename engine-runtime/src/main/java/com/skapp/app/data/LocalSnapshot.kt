@@ -28,8 +28,7 @@ object LocalSnapshot {
         artifact: StructuredPickArtifact?,
         fallbackNote: String = "本地深算尚未完成",
     ): TodayPicks {
-        val ts = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.CHINA)
-            .format(Date(System.currentTimeMillis()))
+        val ts = CstTime.iso()
         if (artifact == null) {
             return TodayPicks(
                 ts = ts,
@@ -75,8 +74,7 @@ object LocalSnapshot {
 
     /** 实时脉搏 → 市场快照（涨跌家数/涨跌停/成交额/资金），并如实标出不可得项。 */
     fun market(pulse: LivePulse?, hotNews: List<Map<String, Any?>> = emptyList()): MarketSnapshot {
-        val ts = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.CHINA)
-            .format(Date(System.currentTimeMillis()))
+        val ts = CstTime.iso()
         if (pulse == null || pulse.total == 0) {
             return MarketSnapshot(
                 ts = ts,
@@ -117,7 +115,7 @@ object LocalSnapshot {
         screened: List<LocalScreener.Screened>,
         ts: Long = System.currentTimeMillis(),
     ): Decision {
-        val tsText = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.CHINA).format(Date(ts))
+        val tsText = CstTime.iso(ts)
         if (pulse == null || pulse.total == 0) {
             return Decision(
                 ts = tsText,

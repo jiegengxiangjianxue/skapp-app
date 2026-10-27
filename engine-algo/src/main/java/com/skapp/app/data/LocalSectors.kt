@@ -36,6 +36,7 @@ object LocalSectors {
         val up: Int,
         val down: Int,
         val limitUp: Int,
+        val limitDown: Int = 0,
         val leader: String?,
         val leaderPct: Double?,
     )
@@ -55,8 +56,15 @@ object LocalSectors {
      *
      * @return null = 映射表或行情拿不到（调用方应回退到 [Db.sectors] 归档并标明「回看」）
      */
-    suspend fun compute(force: Boolean = false): Result? = withContext(Dispatchers.IO) {
-        val rows = runCatching { LiveMarket.snapshot(force) }.getOrDefault(emptyList())
+    /**
+     * @param snapshotIn 已经拉到的全市场快照；心跳/引擎池里传进来可省一次取数，
+     *        也保证同一轮里脉搏、板块、选股看到的是**同一个时点**。
+     */
+    suspend fun compute(
+        force: Boolean = false,
+        snapshotIn: List<LiveMarket.Row>? = null,
+    ): Result? = withContext(Dispatchers.IO) {
+        val rows = snapshotIn ?: runCatching { LiveMarket.snapshot(force) }.getOrDefault(emptyList())
         if (rows.isEmpty()) return@withContext null
         val board = runCatching { SectorLink.load(force) }.getOrNull() ?: return@withContext null
         aggregate(rows, sectorOf = { board.sectorNameOf(it) })
@@ -88,7 +96,7 @@ object LocalSectors {
             total = rows.size,
             unmapped = unmapped,
             ts = ts.ifBlank {
-                SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.CHINA).format(Date())
+                CstTime.iso()
             },
         )
     }
@@ -110,8 +118,11 @@ object LocalSectors {
             "pctChg" to r.pctChg,
         )
         val byPct = snapshot.filter { it.pctChg != null }
-        val limitUp = byPct.filter { (it.pctChg ?: 0.0) >= it.limitCap - 0.3 }
-        val limitDown = byPct.filter { (it.pctChg ?: 0.0) <= -(it.limitCap - 0.3) }
+        // 涨停判定统一走 Row.atLimitUp（有昨收按价判，无昨收才退回涨幅近似），
+        // 不再各处自己写 "涨幅 ≥ 上限 − 0.3" —— 那个 0.3 的余量在各板上不一致，
+        // 30cm 的北交所会漏、10cm 的会把 +9.7% 误判成涨停。
+        val limitUp = byPct.filter { it.atLimitUp }
+        val limitDown = byPct.filter { it.atLimitDown }
         return linkedMapOf(
             "status" to "ok",
             "source" to "local",
@@ -220,16 +231,21 @@ object LocalSectors {
         var up = 0
         var down = 0
         var limitUp = 0
+        var limitDown = 0
         var leader: String? = null
         var leaderPct: Double? = null
 
         fun add(r: LiveMarket.Row) {
+            // 停牌（无价无量）不进板块统计：它会把板块家数虚增、把均值往 0 稀释，
+            // 让「板块整体在涨」被读成「板块整体不动」。
+            if (!r.tradable) return
             n++
             r.pctChg?.let {
                 sumPct += it
                 pctN++
                 if (it > 0) up++ else if (it < 0) down++
-                if (it >= r.limitCap - 0.3) limitUp++
+                if (r.atLimitUp) limitUp++
+                if (r.atLimitDown) limitDown++
                 if (leaderPct == null || it > leaderPct!!) {
                     leaderPct = it
                     leader = r.name ?: r.code
@@ -246,6 +262,7 @@ object LocalSectors {
             up = up,
             down = down,
             limitUp = limitUp,
+            limitDown = limitDown,
             leader = leader,
             leaderPct = leaderPct,
         )

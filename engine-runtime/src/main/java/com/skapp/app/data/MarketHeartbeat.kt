@@ -1,7 +1,10 @@
 package com.skapp.app.data
 
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -33,6 +36,8 @@ object MarketHeartbeat {
         val deep: List<LocalScreener.Screened>? = null,
         val deepAt: Long? = null,
         val error: String? = null,
+        /** 同一份快照算出的板块强弱；市场状态的 cycle_v2 与周期池共用它，不重复聚合 */
+        val sectors: LocalSectors.Result? = null,
     )
 
     private val _ticks = MutableStateFlow<Tick?>(null)
@@ -48,11 +53,14 @@ object MarketHeartbeat {
         policy: HeartbeatPolicy = HeartbeatPolicy(),
         deepCriteria: LocalScreener.Criteria = LocalScreener.Criteria(maxCandidates = 30),
         onTick: suspend (Tick) -> Unit = {},
-    ) {
+    ) = coroutineScope {
         var lastTick = 0L
         var lastDeep = 0L
         var deep: List<LocalScreener.Screened>? = null
         var deepAt: Long? = null
+        var lastPulse: LivePulse? = null
+        var lastSectors: LocalSectors.Result? = null
+        var deepJob: Job? = null
 
         while (currentCoroutineContext().isActive) {
             val open = MarketHours.isTrading() || MarketHours.isAuction()
@@ -81,23 +89,49 @@ object MarketHeartbeat {
                 continue
             }
 
-            // 2) 到点了才做候选池深算（要逐只拉日 K，成本高）
-            if (policy.shouldDeep(now, lastDeep)) {
-                val res = runCatching {
-                    LocalScreener.screen(deepCriteria, onProgress = {}, mode = "all")
-                }.getOrDefault(emptyList())
-                if (res.isNotEmpty()) {
-                    deep = res
-                    deepAt = System.currentTimeMillis()
-                    EngineFeedLive.invalidate()   // 深算结果变了，引擎池缓存跟着失效
-                }
-                lastDeep = System.currentTimeMillis()
-            }
-
             lastTick = now
-            val tick = Tick(at = now, pulse = LivePulse.of(snap), deep = deep, deepAt = deepAt)
+            val pulse = LivePulse.of(snap)
+            lastPulse = pulse
+            val sectors = runCatching { LocalSectors.compute(snapshotIn = snap) }.getOrNull()
+            lastSectors = sectors
+
+            // 先发这一轮心跳：盘口是刚拉的，界面该立刻看到
+            val tick = Tick(
+                at = now, pulse = pulse, deep = deep, deepAt = deepAt, sectors = sectors,
+            )
             _ticks.value = tick
             onTick(tick)
+
+            // 2) 到点了才做候选池深算（要逐只拉日 K，成本高）
+            //
+            // 深算放进子协程，**不阻塞心跳**：一次深算 30 只 × 日 K 可能要十几秒，
+            // 串在这里会让「30 秒心跳」变成「深算周期的 5 分钟心跳」，界面时点直接冻住。
+            // 同一时刻只允许一个深算在跑，避免慢网时任务堆叠。
+            if (policy.shouldDeep(now, lastDeep) && deepJob?.isActive != true) {
+                lastDeep = now
+                deepJob = launch {
+                    val res = runCatching {
+                        LocalScreener.screen(deepCriteria, onProgress = {}, mode = "all")
+                    }.getOrDefault(emptyList())
+                    if (res.isNotEmpty()) {
+                        deep = res
+                        deepAt = System.currentTimeMillis()
+                        EngineFeedLive.invalidate()   // 深算结果变了，引擎池缓存跟着失效
+                        // 深算落地后补发一轮：让界面立刻看到新的候选池，而不是等下一个 30 秒
+                        lastPulse?.let { p ->
+                            val t = Tick(
+                                at = System.currentTimeMillis(),
+                                pulse = p,
+                                deep = deep,
+                                deepAt = deepAt,
+                                sectors = lastSectors,
+                            )
+                            _ticks.value = t
+                            onTick(t)
+                        }
+                    }
+                }
+            }
 
             delay(policy.nextDelayMs(System.currentTimeMillis(), lastTick))
         }
@@ -110,11 +144,13 @@ object MarketHeartbeat {
         val screened = if (deep) {
             runCatching { LocalScreener.screen(mode = "all") }.getOrDefault(emptyList())
         } else null
+        val deepRows = screened?.takeIf { it.isNotEmpty() }
         val tick = Tick(
             at = System.currentTimeMillis(),
             pulse = LivePulse.of(snap),
-            deep = screened?.takeIf { it.isNotEmpty() },
-            deepAt = System.currentTimeMillis().takeIf { screened != null },
+            deep = deepRows,
+            // 只有真拿到结果才算「深算时点」；否则会出现「有空结果但有新时点」的自相矛盾状态
+            deepAt = System.currentTimeMillis().takeIf { deepRows != null },
         )
         _ticks.value = tick
         return tick

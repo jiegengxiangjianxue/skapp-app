@@ -2,8 +2,6 @@ package com.skapp.app.data
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import java.text.SimpleDateFormat
-import java.util.Date
 import java.util.Locale
 
 /**
@@ -31,8 +29,9 @@ import java.util.Locale
  */
 object LiveExtras {
 
-    private fun iso(ts: Long) = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.CHINA).format(Date(ts))
-    private fun day(ts: Long) = SimpleDateFormat("yyyy-MM-dd", Locale.CHINA).format(Date(ts))
+    // 时间标签统一走 CstTime（北京时间），设备时区不影响「今天」的判断
+    private fun iso(ts: Long) = CstTime.iso(ts)
+    private fun day(ts: Long) = CstTime.day(ts)
 
     // ── 封板率（market_phase.seal）────────────────────────────
 
@@ -48,9 +47,12 @@ object LiveExtras {
         var up = 0
         var broken = 0
         for (r in rows) {
-            val lp = r.limitUpPrice ?: continue
-            val px = r.price ?: continue
-            if (px >= lp - 0.011) up++ else if (r.brokenBoard) broken++
+            // 分子分母必须用同一套信息：没有昨收就判不出「摸过涨停没封住」，
+            // 这时只能把这只票整体排除——否则涨停算得出来、炸板算不出来，
+            // 封板率会被系统性高估成 100%。
+            if (r.prevClose == null || r.price == null) continue
+            if (r.atLimitUp) up++
+            else if (r.brokenBoard) broken++
         }
         val denom = up + broken
         return Seal(limitUp = up, broken = broken, ratio = if (denom == 0) null else up.toDouble() / denom)
@@ -72,10 +74,12 @@ object LiveExtras {
         ts: Long = System.currentTimeMillis(),
         top: Int = 20,
     ): EngineFeed.RpsPayload? {
-        val pool60 = rows.mapNotNull { it.chg60d }
+        // 停牌票的 60 日涨幅是旧值/0，混进来会把百分位稀释（分母虚大 → 强势股 RPS 偏低）
+        val tradable = rows.filter { it.tradable }
+        val pool60 = tradable.mapNotNull { it.chg60d }
         if (pool60.size < 100) return null      // 样本太少，百分位没有意义
         val sorted60 = pool60.sorted()
-        val poolDay = rows.mapNotNull { it.pctChg }.sorted()
+        val poolDay = tradable.mapNotNull { it.pctChg }.sorted()
         if (poolDay.isEmpty()) return null
 
         fun pct(sortedPool: List<Double>, v: Double): Double {
@@ -88,7 +92,7 @@ object LiveExtras {
             return lo.toDouble() / sortedPool.size * 100.0
         }
 
-        val ranked = rows.mapNotNull { r ->
+        val ranked = tradable.mapNotNull { r ->
             val c60 = r.chg60d ?: return@mapNotNull null
             val p60 = pct(sorted60, c60)
             val pDay = r.pctChg?.let { pct(poolDay, it) } ?: 0.0
@@ -170,8 +174,12 @@ object LiveExtras {
     // ── 策略卡 ────────────────────────────────────────────
 
     /** StrategyCard 本来就是本地算（快照预筛 + 候选逐只日 K 算 pos240），这里只做结构转换。 */
-    suspend fun strategy(limit: Int = 12): EngineFeed.StrategyCard? = withContext(Dispatchers.IO) {
-        val r = runCatching { StrategyCard.scan(limit) }.getOrNull() ?: return@withContext null
+    suspend fun strategy(
+        limit: Int = 12,
+        globalIndices: List<Map<String, Any?>>? = null,
+    ): EngineFeed.StrategyCard? = withContext(Dispatchers.IO) {
+        val r = runCatching { StrategyCard.scan(limit, globalIndices) }.getOrNull()
+            ?: return@withContext null
         EngineFeed.StrategyCard(
             ts = iso(r.timestamp),
             strategy = r.strategy,

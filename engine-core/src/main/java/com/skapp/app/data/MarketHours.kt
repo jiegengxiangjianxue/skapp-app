@@ -109,6 +109,42 @@ object MarketHours {
             else -> false
         }
 
+    /** 今天（CST 口径）的日期键，形如 2026-10-27。用于判断「最后一根日 K 是不是今天」。 */
+    fun todayKey(date: Date = Date()): String = dateKey(Calendar.getInstance(TimeZone.getTimeZone(TZ_CST)).apply { time = date })
+
+    /**
+     * 当日已完成的连续竞价分钟数（0..240）。
+     *
+     * 上午 09:30-11:30 计 120 分钟，下午 13:00-15:00 计 120 分钟，午休不计。
+     * 集合竞价与盘后为 0 / 240。
+     */
+    fun elapsedTradingMinutes(date: Date = Date()): Int {
+        val c = Calendar.getInstance(TimeZone.getTimeZone(TZ_CST)).apply { time = date }
+        val mins = c.get(Calendar.HOUR_OF_DAY) * 60 + c.get(Calendar.MINUTE)
+        val n = when {
+            mins <= 9 * 60 + 30 -> 0
+            mins <= 11 * 60 + 30 -> mins - (9 * 60 + 30)
+            mins <= 13 * 60 -> 120
+            mins <= 15 * 60 -> 120 + (mins - 13 * 60)
+            else -> 240
+        }
+        return n.coerceIn(0, 240)
+    }
+
+    /**
+     * 若 [barDate] 就是「今天」且现在处于盘中，返回已开市分钟数；否则返回 null（视为已收盘的完整 K 线）。
+     *
+     * 用途：盘中最后一根日 K 是**未走完**的，直接用「现量/过去均量」算量比会系统性偏低
+     * （9:40 时只走了 10 分钟，量当然小）。这时要按已走分钟数折算，见
+     * `MarketDataClient.volumeRatioPaced`。
+     */
+    fun intradayMinutesFor(barDate: String, date: Date = Date()): Int? {
+        if (barDate.take(10) != todayKey(date)) return null
+        if (isClosedDay(date)) return null
+        val n = elapsedTradingMinutes(date)
+        return if (n in 1 until 240) n else null
+    }
+
     /** 给用户看的中文状态说明 */
     fun describe(date: Date = Date()): String = when (val p = phase(date)) {
         Phase.PRE_OPEN -> "盘前"
