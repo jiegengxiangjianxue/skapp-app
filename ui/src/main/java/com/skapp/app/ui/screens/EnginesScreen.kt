@@ -77,6 +77,7 @@ fun EnginesScreen(vm: SkappViewModel, state: UiState) {
                         item { CycleSection(f.cyclePool) }
                         item { RpsSection(f.rpsRotation) }
                         item { StrategySection(f.strategyCard) }
+                        item { AiPickSection(f.aiPick) }
                         item { MarketPhaseSection(f.marketPhase) }
                         item { DecisionSection(f.decision) }
                         item { MissingInfo(f.missing) }
@@ -225,6 +226,53 @@ private fun CycleSection(c: EngineFeed.CycleMeta?) {
             Spacer(Modifier.height(4.dp))
             Text("指数：${c.indexName}（${c.index}）", style = MaterialTheme.typography.bodyMedium)
             Text("样本区间：${c.spanStart} ~ ${c.spanEnd}，共 ${c.nDays} 交易日", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+            // 本地现算才有排名行；云端 cycle_pool_v2 只给元信息，这里就空着不硬凑
+            c.rows.take(10).forEach { r ->
+                Row(Modifier.fillMaxWidth().padding(top = 2.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text(r.name, style = MaterialTheme.typography.bodySmall, modifier = Modifier.width(110.dp))
+                    Text(
+                        (r.chg1d?.let { String.format("%+.2f%%", it) } ?: "不可得") +
+                            " · ${r.nUp}涨/${r.nDown}跌",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    Text(
+                        (r.heatShare?.let { String.format("额占%.1f%%", it * 100) } ?: "") + " " + r.phase,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color(0xFF6B7280),
+                    )
+                }
+            }
+            if (c.note.isNotEmpty()) {
+                Spacer(Modifier.height(4.dp))
+                Text(c.note, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+            }
+        }
+    }
+    Spacer(Modifier.height(8.dp))
+}
+
+// ── ai_pick ───────────────────────────────────────────────
+
+/**
+ * AI 精选：云端那份是 LLM 归档，端上这份是评分规则算的，**口径不同**。
+ * 所以 `basis` 必须显式标出来，不能让人以为本地也在跑 LLM。
+ */
+@Composable
+private fun AiPickSection(p: EngineFeed.AiPick?) {
+    if (p == null) return
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(12.dp)) {
+            Text("⑤ AI 精选（ai_pick）", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "扫描 ${p.nScanned} 只 → 候选 ${p.nCandidates} 只　" +
+                    if (p.basis == "local-score") "（端上评分，非 LLM）" else "（云端 LLM 归档）",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            if (p.note.isNotEmpty()) {
+                Spacer(Modifier.height(4.dp))
+                Text(p.note, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+            }
         }
     }
     Spacer(Modifier.height(8.dp))

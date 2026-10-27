@@ -75,10 +75,41 @@ class EngineFeedLiveTest {
         assertTrue(feeds.missing.any { it.contains("cycle_pool") })
         assertTrue(feeds.missing.any { it.contains("rps_rotation") })
         assertTrue(feeds.missing.any { it.contains("ai_pick") })
-        // 云端独有的产物不许伪造
+        // 没给原料时这几块必须为空，不许伪造
         assertEquals(null, feeds.cyclePool)
         assertEquals(null, feeds.rpsRotation)
         assertEquals(null, feeds.aiPick)
+    }
+
+    @Test
+    fun `给齐原料时四块都要真算出来且只报真正还缺的子项`() {
+        val snap = (0 until 200).map { i ->
+            LiveMarket.Row(
+                code = "60%04d".format(i), name = "股$i", price = 10.0, pctChg = i % 7 - 3.0,
+                volumeLots = 1.0, amount = 1.0e8, amplitude = 1.0, turnoverRate = 1.0,
+                pe = 10.0, volRatio = 1.0, mv = 1.0e9, mainNet = 1.0e5,
+                ts = 1_700_000_000_000L, high = 10.1, prevClose = 10.0, chg60d = i.toDouble(),
+            )
+        }
+        val sectors = LocalSectors.aggregate(snap, sectorOf = { if (it < "601000") "甲板" else "乙板" })
+        val strategy = EngineFeed.StrategyCard(
+            ts = "2026-10-27 10:00:00", strategy = "B 规则", tradeOk = true,
+            candidates = emptyList(), note = "本地",
+        )
+        val feeds = EngineFeedLive.assemble(
+            pulse("强势"), listOf(screened()), emptyList(),
+            snapshot = snap, sectors = sectors, strategy = strategy,
+        )
+        assertNotNull(feeds.cyclePool, "板块原料齐了就应算出周期池")
+        assertTrue(feeds.cyclePool!!.rows.isNotEmpty())
+        assertNotNull(feeds.rpsRotation, "有 60 日涨幅就该算出 RPS")
+        assertNotNull(feeds.strategyCard)
+        assertNotNull(feeds.aiPick)
+        assertEquals("local-score", feeds.aiPick!!.basis)
+        // 只报真正缺的子项：不再整块说 rps_rotation 不可得
+        assertTrue(feeds.missing.none { it.startsWith("rps_rotation (") }, "rps60 已算出来，不该整块报缺")
+        assertTrue(feeds.missing.any { it.contains("rps20/120/250") })
+        assertTrue(feeds.missing.any { it.contains("height") })
     }
 
     @Test

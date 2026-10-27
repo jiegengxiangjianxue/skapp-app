@@ -43,7 +43,36 @@ object LiveMarket {
         val mv: Double?,           // f20 总市值（元）
         val mainNet: Double?,      // f62 主力净流入（元）
         val ts: Long,              // 抓取时刻
+        /**
+         * 以下四个字段为「RPS / 封板率」本地计算新增（同一次 clist 批量里取，零额外请求）：
+         * f15 最高价、f18 昨收、f24 60 日涨跌幅、f25 年初至今涨跌幅。
+         * 拿不到时保持 null —— 宁可显示不可得，也不填 0。
+         */
+        val high: Double? = null,       // f15 最高价
+        val prevClose: Double? = null,  // f18 昨收
+        val chg60d: Double? = null,     // f24 60 日涨跌幅 %
+        val chgYtd: Double? = null,     // f25 年初至今涨跌幅 %
     ) {
+
+        /** 涨停价（元）：昨收 ×(1+上限)，两位小数。昨收缺失则为 null。 */
+        val limitUpPrice: Double?
+            get() = prevClose?.let { p -> Math.round(p * (1 + limitCap / 100.0) * 100.0) / 100.0 }
+
+        /** 曾触及涨停（用于算炸板/封板率）：最高价到过涨停价但当前没封住。 */
+        val touchedLimitUp: Boolean
+            get() {
+                val lp = limitUpPrice ?: return false
+                val hi = high ?: return false
+                return hi >= lp - 0.011
+            }
+
+        /** 炸板：触及过涨停价但现价没封在涨停价。 */
+        val brokenBoard: Boolean
+            get() {
+                val lp = limitUpPrice ?: return false
+                val px = price ?: return false
+                return touchedLimitUp && px < lp - 0.011
+            }
         /** 涨跌幅上限：主板 10%（ST 5%）、创业板/科创板 20%、北交所 30%。 */
         val limitCap: Double
             get() {
@@ -116,7 +145,9 @@ object LiveMarket {
     private fun fetchPage(page: Int): List<Row> {
         val url = "https://push2.eastmoney.com/api/qt/clist/get?pn=$page&pz=$PAGE_SIZE&po=1&fid=f3" +
             "&fs=m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81+s:2048" +
-            "&fields=f2,f3,f5,f6,f7,f8,f9,f10,f12,f14,f20,f62"
+            // f15/f18/f24/f25 一并取：RPS（60日/年初至今涨幅）与封板率（最高价 vs 涨停价）
+            // 都要它们，放在同一次批量里不增加请求数。
+            "&fields=f2,f3,f5,f6,f7,f8,f9,f10,f12,f14,f15,f18,f20,f24,f25,f62"
         val txt = httpGet(url) ?: return emptyList()
         val obj = runCatching { JSONObject(txt) }.getOrNull() ?: return emptyList()
         val arr = obj.optJSONObject("data")?.optJSONArray("diff") ?: return emptyList()
@@ -138,6 +169,10 @@ object LiveMarket {
                 mv = o.num("f20"),
                 mainNet = o.num("f62"),
                 ts = ts,
+                high = o.num("f15"),
+                prevClose = o.num("f18"),
+                chg60d = o.num("f24"),
+                chgYtd = o.num("f25"),
             )
         }
     }

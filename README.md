@@ -29,6 +29,7 @@
 | 盘中心跳 | `MarketHeartbeat` | 30s 全股盘口（相位/涨跌停/资金）+ 5min 候选池深算，节拍由 `HeartbeatPolicy` 管 |
 | 板块强弱 / 看板 | `LocalSectors` | 实时快照 × 库里成分映射现算板块涨幅/热度/涨停，概念板块需归属表（本地不可得，明标） |
 | 批量报价 | `LiveQuote` | 自选/推股/决策补价先吃全市场快照，覆盖不到才补拉 |
+| 板块周期 / RPS / 策略卡 / AI 精选 | `LiveExtras` | 板块横截面分档、60 日涨幅百分位、本地策略卡、本地评分精选（`basis=local-score`，非 LLM） |
 | 库表门面 | `DbTables` | 界面唯一能碰云端的入口：归档类只回看、配置表类读库、明细类按需查 |
 
 守卫：`python3 tools/layer_source_guard.py`（CI 自动跑）——`CloudFeed.` 只允许出现在
@@ -91,3 +92,13 @@
 
 ## 数据纪律
 所有字段缺失即显示「暂无数据」或 `insufficient`，**绝不编造**。
+
+### 在 ARM 机器上构建 APK
+
+AGP 只发 x86_64 版 aapt2，ARM64 环境会报 `AAPT2 Daemon #0: Daemon startup failed`：
+
+```sh
+./gradlew :app:assembleDebug -Pandroid.aapt2FromMavenOverride=$PWD/tools/aapt2-qemu/aapt2
+```
+
+依赖 `qemu-user-binfmt` + `libc6:amd64 libstdc++6:amd64 zlib1g:amd64`。x86_64 CI 直接用原生 aapt2。

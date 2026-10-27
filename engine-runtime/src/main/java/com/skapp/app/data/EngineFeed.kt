@@ -83,6 +83,24 @@ object EngineFeed {
         val nDays: Int,
         val spanStart: String,
         val spanEnd: String,
+        /** 口径说明：本地实时聚合时写明「1 日横截面，非历史周期序列」。 */
+        val note: String = "",
+        /**
+         * 本地板块排名（云端归档没有这部分，端上现算才有）。
+         * 为空表示该来源只给元信息（云端 cycle_pool_v2 就是这种）。
+         */
+        val rows: List<CycleRow> = emptyList(),
+    )
+
+    /** 板块周期行：当日强度 + 广度 + 量能占比 → 一句阶段判断。 */
+    data class CycleRow(
+        val name: String,
+        val chg1d: Double?,
+        val heatShare: Double?,   // 成交额占全市场比例（0~1）
+        val nUp: Int,
+        val nDown: Int,
+        val nStocks: Int,
+        val phase: String,
     )
 
     data class GlobalMarketsMeta(
@@ -147,6 +165,9 @@ object EngineFeed {
         val ts: String,
         val nScanned: Int,
         val nCandidates: Int,
+        /** 产出方式：cloud-llm=云端 LLM 归档 / local-score=端上评分规则（不是 LLM，界面要标出来）。 */
+        val basis: String = "cloud-llm",
+        val note: String = "",
     )
 
     data class Decision(

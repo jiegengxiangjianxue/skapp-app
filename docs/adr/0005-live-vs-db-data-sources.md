@@ -108,3 +108,32 @@ engine_v5 / market_phase / global_markets / decision，`EngineFeeds.source` 标 
   （宁缺毋假）。缓存策略是「拉不到给上一份并保留真实抓取时间」，上层可以标「陈旧」。
 - `Db` 成了一个热点对象，新增云端库表必须在这里登记——这是刻意的：**加一个库表要动一个文件**
   才看得见「我们又多依赖了一份云端数据」。
+
+## 补记：A 阶段报「不可得」的四块，重新核对原料后补掉三块半
+
+A 阶段把 `cycle_pool` / `rps_rotation` / `strategy_card` / `ai_pick` 整块列进 `missing`，
+理由是「需要全市场长周期序列」。复核数据后发现有一半是**漏算**，不是算不了：
+
+| 块 | 原料 | 现状 |
+|---|---|---|
+| `rps_rotation` | 东财 clist 的 **f24 60 日涨幅 / f25 年初至今**（与现有批量同一请求） | `rps60` **本地已算**（全市场百分位）；`rps20/120/250` 仍需逐票日 K → 留 null 并写明「不是 0」 |
+| `strategy_card` | 现成的 `StrategyCard.scan()`（本来就是本地：快照预筛 + 候选逐只日 K 算 pos240） | **直接接上** |
+| `ai_pick` | `LocalScreener` 评分与候选数 | 能给数量与候选，但 `basis=local-score`，**明标「不是 LLM」**，不与云端 LLM 产物比较 |
+| `cycle_pool` | `LocalSectors` 板块强弱 + 成交额占比 | 能给**当日横截面**分档（主升/修复/退潮/杀跌/震荡）；历史周期序列仍缺，`note` 写清「不是周期走到第几天」 |
+| `market_phase.seal` | clist f15 最高价 + f18 昨收 → 涨停价 | **封板率本地已算** = 涨停 /（涨停 + 炸板）；`firstBoard/ge2/height/promo` 需多日全市场涨停序列，仍缺 |
+
+`missing` 也从「整块写死」改成按实际产出动态计算：能算出来的不再报缺，
+只报真正缺的子字段（例：`rps_rotation.rps20/120/250 (需逐票日 K)`），
+免得界面把一个「只缺 250 日」的块显示成整块不可用。
+
+## 构建环境注意（ARM 机器）
+
+AGP 只分发 x86_64 版 aapt2，ARM64 容器里会报 `AAPT2 Daemon #0: Daemon startup failed`。
+`tools/aapt2-qemu/aapt2` 用 qemu-user 包一层解决：
+
+```sh
+./gradlew :app:assembleDebug \
+  -Pandroid.aapt2FromMavenOverride=$PWD/tools/aapt2-qemu/aapt2
+```
+
+x86_64 CI 不需要这层包装。

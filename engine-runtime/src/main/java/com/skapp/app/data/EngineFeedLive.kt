@@ -55,8 +55,12 @@ object EngineFeedLive {
         onProgress("本地 12 引擎重算候选池…")
         val screened = LocalScreener.screen(criteria, onProgress, mode = "all")
 
+        onProgress("本地板块强弱与策略卡…")
+        val sectors = runCatching { LocalSectors.compute() }.getOrNull()
+        val strategy = LiveExtras.strategy()
+
         val indices = runCatching { MarketDataClient.globalIndices() }.getOrDefault(emptyList())
-        val feeds = assemble(pulse, screened, indices)
+        val feeds = assemble(pulse, screened, indices, snapshot = snap, sectors = sectors, strategy = strategy)
 
         cached = feeds
         cachedAt = System.currentTimeMillis()
@@ -81,6 +85,12 @@ object EngineFeedLive {
         globalIndices: List<Map<String, Any?>>,
         ts: Long = System.currentTimeMillis(),
         limit: Int = 30,
+        /** 全市场快照：rps_rotation / 封板率 / ai_pick 的原料，缺了对应块就留空并写 missing。 */
+        snapshot: List<LiveMarket.Row> = emptyList(),
+        /** 本地板块强弱：cycle_pool 的原料。 */
+        sectors: LocalSectors.Result? = null,
+        /** 已算好的策略卡（[LiveExtras.strategy]）。 */
+        strategy: EngineFeed.StrategyCard? = null,
     ): EngineFeed.EngineFeeds {
         val date = SimpleDateFormat("yyyy-MM-dd", Locale.CHINA).format(Date(ts))
         val iso = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.CHINA).format(Date(ts))
@@ -112,6 +122,9 @@ object EngineFeedLive {
             )
         }
 
+        // 封板率本地可算：涨停 /（涨停 + 炸板），炸板靠「最高价摸过涨停价、现价没封住」
+        val seal = if (snapshot.isEmpty()) null else LiveExtras.seal(snapshot)
+
         val phase = EngineFeed.MarketPhase(
             ts = iso,
             daily = listOf(
@@ -119,9 +132,9 @@ object EngineFeedLive {
                     date = date,
                     firstBoard = -1,      // 需历史涨停序列，实时不可得
                     ge2 = -1,             // 同上
-                    height = -1,          // 连板高度不可得
-                    promo = -1.0,         // 晋级率不可得
-                    seal = -1.0,          // 封板率不可得
+                    height = -1,          // 连板高度需逐只多日涨停历史
+                    promo = -1.0,         // 晋级率需昨日涨停名单
+                    seal = seal?.ratio ?: -1.0,
                 ),
             ),
             labels = mapOf(
@@ -132,7 +145,10 @@ object EngineFeedLive {
                 "中位涨幅" to (pulse.medianPct?.let { String.format(Locale.CHINA, "%.2f%%", it) } ?: "不可得"),
                 "宽度" to (pulse.breadth?.let { String.format(Locale.CHINA, "%.0f%%", it * 100) } ?: "不可得"),
                 "相位" to "${pulse.label}（${String.format(Locale.CHINA, "%.0f", pulse.phaseScore)}）",
-                "不可得" to "连板高度/晋级率/封板率需历史涨停序列",
+                "封板率" to (seal?.let { s ->
+                    String.format(Locale.CHINA, "%.0f%%（涨停 %d / 炸板 %d）", (s.ratio ?: 0.0) * 100, s.limitUp, s.broken)
+                } ?: "不可得（缺最高价/昨收）"),
+                "不可得" to "连板高度/晋级率/首板数需多日全市场涨停序列",
             ),
         )
 
@@ -177,28 +193,54 @@ object EngineFeedLive {
                 .take(10),
         )
 
+        val cyclePool = LiveExtras.cycle(sectors, ts)
+        val rpsRotation = if (snapshot.isEmpty()) null else LiveExtras.rps(snapshot, ts)
+        val aiPick = if (snapshot.isEmpty()) null else LiveExtras.aiPick(snapshot, screened, ts)
+
         return EngineFeed.EngineFeeds(
             ts = ts,
             engineV5 = EngineFeed.EngineV5Payload(ts = iso, top = top, staleTop = emptyList()),
-            cyclePool = null,
-            rpsRotation = null,
-            strategyCard = null,
+            cyclePool = cyclePool,
+            rpsRotation = rpsRotation,
+            strategyCard = strategy,
             marketPhase = phase,
             globalMarkets = global,
-            aiPick = null,
+            aiPick = aiPick,
             decision = decision,
-            missing = missingOf(),
+            missing = missingOf(cyclePool, rpsRotation, strategy, aiPick, seal),
             source = "live",
         )
     }
 
-    private fun missingOf(): List<String> = listOf(
-        "cycle_pool (板块周期池需历史序列，本地实时不可得)",
-        "rps_rotation (全市场 250 日相对强度需 5000 只日K)",
-        "strategy_card (需全市场 240 日重算)",
-        "ai_pick (LLM 产物，非实时可算)",
-        "market_phase.height/promo/seal (需历史涨停序列)",
-    )
+    /**
+     * 「还缺什么」按实际产出算，不再写死。
+     *
+     * 上一版把四块整块列成不可得，重新核对原料后有三块其实补上了
+     * （见 [LiveExtras] 的说明）；这里只报**真正还缺的**，并写清缺的是哪一段，
+     * 免得界面把一个「只缺 250 日 RPS」的块显示成整块不可用。
+     */
+    private fun missingOf(
+        cyclePool: EngineFeed.CycleMeta?,
+        rps: EngineFeed.RpsPayload?,
+        strategy: EngineFeed.StrategyCard?,
+        aiPick: EngineFeed.AiPick?,
+        seal: LiveExtras.Seal?,
+    ): List<String> = buildList {
+        if (cyclePool == null) {
+            add("cycle_pool (板块强弱聚合不可得：需全市场快照 + 成分映射表)")
+        } else if (cyclePool.rows.isEmpty()) {
+            add("cycle_pool.rows (板块排名为空)")
+        }
+        if (rps == null) {
+            add("rps_rotation (60 日涨幅样本不足 100 只，百分位无意义)")
+        } else {
+            add("rps_rotation.rps20/120/250 (需逐票日 K，端上不拉；rps60 已本地算出)")
+        }
+        if (strategy == null) add("strategy_card (本地策略卡扫描失败)")
+        if (aiPick == null) add("ai_pick (无全市场快照，无法统计候选数)")
+        if (seal == null) add("market_phase.seal (缺最高价/昨收，无法判炸板)")
+        add("market_phase.firstBoard/ge2/height/promo (需多日全市场涨停序列)")
+    }
 
     private fun emptyLive(reason: String): EngineFeed.EngineFeeds = EngineFeed.EngineFeeds(
         ts = System.currentTimeMillis(),

@@ -336,3 +336,15 @@ Pivot/MA/SuperTrend/ElderForce/Vortex/RSI + 本地补的 MACD/RSV），缺的是
 | 界面到处 `SkappApi.normalize/prefixed/directSymbol` | ✅ 2026-10-27 | 下沉到 core `Code`：纯字符串规则不该依赖网络层，这也是界面绕过库层取数的入口 |
 | 界面直接调云端（38 处） | ✅ 2026-10-27 | 全部收敛：实时走 `LiveMarket/LiveQuote/LivePulse/LocalSnapshot/LocalSectors`，归档/配置/明细走 `DbTables`；守卫改为硬失败，界面层调用点 0 处 |
 | 守卫把类型引用当取数点 | ✅ 2026-10-27 | 只统计调用（`SkappApi.xxx()`、`EngineFeed.loadAll(`、`SiteBoardClient.xxx()`、`SmartMoney.fetch(`），`SiteBoardClient.Pool` 这类渲染类型不误伤 |
+
+### 第四轮（A 阶段「不可得」复核）
+
+| 问题 | 状态 | 说明 |
+|---|---|---|
+| `rps_rotation` 整块报缺失 | ✅ 2026-10-27 | 东财 clist 的 f24/f25 与现有批量同请求，`rps60` 本地算全市场百分位；20/120/250 日仍缺，字段留 null 并写明「不是 0」 |
+| `strategy_card` 报缺失 | ✅ 2026-10-27 | `StrategyCard.scan()` 本来就是本地算，接进 `EngineFeedLive` 即可 |
+| `ai_pick` 报缺失 | ✅ 2026-10-27 | 给扫描数/候选数，`basis=local-score`，界面明标「端上评分，非 LLM」 |
+| `cycle_pool` 报缺失 | ⚠️ 部分 | 当日横截面分档（主升/修复/退潮/杀跌）已本地算；历史周期序列仍缺，note 明说 |
+| `market_phase.seal` 报缺失 | ✅ 2026-10-27 | 封板率 = 涨停/(涨停+炸板)，炸板靠最高价 vs 涨停价；`height/promo/firstBoard/ge2` 仍需多日涨停序列 |
+| `missing` 写死五条 | ✅ 2026-10-27 | 改为按实际产出动态算，只报真正缺的子字段 |
+| ARM 机器 `:app:assembleDebug` 挂 aapt2 | ✅ 2026-10-27 | `tools/aapt2-qemu/aapt2`（qemu-user 包装），x86_64 CI 不需要 |

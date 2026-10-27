@@ -65,7 +65,9 @@ fun DashboardScreen(vm: SkappViewModel, state: UiState) {
                 Column {
                     Text("看板", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                     Text(
-                        (b["ts"]?.toString() ?: "时点暂无") + " · 网页版 panel-board",
+                        (b["ts"]?.toString() ?: "时点暂无") +
+                            " · " + (if (b["source"] == "local") "本地实时" else "库表回看") +
+                            " · " + heartbeatText(state),
                         style = MaterialTheme.typography.bodySmall, color = Color.Gray,
                     )
                 }
@@ -556,4 +558,12 @@ private fun PickTrackingSection(state: UiState, vm: SkappViewModel) {
             }
         }
     }
+}
+
+/** 盘中心跳时点：让「数据是不是刚刚的」一眼可见，而不是靠猜。 */
+private fun heartbeatText(state: UiState): String {
+    if (state.heartbeatAt <= 0L) return "心跳未启动"
+    val age = ((System.currentTimeMillis() - state.heartbeatAt) / 1000).coerceAtLeast(0)
+    val label = state.heartbeatLabel.takeIf { it.isNotBlank() } ?: "运行中"
+    return "心跳 ${age}s 前 · $label"
 }

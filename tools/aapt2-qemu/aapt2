@@ -1,0 +1,15 @@
+#!/bin/sh
+# ARM64 容器里跑 x86_64 aapt2（AGP 只发 x86_64 版 aapt2）。
+#
+# 用法：
+#   ./gradlew :app:assembleDebug -Pandroid.aapt2FromMavenOverride=$PWD/tools/aapt2-qemu-wrapper.sh
+#
+# 前置：apt install qemu-user-binfmt libc6:amd64 libstdc++6:amd64 zlib1g:amd64
+#       （amd64 库需先 dpkg --add-architecture amd64）
+#
+# 为什么需要：Android build-tools 的 aapt2 是 x86-64 ELF，ARM 机器上没有解释器，
+# AGP 直接报 "AAPT2 Daemon #0: Daemon startup failed"。包一层 qemu 即可。
+# x86_64 CI（GitHub Actions ubuntu-latest）不需要这个包装，直接 assembleDebug 就行。
+AAPT2="${AAPT2_BIN:-$ANDROID_SDK_ROOT/build-tools/35.0.0/aapt2}"
+[ -x "$AAPT2" ] || AAPT2="$(ls -d /root/android-sdk/build-tools/*/aapt2 2>/dev/null | tail -1)"
+exec qemu-x86_64 "$AAPT2" "$@"
