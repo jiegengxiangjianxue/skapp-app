@@ -113,12 +113,12 @@ object HoloClient {
 
     /** 摘要 */
     suspend fun holo(code: String): Map<String, Any?>? = withContext(Dispatchers.IO) {
-        getJson("$API/$REPO/contents/${dirName(code)}/holo.json")?.toMap()
+        getJson("$API/$REPO/contents/${dirName(code)}/holo.json")?.toPlainMap()
     }
 
     /** 元信息（覆盖状态/时点） */
     suspend fun meta(code: String): Map<String, Any?>? = withContext(Dispatchers.IO) {
-        getJson("$API/$REPO/contents/${dirName(code)}/meta.json")?.toMap()
+        getJson("$API/$REPO/contents/${dirName(code)}/meta.json")?.toPlainMap()
     }
 
     /** 技术面 */
@@ -128,7 +128,7 @@ object HoloClient {
 
     /** 财务 */
     suspend fun finance(code: String): Map<String, Any?>? = withContext(Dispatchers.IO) {
-        getJson("$API/$REPO/contents/${dirName(code)}/finance.json")?.toMap()
+        getJson("$API/$REPO/contents/${dirName(code)}/finance.json")?.toPlainMap()
     }
 
     /** 资金流历史 */
@@ -136,7 +136,7 @@ object HoloClient {
         val arr = getArr("$API/$REPO/contents/${dirName(code)}/moneyflow.json")
             ?: getJson("$API/$REPO/contents/${dirName(code)}/moneyflow.json")?.optJSONArray("data")
             ?: return@withContext emptyList()
-        (0 until arr.length()).mapNotNull { i -> arr.optJSONObject(i)?.toMap() }
+        (0 until arr.length()).mapNotNull { i -> arr.optJSONObject(i)?.toPlainMap() }
     }
 
     /** 该股新闻 */
@@ -144,12 +144,12 @@ object HoloClient {
         val arr = getArr("$API/$REPO/contents/${dirName(code)}/news.json")
             ?: getJson("$API/$REPO/contents/${dirName(code)}/news.json")?.optJSONArray("items")
             ?: return@withContext emptyList()
-        (0 until arr.length()).mapNotNull { i -> arr.optJSONObject(i)?.toMap() }
+        (0 until arr.length()).mapNotNull { i -> arr.optJSONObject(i)?.toPlainMap() }
     }
 
     /** 情绪 */
     suspend fun sentiment(code: String): Map<String, Any?>? = withContext(Dispatchers.IO) {
-        getJson("$API/$REPO/contents/${dirName(code)}/sentiment.json")?.toMap()
+        getJson("$API/$REPO/contents/${dirName(code)}/sentiment.json")?.toPlainMap()
     }
 
     /**
@@ -232,14 +232,3 @@ private fun JSONObject.toDoubleMap(): Map<String, Double?> {
     return out
 }
 
-private fun JSONObject.toMap(): Map<String, Any?> {
-    val out = LinkedHashMap<String, Any?>()
-    keys().forEach { k ->
-        out[k] = when (val v = opt(k)) {
-            is JSONObject -> v.toMap()
-            is JSONArray -> (0 until v.length()).map { i -> v.opt(i) }
-            else -> v
-        }
-    }
-    return out
-}

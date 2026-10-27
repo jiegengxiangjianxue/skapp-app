@@ -85,24 +85,6 @@ object ExtendedDataClient {
     private fun getJson(url: String, domain: String = ""): JSONObject? =
         get(url, domain)?.let { runCatching { JSONObject(it) }.getOrNull() }
 
-    /** JSONObject → Map（含嵌套） */
-    private fun JSONObject.toMap(): Map<String, Any?> {
-        val out = LinkedHashMap<String, Any?>()
-        keys().forEach { k -> out[k] = valueOf(this, k) }
-        return out
-    }
-
-    private fun valueOf(o: JSONObject, key: String): Any? = when (val v = o.opt(key)) {
-        is JSONObject -> v.toMap()
-        is JSONArray -> (0 until v.length()).map { valueOf(v, it) }
-        else -> v
-    }
-
-    private fun valueOf(a: JSONArray, i: Int): Any? = when (val v = a.opt(i)) {
-        is JSONObject -> v.toMap()
-        is JSONArray -> (0 until v.length()).map { valueOf(v, it) }
-        else -> v
-    }
 
     // ════════════════════════════════════════════════════════
     //  同花顺（五域）
@@ -185,7 +167,7 @@ object ExtendedDataClient {
         val txt = get("https://basic.10jqka.com.cn/api/stock/finance/$n.json", "basic", "gbk")
             ?: return@withContext emptyMap()
         val obj = runCatching { JSONObject(txt) }.getOrNull() ?: return@withContext emptyMap()
-        obj.toMap()
+        obj.toPlainMap()
     }
 
     // ════════════════════════════════════════════════════════
@@ -233,7 +215,7 @@ object ExtendedDataClient {
         ) ?: return@withContext emptyList()
         val arr = obj.optJSONObject("result")?.optJSONArray("data")
             ?: return@withContext emptyList()
-        (0 until arr.length()).mapNotNull { i -> arr.optJSONObject(i)?.toMap() }
+        (0 until arr.length()).mapNotNull { i -> arr.optJSONObject(i)?.toPlainMap() }
     }
 
     /** 东财龙虎榜（em 域） */
@@ -246,7 +228,7 @@ object ExtendedDataClient {
             ) ?: return@withContext emptyList()
             val arr = obj.optJSONObject("result")?.optJSONArray("data")
                 ?: return@withContext emptyList()
-            (0 until arr.length()).mapNotNull { i -> arr.optJSONObject(i)?.toMap() }
+            (0 until arr.length()).mapNotNull { i -> arr.optJSONObject(i)?.toPlainMap() }
         }
 
     /** 东财板块资金流排行（行业/概念主力净额） */
@@ -280,7 +262,7 @@ object ExtendedDataClient {
             "sina",
         ) ?: return@withContext emptyList()
         val arr = runCatching { JSONArray(txt) }.getOrNull() ?: return@withContext emptyList()
-        (0 until arr.length()).mapNotNull { i -> arr.optJSONObject(i)?.toMap() }
+        (0 until arr.length()).mapNotNull { i -> arr.optJSONObject(i)?.toPlainMap() }
     }
 
     // ════════════════════════════════════════════════════════

@@ -173,7 +173,7 @@ object SiteBoardClient {
                     code = code,
                     name = row.optString("name").takeIf { it.isNotBlank() },
                     score = row.optDouble("score").takeIf { !it.isNaN() && it != 0.0 },
-                    extra = row.toMap(),
+                    extra = row.toPlainMap(),
                 )
             }
         }
@@ -211,7 +211,7 @@ object SiteBoardClient {
                             score = engine?.score,
                             price = engine?.price,
                             pctChg = engine?.pctChg,
-                            extra = member.toMap() + (engine?.extra ?: emptyMap()) + mapOf(
+                            extra = member.toPlainMap() + (engine?.extra ?: emptyMap()) + mapOf(
                                 "board" to boardName,
                                 "board_code" to bk,
                                 "reason" to if (engine?.score != null) "真实板块成分股；engine_v5 分数 ${"%.1f".format(engine.score)}，作为板块内候选排序依据" else "真实板块成分股；engine_v5 未覆盖，评分数据不足",
@@ -257,8 +257,8 @@ object SiteBoardClient {
             val sufficient = stocks.isNotEmpty() && stocksMeta?.optString("status") != "insufficient_data"
             out.add(Pool("cycle", "周期池", "周期轮动", stocks, mapOf(
                 "候选" to stocks.size,
-                "stocks_meta" to (stocksMeta?.toMap() ?: emptyMap<String, Any?>()),
-                "regimes" to (o.optJSONObject("regimes")?.toMap() ?: emptyMap<String, Any?>())),
+                "stocks_meta" to (stocksMeta?.toPlainMap() ?: emptyMap<String, Any?>()),
+                "regimes" to (o.optJSONObject("regimes")?.toPlainMap() ?: emptyMap<String, Any?>())),
                 o.optJSONObject("meta")?.optString("ts").takeIf { !it.isNullOrEmpty() },
                 status = if (sufficient) "ok" else "insufficient",
                 reason = if (sufficient) null else stocksMeta?.optString("reason")?.takeIf { it.isNotEmpty() }
@@ -344,37 +344,37 @@ object SiteBoardClient {
             return@withContext out
         }
         out["ts"] = src.optString("ts").takeIf { it.isNotEmpty() } ?: src.optString("asof")
-        out["market"] = src.optJSONObject("market")?.toMap() ?: emptyMap<String, Any>()
+        out["market"] = src.optJSONObject("market")?.toPlainMap() ?: emptyMap<String, Any>()
         out["phase"] = src.opt("phase")
         // 字段映射（2026-10-25 修）：latest.json/market_now.json 的真实字段名与看板期望的不一致，
         // 原代码取 gainers/losers/limit_up/sectors 恒为空 → 看板涨跌统计/涨跌幅榜/涨停池/板块热度全空白。
         // 真实字段：limit_up_pool / limit_down_pool / ths_strong / tx_sector_ranking / themes
-        out["indices"] = src.optJSONArray("indices")?.toMapList()
-            ?: src.optJSONObject("indices")?.toMap()
-            ?: src.optJSONArray("index_kline")?.toMapList()
+        out["indices"] = src.optJSONArray("indices")?.toPlainMapList()
+            ?: src.optJSONObject("indices")?.toPlainMap()
+            ?: src.optJSONArray("index_kline")?.toPlainMapList()
             ?: emptyMap<String, Any>()
-        out["gainers"] = src.optJSONArray("gainers")?.toMapList()
-            ?: src.optJSONArray("ths_strong")?.toMapList()
+        out["gainers"] = src.optJSONArray("gainers")?.toPlainMapList()
+            ?: src.optJSONArray("ths_strong")?.toPlainMapList()
             ?: emptyList<Map<String, Any?>>()
-        out["losers"] = src.optJSONArray("losers")?.toMapList()
-            ?: src.optJSONArray("ths_weak")?.toMapList()
+        out["losers"] = src.optJSONArray("losers")?.toPlainMapList()
+            ?: src.optJSONArray("ths_weak")?.toPlainMapList()
             ?: emptyList<Map<String, Any?>>()
-        out["limit_up"] = src.optJSONArray("limit_up")?.toMapList()
-            ?: src.optJSONArray("limit_up_pool")?.toMapList()
-            ?: src.optJSONObject("limit_up_pool")?.optJSONArray("items")?.toMapList()
+        out["limit_up"] = src.optJSONArray("limit_up")?.toPlainMapList()
+            ?: src.optJSONArray("limit_up_pool")?.toPlainMapList()
+            ?: src.optJSONObject("limit_up_pool")?.optJSONArray("items")?.toPlainMapList()
             ?: emptyList<Map<String, Any?>>()
-        out["limit_down"] = src.optJSONArray("limit_down")?.toMapList()
-            ?: src.optJSONArray("limit_down_pool")?.toMapList()
-            ?: src.optJSONObject("limit_down_pool")?.optJSONArray("items")?.toMapList()
+        out["limit_down"] = src.optJSONArray("limit_down")?.toPlainMapList()
+            ?: src.optJSONArray("limit_down_pool")?.toPlainMapList()
+            ?: src.optJSONObject("limit_down_pool")?.optJSONArray("items")?.toPlainMapList()
             ?: emptyList<Map<String, Any?>>()
-        out["sectors"] = src.optJSONArray("sectors")?.toMapList()
-            ?: src.optJSONArray("tx_sector_ranking")?.toMapList()
-            ?: src.optJSONArray("themes")?.toMapList()
+        out["sectors"] = src.optJSONArray("sectors")?.toPlainMapList()
+            ?: src.optJSONArray("tx_sector_ranking")?.toPlainMapList()
+            ?: src.optJSONArray("themes")?.toPlainMapList()
             ?: emptyList<Map<String, Any?>>()
         getJson(RemoteSources.apiSectors())?.let { sectors ->
                 val ranked = sectors.optJSONObject("sector_pool")?.let { pool ->
                     listOf("tier1", "tier2", "tier3").flatMap { key ->
-                        (pool.optJSONArray(key)?.toMapList() ?: emptyList()).map { row ->
+                        (pool.optJSONArray(key)?.toPlainMapList() ?: emptyList()).map { row ->
                             row + mapOf(
                                 "name" to (row["sector"] ?: row["name"]),
                                 "chg_pct" to (row["avg_chg_1d"] ?: row["chg_1d"] ?: row["score"]),
@@ -385,7 +385,7 @@ object SiteBoardClient {
                         }
                     }
                 } ?: emptyList()
-                val fallback = sectors.optJSONArray("industries")?.toMapList() ?: emptyList()
+                val fallback = sectors.optJSONArray("industries")?.toPlainMapList() ?: emptyList()
             if (ranked.isNotEmpty()) out["sectors"] = ranked else if ((out["sectors"] as? List<*>)?.isNullOrEmpty() != false) out["sectors"] = fallback
             out["sector_ts"] = sectors.optString("ts").takeIf { it.isNotEmpty() }
         }
@@ -451,7 +451,7 @@ object SiteBoardClient {
             out["session"] = brief.optString("session")
             out["ts"] = brief.optString("ts")
             brief.optJSONObject("sections")?.let { sections ->
-                out["sections"] = sections.toMap()
+                out["sections"] = sections.toPlainMap()
                 sections.optString("premarket").takeIf { it.isNotBlank() }?.let { out["premarket"] = it }
                 sections.optString("picks").takeIf { it.isNotBlank() }?.let { out["picks_text"] = it }
                 sections.optString("winrate").takeIf { it.isNotBlank() }?.let { out["winrate"] = it }
@@ -471,7 +471,7 @@ object SiteBoardClient {
         }
         val latest = getJson("$API/latest.json")
         latest?.let { l ->
-            out["picks"] = l.optJSONArray("picks")?.toMapList() ?: emptyList<Map<String, Any?>>()
+            out["picks"] = l.optJSONArray("picks")?.toPlainMapList() ?: emptyList<Map<String, Any?>>()
             out["review"] = l.opt("review")
         }
         if (out.isEmpty()) {
@@ -511,7 +511,7 @@ object SiteBoardClient {
                     .firstNotNullOfOrNull { k -> o.opt(k)?.toString()?.toDoubleOrNull() },
                 pctChg = listOf("pctChg", "chg_pct", "pct", "chg", "ret_pct", "avg_chg_1d", "chg_1d")
                     .firstNotNullOfOrNull { k -> o.opt(k)?.toString()?.toDoubleOrNull() },
-                extra = o.toMap() + ("source" to source),
+                extra = o.toPlainMap() + ("source" to source),
             )
         }
 
@@ -553,7 +553,7 @@ object SiteBoardClient {
                     stock.optString(key).takeIf(String::isNotBlank)
                 }
             }
-            val extra = (obj?.toMap() ?: emptyMap()) + mapOf(
+            val extra = (obj?.toPlainMap() ?: emptyMap()) + mapOf(
                 "source" to source,
                 "title" to title,
             )
@@ -698,18 +698,4 @@ object SiteBoardClient {
         }
     }
 
-    private fun JSONArray.toMapList(): List<Map<String, Any?>> =
-        (0 until length()).mapNotNull { i -> optJSONObject(i)?.toMap() }
-
-    private fun JSONObject.toMap(): Map<String, Any?> {
-        val out = LinkedHashMap<String, Any?>()
-        keys().forEach { k ->
-            out[k] = when (val v = opt(k)) {
-                is JSONObject -> v.toMap()
-                is JSONArray -> (0 until v.length()).map { i -> v.opt(i) }
-                else -> v
-            }
-        }
-        return out
-    }
 }

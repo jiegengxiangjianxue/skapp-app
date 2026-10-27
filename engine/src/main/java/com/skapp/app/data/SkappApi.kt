@@ -173,9 +173,9 @@ object SkappApi {
         )
         roots.firstNotNullOfOrNull { root ->
             val rows = ArrayList<Map<String, Any?>>()
-            root?.optJSONArray("items")?.let { rows.addAll(it.toMapList()) }
-            root?.optJSONArray("news")?.let { rows.addAll(it.toMapList()) }
-            root?.optJSONArray("impacts")?.let { rows.addAll(it.toMapList()) }
+            root?.optJSONArray("items")?.let { rows.addAll(it.toPlainMapList()) }
+            root?.optJSONArray("news")?.let { rows.addAll(it.toPlainMapList()) }
+            root?.optJSONArray("impacts")?.let { rows.addAll(it.toPlainMapList()) }
             rows.distinctBy { "${it["id"] ?: it["news_id"] ?: ""}|${it["title"] ?: it["digest"] ?: ""}|${it["ts"] ?: it["time"] ?: ""}" }
                 .takeIf { it.isNotEmpty() }
         } ?: emptyList()
@@ -258,9 +258,9 @@ object SkappApi {
         fetchJson(RemoteSources.apiMarket())?.let { o ->
             MarketSnapshot(
                 ts = o.optString("ts").takeIf { it.isNotEmpty() },
-                market = o.optJSONObject("market")?.toMap() ?: emptyMap(),
+                market = o.optJSONObject("market")?.toPlainMap() ?: emptyMap(),
                 phase = o.opt("phase"),
-                hotNews = o.optJSONArray("hot_news")?.toMapList() ?: emptyList(),
+                hotNews = o.optJSONArray("hot_news")?.toPlainMapList() ?: emptyList(),
             )
         } ?: MarketSnapshot()
     }
@@ -276,25 +276,25 @@ object SkappApi {
             ?: fetchJson(RemoteSources.newsImpactV2(RemoteSources.OWNER_C, RemoteSources.REPO_C))
             ?: fetchJson(RemoteSources.newsImpact(RemoteSources.OWNER_C, RemoteSources.REPO_C))
         val rawItems = ArrayList<Map<String, Any?>>()
-        api?.optJSONObject("hot_news")?.optJSONArray("items")?.let { rawItems.addAll(it.toMapList()) }
-        api?.optJSONObject("extra")?.optJSONArray("items")?.let { rawItems.addAll(it.toMapList()) }
-        api?.optJSONArray("items")?.let { rawItems.addAll(it.toMapList()) }
+        api?.optJSONObject("hot_news")?.optJSONArray("items")?.let { rawItems.addAll(it.toPlainMapList()) }
+        api?.optJSONObject("extra")?.optJSONArray("items")?.let { rawItems.addAll(it.toPlainMapList()) }
+        api?.optJSONArray("items")?.let { rawItems.addAll(it.toPlainMapList()) }
         api?.optJSONObject("digest")?.optJSONObject("categories")?.let { categories ->
             categories.keys().forEach { category ->
-                categories.optJSONArray(category)?.toMapList()?.forEach { rawItems.add(it + mapOf("cat" to category)) }
+                categories.optJSONArray(category)?.toPlainMapList()?.forEach { rawItems.add(it + mapOf("cat" to category)) }
             }
         }
-        api?.optJSONObject("themes")?.optJSONArray("themes")?.let { rawItems.addAll(it.toMapList()) }
-        api?.optJSONArray("hot_reports")?.let { rawItems.addAll(it.toMapList()) }
-        extra?.optJSONArray("items")?.let { rawItems.addAll(it.toMapList()) }
-        extra?.optJSONArray("news")?.let { rawItems.addAll(it.toMapList()) }
-        impact?.optJSONArray("items")?.let { rawItems.addAll(it.toMapList()) }
-        impact?.optJSONArray("news")?.let { rawItems.addAll(it.toMapList()) }
-        impact?.optJSONArray("impacts")?.let { rawItems.addAll(it.toMapList()) }
-        api?.optJSONArray("impacts")?.let { rawItems.addAll(it.toMapList()) }
+        api?.optJSONObject("themes")?.optJSONArray("themes")?.let { rawItems.addAll(it.toPlainMapList()) }
+        api?.optJSONArray("hot_reports")?.let { rawItems.addAll(it.toPlainMapList()) }
+        extra?.optJSONArray("items")?.let { rawItems.addAll(it.toPlainMapList()) }
+        extra?.optJSONArray("news")?.let { rawItems.addAll(it.toPlainMapList()) }
+        impact?.optJSONArray("items")?.let { rawItems.addAll(it.toPlainMapList()) }
+        impact?.optJSONArray("news")?.let { rawItems.addAll(it.toPlainMapList()) }
+        impact?.optJSONArray("impacts")?.let { rawItems.addAll(it.toPlainMapList()) }
+        api?.optJSONArray("impacts")?.let { rawItems.addAll(it.toPlainMapList()) }
         api?.optJSONObject("impact")?.let { nested ->
-            nested.optJSONArray("items")?.let { rawItems.addAll(it.toMapList()) }
-            nested.optJSONArray("impacts")?.let { rawItems.addAll(it.toMapList()) }
+            nested.optJSONArray("items")?.let { rawItems.addAll(it.toPlainMapList()) }
+            nested.optJSONArray("impacts")?.let { rawItems.addAll(it.toPlainMapList()) }
         }
 
         fun canonical(item: Map<String, Any?>): Map<String, Any?> {
@@ -354,13 +354,13 @@ object SkappApi {
             date = root?.optString("date").takeIf { !it.isNullOrEmpty() },
             n = root?.optIntOrNull("n") ?: items.size,
             ts = root?.optString("ts").takeIf { !it.isNullOrEmpty() },
-            digest = root?.optJSONObject("digest")?.toMap() ?: emptyMap(),
+            digest = root?.optJSONObject("digest")?.toPlainMap() ?: emptyMap(),
             items = items,
-            themes = root?.optJSONObject("themes")?.optJSONArray("themes")?.toMapList() ?: emptyList(),
+            themes = root?.optJSONObject("themes")?.optJSONArray("themes")?.toPlainMapList() ?: emptyList(),
             impacts = (impact?.optJSONArray("impacts")
                 ?: api?.optJSONArray("impacts")
-                ?: api?.optJSONObject("impact")?.optJSONArray("impacts"))?.toMapList() ?: emptyList(),
-            transmission = root?.optJSONObject("transmission")?.optJSONArray("items")?.toMapList() ?: emptyList(),
+                ?: api?.optJSONObject("impact")?.optJSONArray("impacts"))?.toPlainMapList() ?: emptyList(),
+            transmission = root?.optJSONObject("transmission")?.optJSONArray("items")?.toPlainMapList() ?: emptyList(),
         )
     }
 
@@ -370,7 +370,7 @@ object SkappApi {
             ?: fetchJson(RemoteSources.apiSectors(RemoteSources.OWNER_C, RemoteSources.REPO_C))
             ?: return@withContext SectorsSnapshot()
         val poolRows = o.optJSONObject("sector_pool")?.let { pool ->
-            listOf("tier1", "tier2", "tier3").flatMap { key -> pool.optJSONArray(key)?.toMapList() ?: emptyList() }
+            listOf("tier1", "tier2", "tier3").flatMap { key -> pool.optJSONArray(key)?.toPlainMapList() ?: emptyList() }
         }?.mapNotNull { row ->
             val name = (row["sector"] ?: row["name"])?.toString()?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
             name to row
@@ -397,7 +397,7 @@ object SkappApi {
             }?.sortedByDescending { it.heat ?: Double.NEGATIVE_INFINITY } ?: emptyList()
         val members = mutableMapOf<String, Map<String, Any?>>()
         o.optJSONObject("board_members")?.let { bm ->
-            bm.keys().forEach { k -> bm.optJSONObject(k)?.let { members[k] = it.toMap() } }
+            bm.keys().forEach { k -> bm.optJSONObject(k)?.let { members[k] = it.toPlainMap() } }
         }
         SectorsSnapshot(
             ts = o.optString("ts").takeIf { it.isNotEmpty() },
@@ -416,8 +416,8 @@ object SkappApi {
         val o = fetchJson(RemoteSources.apiStock(RemoteSources.OWNER_A, RemoteSources.REPO_A, code))
             ?: fetchJson(RemoteSources.apiStock(RemoteSources.OWNER_C, RemoteSources.REPO_C, code))
             ?: return@withContext null
-        val direct = o.optJSONObject("financial_latest")?.toMap()
-        val arr = o.optJSONArray("financial")?.optJSONObject(0)?.toMap()
+        val direct = o.optJSONObject("financial_latest")?.toPlainMap()
+        val arr = o.optJSONArray("financial")?.optJSONObject(0)?.toPlainMap()
         (direct ?: arr)?.takeIf { it.isNotEmpty() }
     }
 
@@ -426,7 +426,7 @@ object SkappApi {
         val o = fetchJson(RemoteSources.apiSources())
             ?: fetchJson(RemoteSources.apiSources(RemoteSources.OWNER_C, RemoteSources.REPO_C))
             ?: return@withContext DataSourcesSnapshot()
-        val items = o.optJSONArray("items")?.toMapList()?.map { row ->
+        val items = o.optJSONArray("items")?.toPlainMapList()?.map { row ->
             DataSourceStatus(
                 id = row["id"]?.toString() ?: "",
                 name = row["name"]?.toString(),
@@ -445,7 +445,7 @@ object SkappApi {
             live = o.optIntOrNull("live") ?: 0,
             gap = o.optIntOrNull("usable_without_fetcher") ?: 0,
             blocked = o.optIntOrNull("blocked_or_unauth") ?: 0,
-            groups = o.optJSONObject("groups")?.toMap()
+            groups = o.optJSONObject("groups")?.toPlainMap()
                 ?.mapValues { (_, v) -> (v as? Map<*, *>)?.entries?.associate { it.key.toString() to it.value } ?: emptyMap() }
                 ?: emptyMap(),
             mergedIds = ids("merged_ids"),
@@ -466,7 +466,7 @@ object SkappApi {
                 ts = o.optString("ts").takeIf { it.isNotEmpty() },
                 quote = o.optJSONObject("quote")?.toDoubleMap() ?: emptyMap(),
                 technical = o.optJSONObject("technical")?.toDoubleMap() ?: emptyMap(),
-                financialLatest = o.optJSONArray("financial")?.optJSONObject(0)?.toMap() ?: emptyMap(),
+                financialLatest = o.optJSONArray("financial")?.optJSONObject(0)?.toPlainMap() ?: emptyMap(),
             ),
         )
     }
@@ -517,8 +517,8 @@ object SkappApi {
                 target = c.optDoubleOrNull("target"),
                 holdingDays = c.optIntOrNull("holding_days"),
                 risk = c.optString("risk").takeIf { it.isNotEmpty() },
-                why = c.optJSONObject("why")?.toMap() ?: emptyMap(),
-                dims = c.optJSONObject("dims")?.toMap() ?: emptyMap(),
+                why = c.optJSONObject("why")?.toPlainMap() ?: emptyMap(),
+                dims = c.optJSONObject("dims")?.toPlainMap() ?: emptyMap(),
                 detail = c.optJSONObject("detail")?.let { parseBundle(it) },
             )
         }
@@ -527,11 +527,11 @@ object SkappApi {
             engine = o.optString("engine").takeIf { it.isNotEmpty() },
             marketRegime = o.optString("market_regime").takeIf { it.isNotEmpty() },
             regimeDetail = o.optString("regime_detail").takeIf { it.isNotEmpty() },
-            positionAdvice = o.optJSONObject("position_advice")?.toMap() ?: emptyMap(),
+            positionAdvice = o.optJSONObject("position_advice")?.toPlainMap() ?: emptyMap(),
             cards = cards,
             avoid = o.optJSONArray("avoid")?.toAnyList() ?: emptyList(),
-            evidence = o.optJSONObject("evidence")?.toMap() ?: emptyMap(),
-            sources = o.optJSONObject("sources")?.toMap() ?: emptyMap(),
+            evidence = o.optJSONObject("evidence")?.toPlainMap() ?: emptyMap(),
+            sources = o.optJSONObject("sources")?.toPlainMap() ?: emptyMap(),
         )
     }
 
@@ -546,11 +546,11 @@ object SkappApi {
             ts = o.optString("ts").takeIf { it.isNotEmpty() },
             date = o.optString("date").takeIf { it.isNotEmpty() },
             session = o.optString("session").takeIf { it.isNotEmpty() },
-            market = o.optJSONObject("market")?.toMap() ?: emptyMap(),
+            market = o.optJSONObject("market")?.toPlainMap() ?: emptyMap(),
             signals = parseArr("signals"),
             values = parseArr("values"),
             limitUp = parseArr("limit_up"),
-            sources = o.optJSONObject("sources")?.toMap() ?: emptyMap(),
+            sources = o.optJSONObject("sources")?.toPlainMap() ?: emptyMap(),
         )
     }
 
@@ -623,14 +623,14 @@ object SkappApi {
                         ?: root.optString("ts").takeIf { it.isNotBlank() },
                 )
             },
-            metadata = root.toMap(),
+            metadata = root.toPlainMap(),
         )
     }
 
     private fun parseCloseReview(root: JSONObject?): CloseReview {
         if (root == null) return CloseReview()
         val stages = listOf("premarket", "midday", "morning", "afternoon", "tradable_plans", "premarket_review", "midday_review")
-            .mapNotNull { key -> root.optJSONObject(key)?.let { key to it.toMap() } }.toMap()
+            .mapNotNull { key -> root.optJSONObject(key)?.let { key to it.toPlainMap() } }.toMap()
         return CloseReview(
             generatedAt = root.optString("generated_at").takeIf { it.isNotBlank() },
             date = root.optString("date").takeIf { it.isNotBlank() },
@@ -643,7 +643,7 @@ object SkappApi {
 
     private fun parseWinrateMatrix(root: JSONObject?): WinrateMatrix {
         if (root == null) return WinrateMatrix()
-        val horizons = root.optJSONObject("horizons")?.toMap()?.mapValues { (_, value) ->
+        val horizons = root.optJSONObject("horizons")?.toPlainMap()?.mapValues { (_, value) ->
             @Suppress("UNCHECKED_CAST")
             value as? Map<String, Any?> ?: emptyMap()
         } ?: emptyMap()
@@ -666,7 +666,7 @@ object SkappApi {
             engineScores = scores,
             boards = o.optJSONArray("boards")?.toStringList() ?: emptyList(),
             detail = o.optJSONObject("detail")?.let { parseBundle(it) },
-            marketPhase = o.optJSONObject("market_phase")?.toMap() ?: emptyMap(),
+            marketPhase = o.optJSONObject("market_phase")?.toPlainMap() ?: emptyMap(),
         )
     }
 
@@ -676,7 +676,7 @@ object SkappApi {
         ts = o.optString("ts").takeIf { it.isNotEmpty() },
         quote = o.optJSONObject("quote")?.toDoubleMap() ?: emptyMap(),
         technical = o.optJSONObject("technical")?.toDoubleMap() ?: emptyMap(),
-        financialLatest = o.optJSONObject("financial_latest")?.toMap() ?: emptyMap(),
+        financialLatest = o.optJSONObject("financial_latest")?.toPlainMap() ?: emptyMap(),
     )
 
     private fun parseQa(o: JSONObject): AiQa = AiQa(
@@ -702,36 +702,15 @@ object SkappApi {
     private fun JSONObject.optIntOrNull(key: String): Int? =
         if (has(key) && !isNull(key)) optInt(key).takeIf { it != Int.MIN_VALUE } else null
 
-    private fun JSONObject.toMap(): Map<String, Any?> {
-        val out = LinkedHashMap<String, Any?>()
-        keys().forEach { k -> out[k] = valueOf(this, k) }
-        return out
-    }
-
     private fun JSONObject.toDoubleMap(): Map<String, Double?> {
         val out = LinkedHashMap<String, Double?>()
         keys().forEach { k -> out[k] = optDoubleOrNull(k) }
         return out
     }
 
-    private fun JSONArray.toMapList(): List<Map<String, Any?>> =
-        (0 until length()).mapNotNull { i -> optJSONObject(i)?.toMap() }
-
     private fun JSONArray.toStringList(): List<String> =
         (0 until length()).mapNotNull { i -> optString(i).takeIf { it.isNotEmpty() } }
 
-    private fun JSONArray.toAnyList(): List<Any?> =
-        (0 until length()).map { i -> valueOf(this, i) }
+    private fun JSONArray.toAnyList(): List<Any?> = toPlainList()
 
-    private fun valueOf(o: JSONObject, key: String): Any? = when (val v = o.opt(key)) {
-        is JSONObject -> v.toMap()
-        is JSONArray -> (0 until v.length()).map { i -> valueOf(v, i) }
-        else -> v
-    }
-
-    private fun valueOf(a: JSONArray, i: Int): Any? = when (val v = a.opt(i)) {
-        is JSONObject -> v.toMap()
-        is JSONArray -> (0 until v.length()).map { j -> valueOf(v, j) }
-        else -> v
-    }
 }
