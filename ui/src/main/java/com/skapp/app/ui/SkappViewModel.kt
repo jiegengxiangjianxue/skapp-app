@@ -312,6 +312,7 @@ class SkappViewModel : ViewModel() {
         GitHubRepoWriter.configure(gh)
         // 本地推股存档：只恢复上次落盘结果，不在启动时重算（重算要拉 11 页快照 + 40 只日 K）
         runCatching { restoreLocalPicks() }
+        runCatching { restorePremarketDraft() }
         AiRouter.configure(context.applicationContext, t, gh)
         _state.value = _state.value.copy(
             aiToken = t, aiConfigured = t.isNotBlank(),
@@ -977,6 +978,53 @@ class SkappViewModel : ViewModel() {
         }
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
             .putString("local_picks_${session.key}", json.toString()).apply()
+    }
+
+    /** 启动时恢复早盘草稿：打开 App 先看到「当时给的名单」，异步算的是修正后的版本。 */
+    private fun restorePremarketDraft() {
+        val ctx = _context ?: return
+        val text = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getString("premarket_draft", null) ?: return
+        runCatching {
+            val o = org.json.JSONObject(text)
+            val picks = o.optJSONArray("picks")?.let { arr ->
+                (0 until arr.length()).mapNotNull { i ->
+                    val p = arr.optJSONObject(i) ?: return@mapNotNull null
+                    val code = p.optString("code").takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                    com.skapp.app.data.PremarketPicks.DraftPick(
+                        code = code,
+                        name = p.optString("name").takeIf { it.isNotBlank() },
+                        price = p.optDouble("price", Double.NaN).takeIf { !it.isNaN() },
+                        pctChg = p.optDouble("pctChg", Double.NaN).takeIf { !it.isNaN() },
+                        baseScore = p.optDouble("baseScore", Double.NaN).takeIf { !it.isNaN() },
+                        newsDelta = p.optDouble("newsDelta", 0.0),
+                        finalScore = p.optDouble("finalScore", 0.0),
+                        benefit = p.optBoolean("benefit"),
+                        harm = p.optBoolean("harm"),
+                        why = p.optJSONArray("why")?.let { w ->
+                            (0 until w.length()).mapNotNull { idx ->
+                                w.optString(idx).takeIf { s -> s.isNotBlank() }
+                            }
+                        } ?: emptyList(),
+                        source = p.optString("source", "local"),
+                    )
+                }
+            } ?: emptyList()
+            _state.value = _state.value.copy(
+                premarketDraft = com.skapp.app.data.PremarketPicks.Draft(
+                    status = runCatching {
+                        com.skapp.app.data.PremarketPicks.Status.valueOf(o.optString("status"))
+                    }.getOrDefault(com.skapp.app.data.PremarketPicks.Status.DRAFT),
+                    date = o.optString("date"),
+                    updatedAt = o.optString("updatedAt"),
+                    picks = picks,
+                    dataGap = o.optBoolean("dataGap"),
+                    coveredFrom = o.optString("coveredFrom").takeIf { it.isNotBlank() },
+                    coveredUntil = o.optString("coveredUntil").takeIf { it.isNotBlank() },
+                    note = o.optString("note").takeIf { it.isNotBlank() },
+                ),
+            )
+        }
     }
 
     /** 启动时恢复本地推股存档（只恢复，不重算）。 */

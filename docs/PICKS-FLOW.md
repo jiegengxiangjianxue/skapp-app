@@ -133,10 +133,11 @@
 6. `IntradayPicks`：盘中每轮名单 → 推送记录入队，5 分钟定时 flush
 7. 缺口补拉：消息库覆盖不足且未冻结时，从消息源再拉 100 条重算
 
-**P3（待做）**
-8. 早盘名单 UI（草稿态可看、冻结态锁定）——数据已在 `UiState.premarketDraft`，界面未接
-9. 云端午盘读消息库（`消息数据库/` 已由端上持续写入，午盘脚本加读取即可）
-10. 用当天推送质量校准 A/B（收盘复盘）
+**P3（部分完成）**
+8. ✅ 早盘名单 UI（`RealtimeSummaryScreen.PremarketDraftCard`，草稿/冻结状态 + 消息明细）
+9. ✅ 云端午盘读消息库（`build_picks_midday.py --news-db-dir`，先读端上库，缺失才回退 `news_impact.json`）
+10. 待做：用当天推送质量校准 A/B（收盘复盘）
+11. 待做：端上「打开就拉早盘名单」的展示顺序——目前草稿在 `warmUpAll` 第 5 步异步算，首屏第一次渲染时可能还没有；后续可把落盘草稿在 `loadSavedToken` 里同步恢复
 
 ## 8. 风险
 
