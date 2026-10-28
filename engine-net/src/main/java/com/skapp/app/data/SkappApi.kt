@@ -146,7 +146,6 @@ object SkappApi {
     private suspend fun fetchStockNameEntries(): List<SymbolEntry> {
         val roots = listOf(
             RemoteSources.appFile(RemoteSources.OWNER_A, RemoteSources.REPO_A, "stock_names.json"),
-            RemoteSources.appFile(RemoteSources.OWNER_C, RemoteSources.REPO_C, "stock_names.json"),
         )
         return roots.asSequence().mapNotNull { fetchJson(it) }
             .map(::parseStockNames).firstOrNull { it.isNotEmpty() }.orEmpty()
@@ -157,8 +156,6 @@ object SkappApi {
         val roots = listOf(
             fetchJson(RemoteSources.newsImpactV2()),
             fetchJson(RemoteSources.newsImpact()),
-            fetchJson(RemoteSources.newsImpactV2(RemoteSources.OWNER_C, RemoteSources.REPO_C)),
-            fetchJson(RemoteSources.newsImpact(RemoteSources.OWNER_C, RemoteSources.REPO_C)),
         )
         roots.firstNotNullOfOrNull { root ->
             val rows = ArrayList<Map<String, Any?>>()
@@ -170,28 +167,24 @@ object SkappApi {
         } ?: emptyList()
     }
 
-    /** app 主文件：A 仓优先，失败退 C 仓 */
+    /** app 主文件 */
     suspend fun fetchDecision(): Decision = withContext(Dispatchers.IO) {
         parseDecision(fetchJson(RemoteSources.appFile(RemoteSources.OWNER_A, RemoteSources.REPO_A, "decision.json")))
-            ?: parseDecision(fetchJson(RemoteSources.appFile(RemoteSources.OWNER_C, RemoteSources.REPO_C, "decision.json")))
             ?: Decision()
     }
 
     suspend fun fetchTodayPicks(): TodayPicks = withContext(Dispatchers.IO) {
         parsePicks(fetchJson(RemoteSources.appFile(RemoteSources.OWNER_A, RemoteSources.REPO_A, "today_picks.json")))
-            ?: parsePicks(fetchJson(RemoteSources.appFile(RemoteSources.OWNER_C, RemoteSources.REPO_C, "today_picks.json")))
             ?: TodayPicks()
     }
 
     suspend fun fetchCloseReview(): CloseReview = withContext(Dispatchers.IO) {
         val root = fetchJson(RemoteSources.closeReview())
-            ?: fetchJson(RemoteSources.closeReview(RemoteSources.OWNER_C, RemoteSources.REPO_C))
         parseCloseReview(root)
     }
 
     suspend fun fetchWinrateMatrix(): WinrateMatrix = withContext(Dispatchers.IO) {
         val root = fetchJson(RemoteSources.winrateMatrix())
-            ?: fetchJson(RemoteSources.winrateMatrix(RemoteSources.OWNER_C, RemoteSources.REPO_C))
         parseWinrateMatrix(root)
     }
 
@@ -207,7 +200,6 @@ object SkappApi {
         val normalized = normalize(code) ?: return@withContext null
         val fromApi = listOf(
             RemoteSources.OWNER_A to RemoteSources.REPO_A,
-            RemoteSources.OWNER_C to RemoteSources.REPO_C,
         ).firstNotNullOfOrNull { (o, r) ->
             fetchJson(RemoteSources.apiStock(o, r, normalized))?.let { parseStockDetail(it, normalized) }
         }
@@ -224,8 +216,7 @@ object SkappApi {
 
     suspend fun fetchQa(code: String): AiQa? = withContext(Dispatchers.IO) {
         val normalized = normalize(code) ?: return@withContext null
-        listOf(RemoteSources.OWNER_A to RemoteSources.REPO_A,
-            RemoteSources.OWNER_C to RemoteSources.REPO_C).firstNotNullOfOrNull { (o, r) ->
+        listOf(RemoteSources.OWNER_A to RemoteSources.REPO_A).firstNotNullOfOrNull { (o, r) ->
             fetchJson(RemoteSources.apiQa(o, r, normalized))?.let { parseQa(it) }
         }
     }
@@ -244,13 +235,9 @@ object SkappApi {
     /** 消息面：实时 7x24、hot_news/news_extra 与 news_impact v2 统一合并。 */
     suspend fun fetchNews(): NewsSnapshot = withContext(Dispatchers.IO) {
         val api = fetchJson(RemoteSources.apiNews())
-            ?: fetchJson(RemoteSources.apiNews(RemoteSources.OWNER_C, RemoteSources.REPO_C))
         val extra = fetchJson(RemoteSources.newsExtra())
-            ?: fetchJson(RemoteSources.newsExtra(RemoteSources.OWNER_C, RemoteSources.REPO_C))
         val impact = fetchJson(RemoteSources.newsImpactV2())
             ?: fetchJson(RemoteSources.newsImpact())
-            ?: fetchJson(RemoteSources.newsImpactV2(RemoteSources.OWNER_C, RemoteSources.REPO_C))
-            ?: fetchJson(RemoteSources.newsImpact(RemoteSources.OWNER_C, RemoteSources.REPO_C))
         val rawItems = ArrayList<Map<String, Any?>>()
         api?.optJSONObject("hot_news")?.optJSONArray("items")?.let { rawItems.addAll(it.toPlainMapList()) }
         api?.optJSONObject("extra")?.optJSONArray("items")?.let { rawItems.addAll(it.toPlainMapList()) }
@@ -340,10 +327,9 @@ object SkappApi {
         )
     }
 
-    /** 板块: A 仓优先, 退 C 仓 */
+    /** 板块 */
     suspend fun fetchSectors(): SectorsSnapshot = withContext(Dispatchers.IO) {
         val o = fetchJson(RemoteSources.apiSectors())
-            ?: fetchJson(RemoteSources.apiSectors(RemoteSources.OWNER_C, RemoteSources.REPO_C))
             ?: return@withContext SectorsSnapshot()
         val poolRows = o.optJSONObject("sector_pool")?.let { pool ->
             listOf("tier1", "tier2", "tier3").flatMap { key -> pool.optJSONArray(key)?.toPlainMapList() ?: emptyList() }
@@ -390,17 +376,15 @@ object SkappApi {
     /** 单股 API 财务兜底：分片 bundle 未覆盖该股时，直接读 api/stocks/{code}.json。 */
     suspend fun fetchStockFinancial(code: String): Map<String, Any?>? = withContext(Dispatchers.IO) {
         val o = fetchJson(RemoteSources.apiStock(RemoteSources.OWNER_A, RemoteSources.REPO_A, code))
-            ?: fetchJson(RemoteSources.apiStock(RemoteSources.OWNER_C, RemoteSources.REPO_C, code))
             ?: return@withContext null
         val direct = o.optJSONObject("financial_latest")?.toPlainMap()
         val arr = o.optJSONArray("financial")?.optJSONObject(0)?.toPlainMap()
         (direct ?: arr)?.takeIf { it.isNotEmpty() }
     }
 
-    /** 数据源台账：A 仓优先，退 C 仓；不可达时返回空快照，由 UI 显示暂无数据。 */
+    /** 数据源台账；不可达时返回空快照，由 UI 显示暂无数据。 */
     suspend fun fetchDataSources(): DataSourcesSnapshot = withContext(Dispatchers.IO) {
         val o = fetchJson(RemoteSources.apiSources())
-            ?: fetchJson(RemoteSources.apiSources(RemoteSources.OWNER_C, RemoteSources.REPO_C))
             ?: return@withContext DataSourcesSnapshot()
         val items = o.optJSONArray("items")?.toPlainMapList()?.map { row ->
             DataSourceStatus(

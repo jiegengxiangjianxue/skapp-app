@@ -14,13 +14,9 @@ object RemoteSources {
         "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) " +
             "Chrome/130.0.0.0 Mobile Safari/537.36"
 
-    /** A 仓：主供数 + API 树 + AI 问答（主力数据仓 qwerzxcva） */
+    /** A 仓：主供数 + API 树 + AI 问答（唯一数据仓） */
     const val OWNER_A = "qwerzxcva"
     const val REPO_A = "stocks-ai-view"
-
-    /** C 仓：真镜像（与 A 同内容，独立账号/独立 CI 2 分钟调度） */
-    const val OWNER_C = "jiegengxiangjianxue"
-    const val REPO_C = "stocks-ai-view-b"
 
     /** 全市场代码表（jiegengxiangjianxue/skapp-data，qwerzxcva 侧已并入删除） */
     const val OWNER_SYMBOLS = "jiegengxiangjianxue"

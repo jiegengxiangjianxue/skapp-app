@@ -22,10 +22,8 @@ class AllSourcesClient {
         }
 
         return try {
-            // 主仓使用统一数据源配置，镜像仅作真实 fallback。
             val rawUrl = RemoteSources.appFile(RemoteSources.OWNER_A, RemoteSources.REPO_A, "all_sources.json")
             val jsonObject = fetchFromUrl(rawUrl)
-                ?: fetchFromUrl(RemoteSources.appFile(RemoteSources.OWNER_C, RemoteSources.REPO_C, "all_sources.json"))
             if (jsonObject != null) {
                 cachedData = jsonObject
                 lastFetchTime = now
