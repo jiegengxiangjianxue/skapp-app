@@ -12,8 +12,8 @@ android {
         applicationId = "com.skapp.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 22
-        versionName = "2.1.8"
+        versionCode = 23
+        versionName = "2.1.9"
     }
 
     buildTypes {
