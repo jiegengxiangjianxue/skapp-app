@@ -74,6 +74,7 @@ fun RealtimeSummaryScreen(vm: SkappViewModel, state: UiState) {
                 session = LocalPicks.Session.PREMARKET,
             )
         }
+        item { PremarketDraftCard(state) }
         item {
             LocalPickCard(
                 title = "午盘推股（本地）",
@@ -148,6 +149,63 @@ private fun TomorrowPicksCard(state: UiState, vm: SkappViewModel) {
                         Text("详情 ›", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
                     }
                 }
+            }
+        }
+    }
+}
+
+/** 早盘名单：本地深算为底、消息面修正。09:30 前可随时变，之后冻结。 */
+@Composable
+private fun PremarketDraftCard(state: UiState) {
+    val draft = state.premarketDraft ?: return
+    Card(colors = CardDefaults.cardColors()) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text("早盘推股（消息修正）", fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                Text(
+                    if (draft.status == com.skapp.app.data.PremarketPicks.Status.FROZEN) "已冻结"
+                    else "草稿 · 09:30 前可更新",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (draft.status == com.skapp.app.data.PremarketPicks.Status.FROZEN) Color.Gray
+                    else MaterialTheme.colorScheme.primary,
+                )
+            }
+            Text(
+                "更新 ${draft.updatedAt.replace("T", " ").take(19)}",
+                style = MaterialTheme.typography.labelSmall, color = Color.Gray,
+            )
+            if (draft.dataGap) {
+                Text(
+                    "消息库覆盖不足（" + (draft.coveredUntil ?: "无记录") + " 之后无消息），早盘结论置信度下降",
+                    style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error,
+                )
+            }
+            if (draft.picks.isEmpty()) {
+                Text(
+                    draft.note ?: "暂无达标候选（弱市不凑数，请观察或空仓）",
+                    style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+                )
+            } else {
+                draft.picks.take(10).forEach { p ->
+                    Column {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text(
+                                "${p.name?.takeIf { it.isNotBlank() } ?: p.code} ${p.code} · " +
+                                    "${p.finalScore.let { "%.1f".format(it) }}" +
+                                    (if (p.newsDelta != 0.0) "（消息 ${if (p.newsDelta > 0) "+" else ""}%.1f".format(p.newsDelta) + "）" else ""),
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                            if (p.benefit) Text("受益", style = MaterialTheme.typography.labelSmall, color = Color(0xFF2E7D32))
+                        }
+                        p.why.take(2).forEach { line ->
+                            Text("· $line", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+                        }
+                    }
+                }
+                Text(
+                    "以上为本地深算 + 消息面修正的早盘候选，不是买入建议。",
+                    style = MaterialTheme.typography.labelSmall, color = Color.Gray,
+                )
             }
         }
     }
