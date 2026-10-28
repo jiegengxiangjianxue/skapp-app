@@ -10,6 +10,8 @@ import com.skapp.app.data.BanProbClient
 import com.skapp.app.data.DbTables
 import com.skapp.app.data.MarketState
 import com.skapp.app.data.MarketStateEngine
+import com.skapp.app.data.PicksArchiveQueue
+import com.skapp.app.data.GitHubRepoWriter
 import com.skapp.app.data.aggregateKline
 import com.skapp.app.data.AskEngine
 import com.skapp.app.data.DataCache
@@ -300,6 +302,10 @@ class SkappViewModel : ViewModel() {
         val t = sp.getString(KEY_TOKEN, "") ?: ""
         val gh = sp.getString(KEY_GITHUB_TOKEN, "") ?: ""
         _context = context.applicationContext
+        // 归档队列落在应用私有目录：杀进程后队列还在，下次打开接着传
+        runCatching { PicksArchiveQueue.init(context.applicationContext.filesDir) }
+        // GitHub 仓库写入（消息库 / 开盘推股历史）复用同一个 PAT
+        GitHubRepoWriter.configure(gh)
         // 本地推股存档：只恢复上次落盘结果，不在启动时重算（重算要拉 11 页快照 + 40 只日 K）
         runCatching { restoreLocalPicks() }
         AiRouter.configure(context.applicationContext, t, gh)
@@ -2080,6 +2086,8 @@ $ctx
     fun warmUpAll() {
         if (warmUpJob?.isActive == true) return
         warmUpJob = viewModelScope.launch {
+            // 第 0 步：先补传上次没发出去的消息库 / 推送历史（用户开 App 时间不固定）
+            launch { runCatching { flushPicksArchive() } }
             // 第 1 批：首屏必需（自选行情 + 指数）
             coroutineScope {
                 launch { runCatching { refreshQuotes() } }
@@ -2102,6 +2110,18 @@ $ctx
             com.skapp.app.data.LocalPicks.sessionFor(MarketHours.phase())?.let { session ->
                 runCatching { rebuildLocalPicks(session, force = false) }
             }
+        }
+    }
+
+    /** 把本地归档队列刷到 GitHub；失败原样留着，不弹错、不阻断首屏。 */
+    private suspend fun flushPicksArchive() {
+        if (!PicksArchiveQueue.isReady()) return
+        if (!GitHubRepoWriter.isConfigured()) return
+        val report = PicksArchiveQueue.flush()
+        if (report.failures.isNotEmpty()) {
+            _state.value = _state.value.copy(
+                screenMsg = "归档待重试：" + report.failures.first(),
+            )
         }
     }
 
