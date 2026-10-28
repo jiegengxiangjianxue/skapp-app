@@ -57,6 +57,7 @@ object CloudFeed {
         INDUSTRY_MAP("industry_map_em.json", "个股 → 东财三级行业（1050 只，与板块层级不一致，仅兜底）"),
         STOCK_SECTOR_MAP("stock_sector_map.json", "个股 → 板块（按板块成分股反查，与 sector_engine 同源）"),
         AI_PICK_V4("ai_pick_v4.json", "AI 选股 v4"),
+        PEAD_EVENTS("pead_events.json", "财报后漂移事件（按公告日倒序，最近 90 天）"),
     }
 
     data class CloudDoc(

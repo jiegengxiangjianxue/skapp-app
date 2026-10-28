@@ -78,6 +78,10 @@ object Db {
     /** ETF 份额（交易所每日披露，端上拿不到，只能当库数据）。 */
     suspend fun etfShares(force: Boolean = false): JSONObject? = etfSharesState(force).json
 
+    /** 财报后漂移事件表（云端按公告日倒序，最近 90 天）。 */
+    suspend fun peadEvents(force: Boolean = false): JSONObject? =
+        CloudFeed.loadMany(listOf(CloudFeed.Doc.PEAD_EVENTS), force)[CloudFeed.Doc.PEAD_EVENTS]?.json
+
     /** 同上，但要「是否陈旧」时用这个。 */
     suspend fun etfSharesState(force: Boolean = false): CloudFeed.CloudDoc =
         CloudFeed.load(CloudFeed.Doc.ETF_SHARES, force)

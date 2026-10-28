@@ -2161,6 +2161,11 @@ $ctx
             financialLatest = holo?.finance?.takeIf { it.isNotEmpty() }
                 ?: MarketDataClient.financeQuote(code).takeIf { it.isNotEmpty() }
                 ?: (runCatching { DbTables.financial(code) }.getOrNull() ?: emptyMap()),
+            // 财报后漂移只展示不评分：云端事件表按公告日倒序最近 90 天，按带前缀代码查
+            pead = runCatching {
+                com.skapp.app.data.PeadEvents.parse(com.skapp.app.data.Db.peadEvents())
+                    ?.events?.get(com.skapp.app.data.Code.prefixed(code))
+            }.getOrNull(),
         )
     }
 

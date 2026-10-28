@@ -688,6 +688,31 @@ fun StockDetailSheet(vm: SkappViewModel, state: UiState) {
             }
         }
 
+        // ── 财报后漂移（只展示，不参与评分）──
+        d.detail?.pead?.let { pead ->
+            SectionCard("财报漂移（PEAD · 云端事件表）") {
+                Text(
+                    com.skapp.app.data.PeadEvents.caveatOf(pead),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.Gray,
+                )
+                Text(
+                    "最近公告 ${pead.announceDate} · SUE " +
+                        (pead.sue?.let { "%.2f".format(it) } ?: "暂无数据") +
+                        "（${pead.nQuarters} 个季度）",
+                )
+                Text(
+                    "公告后 5/10/20 日：" + listOf(pead.car5d, pead.car10d, pead.car20d)
+                        .joinToString(" / ") { v -> v?.let { "%+.2f%%".format(it * 100) } ?: "暂无数据" },
+                )
+                Text(
+                    "本市场样本里最高 SUE 分位 10 日胜率 49.75%、最低分位 54.90%，方向与教科书相反，因此不参与评分。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.Gray,
+                )
+            }
+        }
+
         // ── 数据来源 ──
         SectionCard("数据来源") {
             Text("实时报价：腾讯 qt.gtimg.cn（兜底 东财 push2 / 新浪 hq.sinajs）")

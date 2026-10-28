@@ -58,6 +58,23 @@ data class BundleDetail(
     val quote: Map<String, Double?> = emptyMap(),
     val technical: Map<String, Double?> = emptyMap(),
     val financialLatest: Map<String, Any?> = emptyMap(),
+    /** 最近一次财报事件（云端 pead_events.json）；未覆盖为 null */
+    val pead: PeadEvent? = null,
+)
+
+/** 财报后漂移事件（PEAD）：云端按公告日倒序输出的事件表里的一条。 */
+data class PeadEvent(
+    val symbol: String,
+    /** 公告日 yyyy-MM-dd */
+    val announceDate: String,
+    val eps: Double? = null,
+    /** 标准化预期外盈余（越高=盈余惊喜越大） */
+    val sue: Double? = null,
+    val nQuarters: Int = 0,
+    /** 公告后累计收益（个股绝对收益，未剔除同期市场） */
+    val car5d: Double? = null,
+    val car10d: Double? = null,
+    val car20d: Double? = null,
 )
 
 /** 个股详情（API + 分片 bundle 合并） */
