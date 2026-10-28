@@ -33,9 +33,6 @@ import java.util.Locale
  */
 object EngineFeedLive {
 
-    /** 装配时读取的本地历史天数：够算 20 日动量与 rps20（120/250 攒够才会出现）。 */
-    private const val HISTORY_DAYS = 260
-
     /** 情绪序列展示天数（连板高度/晋级率/封板率的逐日走势）。 */
     private const val EMOTION_DAYS = 10
 
@@ -71,9 +68,16 @@ object EngineFeedLive {
         val sectors = runCatching { LocalSectors.compute() }.getOrNull()
         // 外围指数只拉一次：策略卡的入市闸门与本轮 market_phase 用同一份数据
         val strategy = LiveExtras.strategy(globalIndices = indices)
-        // 顺手把当日快照落一份本地存档：连板高度/晋级率/板块动量/长周期 RPS 都靠它积累
+        // 当天快照仍落一份：盘中给实时封板率兜底，收盘后就是「今天」的那一行
         runCatching { MarketDayArchive.capture(snap, sectors) }
-        val history = runCatching { MarketDayArchive.recent(HISTORY_DAYS) }.getOrDefault(emptyList())
+        // 历史行来自云端（limit_history.json，260 个交易日），端上不再囤：
+        // 同日以本地实时快照为准——云端那份是收盘回算，今天的盘中数据它还没有
+        val cloudDays = runCatching {
+            com.skapp.app.data.LimitHistory.parse(com.skapp.app.data.Db.limitHistory())
+        }.getOrDefault(emptyList())
+        val localDays = runCatching { MarketDayArchive.recent(2) }.getOrDefault(emptyList())
+        val history = (cloudDays.filter { cd -> localDays.none { it.date == cd.date } } + localDays)
+            .sortedBy { it.date }
         val feeds = assemble(
             pulse, screened, indices, snapshot = snap, sectors = sectors,
             strategy = strategy, history = history,
@@ -259,7 +263,7 @@ object EngineFeedLive {
                 } ?: "不可得（缺最高价/昨收）"),
                 "连板高度" to (if (board != null && board.hasHistory) {
                     "${board.height} 板（${board.heightCodes.take(3).joinToString("/")}）"
-                } else "不可得（本地存档 ${history.size}/2 天）"),
+                } else "不可得（历史 ${history.size}/2 天）"),
                 "晋级率" to (board?.promo?.let { pr ->
                     String.format(Locale.CHINA, "%.0f%%（昨涨停 %d → 今连板 %d）", pr * 100, board.ydayLimitUp, board.ge2)
                 } ?: "不可得（需上一交易日涨停名单）"),
@@ -270,9 +274,9 @@ object EngineFeedLive {
                     String.format(Locale.CHINA, "%+.2f%%", it)
                 } ?: "不可得"),
                 "情绪序列" to if (emotion.size >= 2) {
-                    "${emotion.size} 个交易日的涨停/连板/晋级/封板率走势（本地存档累积）"
-                } else "仅当日（本地存档 ${history.size} 天，攒够 2 天出走势）",
-                "存档" to "本地日级快照 ${history.size} 天（${history.firstOrNull()?.date ?: "-"} ~ $date）",
+                    "${emotion.size} 个交易日的涨停/连板/晋级/封板率走势（云端涨停名单 + 当天快照）"
+                } else "仅当日（历史 ${history.size} 天，攒够 2 天出走势）",
+                "历史来源" to "云端涨停名单 ${history.size} 天（${history.firstOrNull()?.date ?: "-"} ~ $date），端上只留当天",
                 // 数据时点单独一条：用户需要知道这一屏结论是按「此刻」还是按「几分钟前」算的
                 "数据时点" to when {
                     snapshot.isEmpty() -> "无全市场快照（相关块不可得）"

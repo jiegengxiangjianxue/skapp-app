@@ -58,6 +58,7 @@ object CloudFeed {
         STOCK_SECTOR_MAP("stock_sector_map.json", "个股 → 板块（按板块成分股反查，与 sector_engine 同源）"),
         AI_PICK_V4("ai_pick_v4.json", "AI 选股 v4"),
         PEAD_EVENTS("pead_events.json", "财报后漂移事件（按公告日倒序，最近 90 天）"),
+        LIMIT_HISTORY("limit_history.json", "每日个股涨停名单（云端回算，260 个交易日）"),
     }
 
     data class CloudDoc(

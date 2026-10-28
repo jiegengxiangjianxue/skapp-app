@@ -82,6 +82,10 @@ object Db {
     suspend fun peadEvents(force: Boolean = false): JSONObject? =
         CloudFeed.loadMany(listOf(CloudFeed.Doc.PEAD_EVENTS), force)[CloudFeed.Doc.PEAD_EVENTS]?.json
 
+    /** 每日个股涨停名单历史（云端回算，替代端上本地囤日级快照）。 */
+    suspend fun limitHistory(force: Boolean = false): JSONObject? =
+        CloudFeed.loadMany(listOf(CloudFeed.Doc.LIMIT_HISTORY), force)[CloudFeed.Doc.LIMIT_HISTORY]?.json
+
     /** 同上，但要「是否陈旧」时用这个。 */
     suspend fun etfSharesState(force: Boolean = false): CloudFeed.CloudDoc =
         CloudFeed.load(CloudFeed.Doc.ETF_SHARES, force)

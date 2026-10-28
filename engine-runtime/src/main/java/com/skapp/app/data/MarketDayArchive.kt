@@ -9,17 +9,22 @@ import java.util.zip.GZIPOutputStream
 /**
  * 本地日级快照存档 —— 让「连板高度 / 晋级率 / 板块历史动量 / 长周期 RPS」从不可得变成可算。
  *
- * ## 为什么必须存
+ * ## 为什么存、又为什么只存当天
  *
  * 东财 clist 只给「此刻」。昨天谁涨停、前天谁涨停，一旦没存下来就再也补不回来，
  * 于是引擎池里的 `height / promo / firstBoard / ge2` 只能永远写 -1 并标「不可得」。
- * 这不是算法缺，是数据缺。存档就是这个缺口的补丁：**每天存一份，第二天起就能算**。
+ * 这不是算法缺，是数据缺。
+ *
+ * 2026-10 起这份历史搬到了云端：`limit_history.json`（260 个交易日的涨停名单，
+ * 由 stocks-ai-view 的 `build_limit_history.py` 用全市场日线回算）。端上只留当天：
+ * 既满足「数据在 GitHub、本地不囤」，又不会让连板/晋级率断档。
  *
  * ## 存哪、多大、留多久
  *
  * - 路径：`filesDir/market_days/YYYY-MM-DD.dat.gz`（一天一个文件，gzip 后约 50KB）。
  * - 格式：制表符文本，不依赖 JSON 库（单元测试里也能跑，不受 Android stub 影响）。
- * - 保留：默认 420 个交易日（够覆盖一年半的 RPS250 与年度比较），超出按日期删最旧。
+ * - 保留：只留当天（MAX_DAYS=1）。更早的由云端 `limit_history.json` 提供，
+ *   本地不囤——这是「数据放 GitHub、端上不保留」的落地。
  *
  * ## 写入门槛（宁可少写，不要写脏）
  *
@@ -30,7 +35,7 @@ import java.util.zip.GZIPOutputStream
 object MarketDayArchive {
 
     private const val DIR_NAME = "market_days"
-    private const val MAX_DAYS = 420
+    private const val MAX_DAYS = 1
     private const val INTRADAY_MIN_INTERVAL_MS = 60_000L
     /**
      * 存档版本（逐版只**追加**列，不重排、不删除，旧文件永远能读）：
