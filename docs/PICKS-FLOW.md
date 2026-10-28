@@ -122,19 +122,21 @@
 
 **P0（已完成）**：云端 A/B 候选、午盘 E、两个目录的格式约定
 
-**P1（本次）**
-1. `GitHubRepoWriter`：GET/PUT 仓库文件，sha 冲突重试
+**P1（已完成）**
+1. `GitHubRepoWriter`：GET/PUT 仓库文件，sha 冲突重试（engine-net）
 2. `PicksArchiveQueue`：消息 + 推送记录队列，启动时 flush（对应「打开就检查有没有发，没有就发」）
-3. `PremarketPicks`：草稿 / 冻结两态，`premarket_frozen_<date>` 标记
+3. `NewsArchive`：`NewsCalc` ⇄ 消息库条目（受益/受损拆分、no_stock 照存、按 ts 合并）
 4. 消息采集接 `NewsCalcEngine` 后落库（开 App 即采）
 
-**P2**
-5. 开盘推股名单（复用 `MarketHeartbeat`，5 分钟节流）
-6. 早盘名单 UI（草稿态可看、冻结态锁定）
+**P2（已完成）**
+5. `PremarketPicks`：早盘草稿 → 09:30 冻结；本地深算为底 + 消息修正（单条封顶、同事件不刷分）
+6. `IntradayPicks`：盘中每轮名单 → 推送记录入队，5 分钟定时 flush
+7. 缺口补拉：消息库覆盖不足且未冻结时，从消息源再拉 100 条重算
 
-**P3**
-7. 补拉缺口（消息源历史 + 云端兜底）
-8. 用当天推送质量校准 A/B（收盘复盘）
+**P3（待做）**
+8. 早盘名单 UI（草稿态可看、冻结态锁定）——数据已在 `UiState.premarketDraft`，界面未接
+9. 云端午盘读消息库（`消息数据库/` 已由端上持续写入，午盘脚本加读取即可）
+10. 用当天推送质量校准 A/B（收盘复盘）
 
 ## 8. 风险
 

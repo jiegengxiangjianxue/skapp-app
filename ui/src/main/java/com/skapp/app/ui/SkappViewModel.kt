@@ -10,6 +10,8 @@ import com.skapp.app.data.BanProbClient
 import com.skapp.app.data.DbTables
 import com.skapp.app.data.MarketState
 import com.skapp.app.data.MarketStateEngine
+import com.skapp.app.data.NewsArchive
+import com.skapp.app.data.IntradayPicks
 import com.skapp.app.data.PicksArchiveQueue
 import com.skapp.app.data.GitHubRepoWriter
 import com.skapp.app.data.aggregateKline
@@ -131,6 +133,8 @@ data class UiState(
         com.skapp.app.data.StructuredPickArtifact(session = "midday"),
     val localPicksLoading: Boolean = false,
     val localPicksMsg: String? = null,
+    /** 早盘推股草稿（09:00-09:30 随消息可变，09:30 后冻结） */
+    val premarketDraft: com.skapp.app.data.PremarketPicks.Draft? = null,
     val picks: TodayPicks = TodayPicks(),
     /** 盘前/午盘推股已全部改为本地深算（LocalPicks），云端 premarket/midday 产物不再拉取也不再上屏 */
     val closeReview: com.skapp.app.data.CloseReview = com.skapp.app.data.CloseReview(),
@@ -932,6 +936,8 @@ class SkappViewModel : ViewModel() {
                 localPicksMsg = artifact.reason,
             )
             persistLocalPicks(session, artifact)
+            // 推送历史入队：flush 交给启动/定时，不在这里等网络
+            archivePushRound(artifact, calcTime)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -1546,6 +1552,10 @@ class SkappViewModel : ViewModel() {
                 )
             }
             _state.value = _state.value.copy(newsCalcs = calcs)
+            // 即采即传：不管开 App 是几点，算好的消息都进归档队列；flush 由启动/定时触发
+            archiveNewsCalcs(calcs)
+            // 消息变了早盘名单也要跟着变（09:00-09:30 可变，冻结后内部直接跳过）
+            runCatching { refreshPremarketDraft() }
         } finally {
             _state.value = _state.value.copy(newsCalcLoading = false)
         }
@@ -2110,6 +2120,15 @@ $ctx
             com.skapp.app.data.LocalPicks.sessionFor(MarketHours.phase())?.let { session ->
                 runCatching { rebuildLocalPicks(session, force = false) }
             }
+            // 第 5 步：早盘名单（09:00-09:30 随消息可变，09:30 后冻结）
+            launch { runCatching { refreshPremarketDraft() } }
+            // 归档队列定时补传：盘中每 5 分钟把攒的消息 / 推送记录刷一次
+            launch {
+                while (isActive) {
+                    delay(5 * 60_000L)
+                    runCatching { flushPicksArchive() }
+                }
+            }
         }
     }
 
@@ -2123,6 +2142,114 @@ $ctx
                 screenMsg = "归档待重试：" + report.failures.first(),
             )
         }
+    }
+
+    /** 把本轮算好的消息写入归档队列（只存当天：历史消息由云端库负责，端上不重复传）。 */
+    private fun archiveNewsCalcs(calcs: List<com.skapp.app.data.NewsCalc>) {
+        if (!PicksArchiveQueue.isReady()) return
+        val today = java.time.LocalDate.now().toString()
+        calcs.forEach { calc ->
+            val ts = calc.ts?.takeIf { it.isNotBlank() } ?: return@forEach
+            if (!ts.startsWith(today)) return@forEach
+            runCatching { PicksArchiveQueue.enqueueNews(today, NewsArchive.toJson(calc, today)) }
+        }
+    }
+
+    /** 推送记录入队（成功与否都不影响名单展示）。 */
+    private fun archivePushRound(artifact: com.skapp.app.data.StructuredPickArtifact, ts: String) {
+        if (!PicksArchiveQueue.isReady()) return
+        val today = java.time.LocalDate.now().toString()
+        runCatching { PicksArchiveQueue.enqueuePushRound(today, IntradayPicks.toRound(artifact, ts)) }
+    }
+
+    /** 早盘推股草稿：本地深算为底、消息面修正，09:30 后冻结。 */
+    private suspend fun refreshPremarketDraft() {
+        val ctx = _context ?: return
+        val now = java.time.OffsetDateTime.now().toString()
+        val date = now.take(10)
+        val sp = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val frozenDate = sp.getString("premarket_frozen", null)
+        val frozen = frozenDate == date || com.skapp.app.data.PremarketPicks.isFrozen(now)
+        // 已冻结且今天已经有草稿：不再重算，也不再去读消息库（每次消息刷新都走一遍网络太重）
+        if (frozen && _state.value.premarketDraft?.date == date) return
+
+        // 消息库：有 PAT 才读；读失败按「无历史消息」处理并在 dataGap 里体现
+        val stored = if (GitHubRepoWriter.isConfigured()) {
+            runCatching {
+                GitHubRepoWriter.readFile("${PicksArchiveQueue.NEWS_DB_DIR}/$date.json")?.body
+                    ?.let { org.json.JSONObject(it).optJSONArray("items") }
+                    ?.let { NewsArchive.readRows(it) }
+            }.getOrNull().orEmpty()
+        } else emptyList()
+
+        val draft = com.skapp.app.data.PremarketPicks.build(
+            base = _state.value.localPremarketPicks,
+            stored = stored,
+            live = _state.value.newsCalcs,
+            date = date,
+            now = now,
+            frozen = frozen,
+            coverage = NewsArchive.coverage(stored),
+        )
+        // 缺口补拉：消息库覆盖不到早盘窗口（前一夜没开 App）时，从消息源再拉一段历史
+        val draftWithGap = if (!frozen && draft.dataGap) {
+            val backfill = runCatching { MarketDataClient.news724(100) }.getOrDefault(emptyList())
+            if (backfill.isEmpty()) draft else {
+                val calcs = runCatching {
+                    com.skapp.app.data.NewsCalcEngine.compute(backfill, _state.value.symbols)
+                }.getOrDefault(emptyList())
+                if (calcs.isEmpty()) draft else {
+                    val merged = (_state.value.newsCalcs + calcs).distinctBy { it.newsTitle }
+                    com.skapp.app.data.PremarketPicks.build(
+                        base = _state.value.localPremarketPicks,
+                        stored = stored,
+                        live = merged,
+                        date = date,
+                        now = now,
+                        frozen = frozen,
+                        coverage = NewsArchive.coverage(stored),
+                    )
+                }
+            }
+        } else draft
+        _state.value = _state.value.copy(premarketDraft = draftWithGap)
+        persistPremarketDraft(draftWithGap)
+        if (frozen && frozenDate != date) {
+            sp.edit().putString("premarket_frozen", date).apply()
+        }
+    }
+
+    /** 早盘草稿落盘：杀进程再开也能看到「当时给的名单」，而不是重算出一份新的。 */
+    private fun persistPremarketDraft(draft: com.skapp.app.data.PremarketPicks.Draft) {
+        val ctx = _context ?: return
+        val json = org.json.JSONObject().apply {
+            put("status", draft.status.name)
+            put("date", draft.date)
+            put("updatedAt", draft.updatedAt)
+            put("dataGap", draft.dataGap)
+            draft.coveredFrom?.let { put("coveredFrom", it) }
+            draft.coveredUntil?.let { put("coveredUntil", it) }
+            draft.note?.let { put("note", it) }
+            put("picks", org.json.JSONArray().also { arr ->
+                draft.picks.forEach { p ->
+                    arr.put(org.json.JSONObject().apply {
+                        put("code", p.code)
+                        put("name", p.name)
+                        put("price", p.price)
+                        put("pctChg", p.pctChg)
+                        put("baseScore", p.baseScore)
+                        put("newsDelta", p.newsDelta)
+                        put("finalScore", p.finalScore)
+                        put("benefit", p.benefit)
+                        put("harm", p.harm)
+                        put("why", org.json.JSONArray(p.why))
+                        put("source", p.source)
+                    })
+                }
+            })
+        }
+        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putString("premarket_draft", json.toString()).apply()
     }
 
     /** 实时选股（设备直连行情 + 中枢引擎，不用云端快照）。同模式结果缓存，切 tab 不重扫。 */
