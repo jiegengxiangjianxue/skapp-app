@@ -93,6 +93,24 @@ data class EngineScore(
     val reasons: List<String> = emptyList(),
 )
 
+/**
+ * 12 个引擎按「测什么」分族。
+ *
+ * 不分族的后果是具体的：boll 与 keltner 都在答「价格站在通道哪一侧」；
+ * supertrend/vortex 的分值只有两个取值（恒 bull 或 恒 bear，`signal()` 阈值 65/35 永远踩不到中性）；
+ * trend 与 macd 又高度共线。逐引擎计票时「8 个看多」实际可能只代表 2~3 族的判断——
+ * 共振率与下游 confidence 都虚高，而 confidence 直接显示在决策卡上。
+ */
+enum class EngineFamily(val label: String) {
+    TREND("趋势"), MOMENTUM("动量"), CHANNEL("通道"),
+    VOLUME("量能"), STRUCTURE("波动结构"), POSITION("位置"),
+}
+
+/** 族的净表态：族内按「分数偏离中性的量」加权平均，-1..1；|net| > 0.1（约 5 分）才算表态 */
+data class FamilyScore(val family: EngineFamily, val net: Double, val members: Int) {
+    val dir: Int get() = if (net > 0.1) 1 else if (net < -0.1) -1 else 0
+}
+
 /** 多引擎中枢结果；旧 composite 字段保留为兼容别名。 */
 data class LocalEngineResult(
     val factors: TechnicalFactors?,
@@ -109,6 +127,11 @@ data class LocalEngineResult(
     val bearCount: Int = 0,
     val neutralCount: Int = 0,
     val status: String = "insufficient",
+    /** 族级表态：12 个引擎按「测什么」折叠成 6 族，族内抵消后再统计方向 */
+    val families: List<FamilyScore> = emptyList(),
+    val bullFamilies: Int = 0,
+    val bearFamilies: Int = 0,
+    val neutralFamilies: Int = 0,
 )
 
 /**
@@ -121,6 +144,24 @@ data class LocalEngineResult(
  *   choppiness 震荡 / mfi MFI / vortex 涡旋 / obv 能量潮
  */
 object LocalEngine {
+
+    private val familyOf: Map<String, EngineFamily> = mapOf(
+        "trend" to EngineFamily.TREND, "supertrend" to EngineFamily.TREND, "vortex" to EngineFamily.TREND,
+        "momentum" to EngineFamily.MOMENTUM, "macd" to EngineFamily.MOMENTUM, "mfi" to EngineFamily.MOMENTUM,
+        "boll" to EngineFamily.CHANNEL, "keltner" to EngineFamily.CHANNEL,
+        "volume" to EngineFamily.VOLUME, "obv" to EngineFamily.VOLUME,
+        "choppiness" to EngineFamily.STRUCTURE,
+        "position" to EngineFamily.POSITION,
+    )
+
+    internal fun familiesOf(engines: List<EngineScore>): List<FamilyScore> =
+        engines.filter { it.score != null }
+            .groupBy { familyOf[it.engine] }
+            .mapNotNull { (fam, list) ->
+                if (fam == null) return@mapNotNull null
+                val net = list.sumOf { ((it.score ?: 50.0) - 50.0) / 50.0 } / list.size
+                FamilyScore(fam, net.coerceIn(-1.0, 1.0), list.size)
+            }
 
     fun analyze(bars: List<KBar>, now: java.util.Date = java.util.Date()): LocalEngineResult {
         val f = TechnicalCalc.compute(bars, now)
@@ -154,20 +195,25 @@ object LocalEngine {
         val bullCount = valid.count { it.signal == "bullish" }
         val bearCount = valid.count { it.signal == "bearish" }
         val neutralCount = valid.count { it.signal == "neutral" }
-        // 共振 = **方向一致度**，不是「最大阵营占比」。
-        //
-        // 旧口径 maxOf(bull, bear, neutral)/valid 在「12 个引擎全中性」时给出 100%，
-        // 于是「毫无方向」被当成「高度共振」，还顺着 confidence 进了决策卡。
-        // 中性票本来就不构成方向，不能计入一致度。
-        val resonanceRatio = resonanceOf(bullCount, bearCount, valid.size)
+        // 共振改用**族级**口径：族内先抵消（同一件事不重复计票），族间再算方向一致度。
+        // 旧口径逐引擎计票，而 boll/keltner 只覆盖「通道位置」、supertrend/vortex 恒给方向票，
+        // 等于把 2~3 族的判断当成 8~10 份独立证据，共振与 confidence 系统性偏高。
+        // 与 FactorWeightStrategy.aggregate() 是同一思路（那边用分族去相关解决同类问题）。
+        val families = familiesOf(engines)
+        val bullFamilies = families.count { it.dir > 0 }
+        val bearFamilies = families.count { it.dir < 0 }
+        val neutralFamilies = families.size - bullFamilies - bearFamilies
+        val resonanceRatio = resonanceOf(bullFamilies, bearFamilies, families.size)
         val direction = when {
-            valid.isEmpty() -> "insufficient"
-            bullCount > bearCount && bullCount > neutralCount -> "偏多"
-            bearCount > bullCount && bearCount > neutralCount -> "偏空"
+            families.isEmpty() -> "insufficient"
+            bullFamilies > bearFamilies -> "偏多"
+            bearFamilies > bullFamilies -> "偏空"
             else -> "中性"
         }
         val summary = weightedComposite?.let { score ->
-            "中枢引擎：综合 ${"%.1f".format(score)}，共振 ${"%.0f%%".format((resonanceRatio ?: 0.0) * 100)}，有效 ${valid.size}/${engines.size}；$direction（偏多 $bullCount，偏空 $bearCount，中性 $neutralCount）"
+            "中枢引擎：综合 ${"%.1f".format(score)}，族级共振 ${"%.0f%%".format((resonanceRatio ?: 0.0) * 100)}" +
+                "（偏多 $bullFamilies / 偏空 $bearFamilies / 中性 $neutralFamilies 族，共 ${families.size} 族；" +
+                "引擎票 多 $bullCount / 空 $bearCount / 中 $neutralCount，有效 ${valid.size}/${engines.size}）；$direction"
         }
         return LocalEngineResult(
             factors = f,
@@ -183,6 +229,10 @@ object LocalEngine {
             bearCount = bearCount,
             neutralCount = neutralCount,
             status = if (weightedComposite == null) "insufficient" else "ok",
+            families = families,
+            bullFamilies = bullFamilies,
+            bearFamilies = bearFamilies,
+            neutralFamilies = neutralFamilies,
         )
     }
 
@@ -191,6 +241,7 @@ object LocalEngine {
      *
      * 抽出来是为了能钉住口径：中性票不构成方向，绝不能计入「一致度」；
      * 旧实现取 max(bull, bear, neutral)，于是「12 个引擎全中性」被算成 100% 共振。
+     * 现在喂进来的是**族级**计数（familiesOf），口径不变但不再是逐引擎计票。
      */
     internal fun resonanceOf(bull: Int, bear: Int, valid: Int): Double? =
         if (valid <= 0) null else maxOf(bull, bear).toDouble() / valid

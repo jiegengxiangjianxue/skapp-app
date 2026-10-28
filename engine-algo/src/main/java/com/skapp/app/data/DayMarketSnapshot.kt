@@ -36,6 +36,8 @@ data class DayMarketSnapshot(
      * 一个说的是「今天没有炸板」，另一个说的是「我们不知道」。
      */
     val hasTouchInfo: Boolean = true,
+    /** 是否带当日最高/最低/开盘（v3 起有）。缺了就只能拿收盘价近似，位置判断要降级说明。 */
+    val hasRangeInfo: Boolean = false,
 ) {
     data class Entry(
         val code: String,
@@ -51,6 +53,13 @@ data class DayMarketSnapshot(
          * 读旧文件时退化为 `touched == limitUp`，即历史封板率不可得而不是 100%）。
          */
         val touchedLimit: Boolean = limitUp,
+        /**
+         * 当日最高/最低/开盘（v3 起存）。退出纪律与「多周期位置」要用当根振幅：
+         * 只有收盘价算不出长下影，也算不出区间位置。缺了就是 null，不填等于收盘价。
+         */
+        val high: Double? = null,
+        val low: Double? = null,
+        val open: Double? = null,
     ) {
         /** 炸板：摸过涨停价但收盘没封住。 */
         val brokenBoard: Boolean get() = touchedLimit && !limitUp

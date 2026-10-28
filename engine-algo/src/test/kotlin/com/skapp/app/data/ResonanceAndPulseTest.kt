@@ -28,6 +28,44 @@ class ResonanceAndPulseTest {
     }
 
     @Test
+    fun `同族重复表态只算一票`() {
+        // boll 与 keltner 都在答「价格站在通道哪一侧」，两者同时偏多不等于两份独立证据。
+        // 旧口径逐引擎计票：4 个引擎里 2 个偏多 → 共振 50%；族级口径只有通道族一票 → 1/3。
+        val engines = listOf(
+            EngineScore("boll", 70.0, "bullish"),
+            EngineScore("keltner", 70.0, "bullish"),
+            EngineScore("trend", 50.0, "neutral"),
+            EngineScore("choppiness", 50.0, "neutral"),
+        )
+        val families = LocalEngine.familiesOf(engines)
+        assertEquals(3, families.size, "通道 / 趋势 / 波动结构 三族")
+        assertEquals(1, families.count { it.dir > 0 }, "通道族只算一票")
+        assertEquals(
+            1.0 / 3,
+            LocalEngine.resonanceOf(
+                bull = families.count { it.dir > 0 },
+                bear = families.count { it.dir < 0 },
+                valid = families.size,
+            )!!,
+            1e-9,
+        )
+    }
+
+    @Test
+    fun `族内多空分歧时该族不表态`() {
+        // trend 68（多头）与 vortex 32（空头）同属趋势族，净额 0 → 中性，而不是两边各算一票。
+        val families = LocalEngine.familiesOf(
+            listOf(
+                EngineScore("trend", 68.0, "bullish"),
+                EngineScore("vortex", 32.0, "bearish"),
+            )
+        )
+        assertEquals(1, families.size)
+        assertEquals(0, families.first().dir)
+        assertEquals(0.0, LocalEngine.resonanceOf(0, 0, families.size))
+    }
+
+    @Test
     fun `停牌票不进涨跌平统计`() {
         fun row(code: String, pct: Double, price: Double, vol: Double) = LiveMarket.Row(
             code = code, name = "股$code", price = price, pctChg = pct, volumeLots = vol,

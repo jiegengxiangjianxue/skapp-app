@@ -196,7 +196,7 @@ private fun EngineV5Row(t: EngineFeed.EngineV5Top) {
         Text(t.code, style = MaterialTheme.typography.labelMedium, modifier = Modifier.width(76.dp))
         Column(Modifier.weight(1f)) {
             Text(
-                text = "E=${String.format("%.1f", t.score)} 共振=${String.format("%.0f%%", t.resonance * 100)}",
+                text = "E=${String.format("%.1f", t.score)} 族共振=${String.format("%.0f%%", t.resonance * 100)}",
                 style = MaterialTheme.typography.bodySmall,
                 fontWeight = FontWeight.Medium,
             )
@@ -239,9 +239,18 @@ private fun CycleSection(c: EngineFeed.CycleMeta?) {
                         (r.heatShare?.let { String.format("额占%.1f%%", it * 100) } ?: "") + " " + r.phase +
                             // 5 日动量要本地存档攒够 5 个交易日才有；没有就不显示，不写 0
                             (r.ret5d?.let { String.format(" · 5日%+.1f%%", it) } ?: "") +
-                            (if (r.upStreak >= 2) " · 连${r.upStreak}天" else ""),
+                            (if (r.upStreak >= 2) " · 连${r.upStreak}天" else "") +
+                            // 止跌结构：收盘位置 + 长下影家数。跌 1% 但收在区间上沿 ≠ 收在最低
+                            (r.stopping?.let { " · $it" } ?: "") +
+                            (r.closePos?.let { String.format("（收位%.0f%%", it * 100) }?.let { t ->
+                                t + (if (r.longShadowN > 0) " 长下影${r.longShadowN}只）" else "）")
+                            } ?: ""),
                         style = MaterialTheme.typography.labelSmall,
-                        color = Color(0xFF6B7280),
+                        color = when (r.stopping) {
+                            "止跌雏形" -> Color(0xFF58A6FF)
+                            "单边下杀" -> Color(0xFFF85149)
+                            else -> Color(0xFF6B7280)
+                        },
                     )
                 }
             }

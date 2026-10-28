@@ -201,6 +201,9 @@ object LiveExtras {
                 phase = phaseOf(s.chg1d, upRatio),
                 ret5d = m?.ret5d?.let { Math.round(it * 100) / 100.0 },
                 upStreak = m?.upStreak ?: 0,
+                closePos = s.closePos?.let { Math.round(it * 100) / 100.0 },
+                longShadowN = s.longShadowN,
+                stopping = s.stopping,
             )
         }
         val histDays = history.size

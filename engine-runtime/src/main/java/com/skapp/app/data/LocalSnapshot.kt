@@ -48,10 +48,15 @@ object LocalSnapshot {
                     code = code,
                     name = m["name"]?.toString(),
                     score = (m["score"] as? Number)?.toDouble(),
-                    snapshotStatus = "live",
+                    // 快照新鲜度透传：这里硬编码 live 会把陈旧行情标成实时（LiveMarket 拉不到时回退旧缓存）
+                    snapshotStatus = m["snapshotStatus"]?.toString() ?: "live",
                     engine = artifact.engine ?: "中枢引擎",
                     calculationTime = artifact.calculationTime,
-                    reason = "未达达标线（评分 < ${LocalPicks.MIN_SCORE.toInt()}）",
+                    reason = if (artifact.status == "defensive") {
+                        "弱市无达标标的：仅作观察，建议轻仓或空仓"
+                    } else {
+                        "未达达标线（评分 < ${LocalPicks.MIN_SCORE.toInt()}）"
+                    },
                     why = listOf("仅作观察，不构成推荐"),
                 )
             }
@@ -68,6 +73,13 @@ object LocalSnapshot {
                 "reason" to artifact.reason,
                 "generatedAt" to artifact.generatedAt,
                 "metadata" to artifact.metadata,
+                // defensive 与 insufficient 必须分开说：前者是「算完了，今天不该追」，
+                // 后者是「还算不出来」。界面把两者混成一类就会报假状态。
+                "note" to when (artifact.status) {
+                    "defensive" -> "本地深算已完成：无达标标的，下列为观察名单，建议轻仓或空仓"
+                    "insufficient" -> "本地深算未得到可用结果：${artifact.reason}"
+                    else -> "本地深算达标 ${artifact.picks.size} 只"
+                },
             ),
         )
     }
@@ -106,6 +118,31 @@ object LocalSnapshot {
                 "source" to "local",
             ),
             hotNews = hotNews,
+        )
+    }
+
+    /**
+     * 仓位建议的统一入口。
+     *
+     * 决策页只有脉搏（宽度/相位/涨跌停），拿不到连板高度与晋级率，所以趋势项取中性；
+     * 引擎池那边有情绪序列，会走 [PositionCap] 的完整三因子。**同一天两处上限可能差一档**，
+     * 差别的原因是「这里缺情绪序列」，理由里会写明，不假装两边一致。
+     */
+    fun positionAdviceOf(pulse: LivePulse): Map<String, Any?> {
+        val cap = PositionCap.compute(
+            breadth = pulse.breadth,
+            phaseScore = pulse.phaseScore,
+            limitUp = pulse.limitUp,
+            limitDown = pulse.limitDown,
+        )
+        return mapOf(
+            "source" to "local",
+            "level" to cap.cap,
+            "cap" to cap.cap,
+            "label" to cap.label,
+            "reason" to cap.reasons.joinToString("；"),
+            "gates" to cap.gates,
+            "note" to "决策页缺连板高度/晋级率，趋势项取中性；引擎池页为完整三因子",
         )
     }
 
@@ -173,12 +210,7 @@ object LocalSnapshot {
             regimeDetail = "本地实时相位 ${pulse.label}（${"%.0f".format(pulse.phaseScore)}）：" +
                 "${pulse.up} 涨 / ${pulse.down} 跌，涨停 ${pulse.limitUp} / 跌停 ${pulse.limitDown}，" +
                 "中位涨幅 ${pulse.medianPct?.let { "%.2f%%".format(it) } ?: "不可得"}",
-            positionAdvice = mapOf(
-                "level" to ((pulse.phaseScore + 100) / 2 / 100).coerceIn(0.0, 1.0),
-                "cap" to (0.8 * ((pulse.phaseScore + 100) / 2 / 100)).coerceIn(0.0, 0.8),
-                "label" to pulse.label,
-                "reason" to "由实时涨跌家数与涨跌停结构推导，未使用云端仓位建议",
-            ),
+            positionAdvice = positionAdviceOf(pulse),
             cards = cards,
             avoid = screened.filter { it.buyable != true }.map { it.code }.distinct().take(10),
             sources = mapOf(

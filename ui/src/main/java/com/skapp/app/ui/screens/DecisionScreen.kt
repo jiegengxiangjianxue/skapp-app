@@ -112,6 +112,16 @@ fun DecisionScreen(vm: SkappViewModel, state: UiState) {
                         if (reason != null) {
                             Text(reason, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
                         }
+                        // 硬闸门单独一行标红：这是「今天别做」的判定，不能混在灰字理由里被读漏
+                        val gates = (pa["gates"] as? List<*>)?.mapNotNull { it?.toString() }.orEmpty()
+                        gates.forEach { g ->
+                            Text(
+                                "闸门命中：$g",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color(0xFFD29922),
+                                fontWeight = FontWeight.Medium,
+                            )
+                        }
                         // 仓位链路（只减不增，每一步都必须说明来源）：
                         //   基准上限(云端) → ETF 份额调档(聪明钱) → 样本外/市况校准闸门
                         val (smCap, adjReason) = state.smartMoney?.capAdjust(baseCap) ?: (null to "")

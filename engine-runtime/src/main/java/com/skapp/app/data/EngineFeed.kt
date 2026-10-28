@@ -105,6 +105,12 @@ object EngineFeed {
         val ret5d: Double? = null,
         /** 连续上涨天数（含今日）：攒够 2 天才给 */
         val upStreak: Int = 0,
+        /** 成员当根收盘在区间的平均位置（0~1）：判断「止跌结构」而不是只看涨跌幅。 */
+        val closePos: Double? = null,
+        /** 长下影且收阴的成员家数。 */
+        val longShadowN: Int = 0,
+        /** 止跌雏形 / 修复中 / 中性 / 单边下杀；缺 high-low 时为 null。 */
+        val stopping: String? = null,
     )
 
     data class GlobalMarketsMeta(

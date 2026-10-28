@@ -138,7 +138,10 @@ object ExtendedIndicators {
     fun cmo(bars: List<KBar>, n: Int = 14): Double? {
         if (bars.size <= n) return null
         var up = 0.0; var dn = 0.0
-        for (i in 1..n) {
+        // 取**最近** n 根。旧写法 `for (i in 1..n)` 遍历的是列表开头那 n 根，
+        // 而调用方传的是整段 K 线（详情页 250 根、选股 120 根）——
+        // 于是 CMO 算的是四五个月前的动量，却当作当日读数参与投票。
+        for (i in bars.size - n until bars.size) {
             val d = bars[i].close - bars[i - 1].close
             if (d > 0) up += d else dn += -d
         }
@@ -147,7 +150,8 @@ object ExtendedIndicators {
 
     /** Choppiness Index 震荡指数（低=趋势，高=震荡） */
     fun choppiness(bars: List<KBar>, n: Int = 14): Double? {
-        val a = atr(bars, n) ?: return null
+        // 只用到 TR 与高低点，ATR 本身不参与——旧写法先算一遍 ATR 判空，
+        // 等于每次调用白发一次全序列 wilder 平滑（LocalEngine 与因子库都走这里）。
         if (bars.size < n) return null
         val trSum = trueRange(bars).takeLast(n).sum()
         val (hh, ll) = donchian(bars, n)
@@ -208,14 +212,43 @@ object ExtendedIndicators {
     }
 
     /** Hull MA */
+    /**
+     * Hull MA：WMA(2·WMA(n/2) − WMA(n), √n)。
+     *
+     * ⚠️ 旧实现返回的是「最近 √n 个收盘价的简单均线」，与 Hull MA 无关：它几乎贴在价格上
+     * （偏离恒 < 1%），于是因子库里的 HullMA 几乎永不表态 ——「趋势族」白占一个成员，
+     * 而族内去相关的分母还把它算进去。这里按标准式重写：逐日滚动出 raw 序列
+     * 2·WMA(n/2) − WMA(n)，再对 raw 的末 √n 项做加权平滑。
+     */
     fun hullMa(values: List<Double>, n: Int = 16): Double? {
         if (values.size < n) return null
-        val half = sma(values, n / 2).lastOrNull() ?: return null
-        val full = sma(values, n).lastOrNull() ?: return null
-        val raw = 2 * half - full
-        val sqrtN = sqrt(n.toDouble()).toInt()
-        val rawSeries = sma(values.takeLast(n), sqrtN).lastOrNull()
-        return rawSeries ?: raw
+        val sqrtN = sqrt(n.toDouble()).toInt().coerceAtLeast(1)
+        fun wmaEndingAt(end: Int, len: Int): Double? {
+            if (len <= 0 || end - len + 1 < 0) return null
+            var num = 0.0
+            var den = 0.0
+            for (j in 0 until len) {
+                val w = (j + 1).toDouble()
+                num += values[end - len + 1 + j] * w
+                den += w
+            }
+            return if (den > 0) num / den else null
+        }
+        val raw = ArrayList<Double>(values.size)
+        for (end in (n - 1) until values.size) {
+            val half = wmaEndingAt(end, n / 2) ?: return null
+            val full = wmaEndingAt(end, n) ?: return null
+            raw += 2 * half - full
+        }
+        if (raw.size < sqrtN) return null
+        var num = 0.0
+        var den = 0.0
+        for (j in 0 until sqrtN) {
+            val w = (j + 1).toDouble()
+            num += raw[raw.size - sqrtN + j] * w
+            den += w
+        }
+        return if (den > 0) num / den else null
     }
 
     /** VWMA 成交量加权均线 */
@@ -316,7 +349,10 @@ object ExtendedIndicators {
     fun mfi(bars: List<KBar>, n: Int = 14): Double? {
         if (bars.size <= n) return null
         var pos = 0.0; var neg = 0.0
-        for (i in 1..n) {
+        // 同样只能取**最近** n 根：旧写法 `for (i in 1..n)` 取的是列表最老的 n 根，
+        // 而调用方（LocalEngine.mfiEngine）传的是全量 K 线 ——
+        // 资金流引擎一直在用几个月前的量价关系判「资金流入/流出」。
+        for (i in bars.size - n until bars.size) {
             val tp = (bars[i].high + bars[i].low + bars[i].close) / 3
             val pp = (bars[i - 1].high + bars[i - 1].low + bars[i - 1].close) / 3
             val rmf = tp * bars[i].vol
@@ -382,20 +418,22 @@ object ExtendedIndicators {
         return win.map { if (it.open > 0) (it.high - it.low) / it.open else 0.0 }.average()
     }
 
+    /** 年化波动率，小数口径（0.35 = 35%）。旧实现年化后又 /100，把 35% 显示成 0.35%。 */
     fun vol20d(bars: List<KBar>, n: Int = 20): Double? {
         if (bars.size <= n) return null
         val closes = bars.map { it.close }
         val rets = (1 until closes.size).map { (closes[it] - closes[it - 1]) / closes[it - 1] }.takeLast(n)
-        return rets.map { it * it }.average().let { sqrt(it) } * sqrt(252.0) / 100
+        return rets.map { it * it }.average().let { sqrt(it) } * sqrt(252.0)
     }
 
+    /** 下行波动率，与 [vol20d] 同为小数年化口径（旧实现同样多除了一次 100）。 */
     fun downsideVol(bars: List<KBar>, n: Int = 20): Double? {
         if (bars.size <= n) return null
         val closes = bars.map { it.close }
         val rets = (1 until closes.size).map { (closes[it] - closes[it - 1]) / closes[it - 1] }
             .filter { it < 0 }.takeLast(n)
         if (rets.isEmpty()) return 0.0
-        return sqrt(rets.map { it * it }.average()) * sqrt(252.0) / 100
+        return sqrt(rets.map { it * it }.average()) * sqrt(252.0)
     }
 
     fun closePosition(bar: KBar): Double? {

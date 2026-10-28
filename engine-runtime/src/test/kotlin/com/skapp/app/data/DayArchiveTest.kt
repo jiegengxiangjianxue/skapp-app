@@ -57,6 +57,27 @@ class DayArchiveTest {
     }
 
     @Test
+    fun `v3 存档要带上最高最低开盘`() {
+        // 退出纪律（长下影/区间位置）全靠当根 high-low；写过一次读出来就没有，
+        // 等于历史全是「只有收盘价」，那价格位置判断只能降级说明。
+        MarketDayArchive.init(tempDir())
+        MarketDayArchive.clearAll()
+        val rows = manyRows(150).toMutableList()
+        rows[0] = row("600000", 1.0, price = 10.5)
+            .copy(high = 10.9, low = 9.8, open = 10.0)
+        runCapture(rows, final = true, now = now)
+        val snap = MarketDayArchive.load(MarketDayArchive.dayKeys().first())!!
+        assertTrue(snap.hasRangeInfo, "v3 写出的存档必须标记带区间信息")
+        val e = snap.entries.first { it.code == "600000" }
+        assertEquals(10.9, e.high)
+        assertEquals(9.8, e.low)
+        assertEquals(10.0, e.open)
+        // 其它票没给 high/low：可以是 null，但绝不能填成收盘价假装有
+        val other = snap.entries.first { it.code != "600000" }
+        assertNull(other.open)
+    }
+
+    @Test
     fun `快照太少说明是接口故障，不写脏数据`() {
         MarketDayArchive.init(tempDir())
         MarketDayArchive.clearAll()

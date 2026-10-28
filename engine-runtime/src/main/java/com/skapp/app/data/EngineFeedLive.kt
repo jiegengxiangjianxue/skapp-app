@@ -39,6 +39,9 @@ object EngineFeedLive {
     /** 情绪序列展示天数（连板高度/晋级率/封板率的逐日走势）。 */
     private const val EMOTION_DAYS = 10
 
+    /** 快照新鲜度阈值：与 [LocalScreener] 的 snapshotStatus 同一口径（5 分钟）。 */
+    private const val STALE_MS = 5 * 60_000L
+
     /** 引擎池缓存：盘中 45s（一次装配要拉几十只日K，不能每次进页面都重算）。 */
     private const val CACHE_TTL_MS = 45_000L
     private var cachedAt = 0L
@@ -111,6 +114,13 @@ object EngineFeedLive {
         val date = CstTime.day(ts)
         val iso = CstTime.iso(ts)
 
+        // 快照新鲜度：LiveMarket 拉不到时会退回上一份缓存（Row.ts 保留真实抓取时间）。
+        // 这种数据不能当「此刻」用——引擎池、决策卡、confidence 都建在它上面，
+        // 所以要在产出里可被看见，而不是统一写 source=live 了事。
+        val snapTs = snapshot.maxOfOrNull { it.ts } ?: 0L
+        val snapAgeMs = if (snapTs > 0) ts - snapTs else 0L
+        val stale = snapshot.isNotEmpty() && snapTs > 0 && snapAgeMs > STALE_MS
+
         val scored = screened.filter { (it.centralScore ?: 0.0) > 0.0 }
             .sortedByDescending { it.centralScore ?: 0.0 }
             .take(limit)
@@ -131,7 +141,10 @@ object EngineFeedLive {
                     EngineFeed.Vote(
                         indicator = e.engine,
                         vote = voteOf(e.signal),
-                        strength = ((e.score ?: 50.0) / 100.0).coerceIn(0.0, 1.0),
+                        // 强度 = 偏离中性的幅度（0..1），方向由 vote 承载。
+                        // 旧写法直接拿 score/100：中性 50 分被当成 0.5 强度、看空 32 分当成 0.32，
+                        // 界面上看着像「看空强度 0.32」，实际是把分数当强度用了。
+                        strength = (kotlin.math.abs((e.score ?: 50.0) - 50.0) / 50.0).coerceIn(0.0, 1.0),
                         why = e.reasons.firstOrNull() ?: e.signal.orEmpty(),
                     )
                 },
@@ -171,6 +184,31 @@ object EngineFeedLive {
         val board = if (days.isEmpty()) null else LimitBoardCalc.compute(days)
         val emotion = if (days.isEmpty()) emptyList() else LimitBoardCalc.series(days, last = EMOTION_DAYS)
 
+        // ── 仓位上限（PositionCap）：在 labels 和 decision 里都要用，所以先算 ──
+        // 不再用「相位分一条直线」：退潮看的是「高度掉档 + 晋级率崩」，基准取前 3 日的最高高度。
+        // 板块聚合在这里先算一次：仓位上限要它的 5 日动量，后面的 cycle_pool 块直接复用
+        val cyclePool = LiveExtras.cycle(sectors, ts, history = history)
+        val rpsRotation = if (snapshot.isEmpty()) null else LiveExtras.rps(snapshot, ts, history = history)
+        val aiPick = if (snapshot.isEmpty()) null else LiveExtras.aiPick(snapshot, screened, ts)
+        val heightToday = board?.height?.takeIf { it > 0 }
+        val heightPrev = emotion.dropLast(1).takeLast(3)
+            .mapNotNull { s -> s.height.takeIf { it > 0 } }
+            .maxOrNull()
+        val sectorRet5d = cyclePool?.rows.orEmpty().mapNotNull { it.ret5d }.sorted().let { v ->
+            if (v.isEmpty()) null else if (v.size % 2 == 1) v[v.size / 2]
+            else (v[v.size / 2 - 1] + v[v.size / 2]) / 2.0
+        }
+        val capAdvice = PositionCap.compute(
+            breadth = pulse.breadth,
+            phaseScore = pulse.phaseScore,
+            limitUp = pulse.limitUp,
+            limitDown = pulse.limitDown,
+            heightToday = heightToday,
+            heightPrev = heightPrev,
+            promo = board?.promo,
+            sectorRet5d = sectorRet5d,
+        )
+
         val phase = EngineFeed.MarketPhase(
             ts = iso,
             daily = if (emotion.isEmpty()) {
@@ -209,6 +247,13 @@ object EngineFeedLive {
                 "中位涨幅" to (pulse.medianPct?.let { String.format(Locale.CHINA, "%.2f%%", it) } ?: "不可得"),
                 "宽度" to (pulse.breadth?.let { String.format(Locale.CHINA, "%.0f%%", it * 100) } ?: "不可得"),
                 "相位" to "${pulse.label}（${String.format(Locale.CHINA, "%.0f", pulse.phaseScore)}）",
+                // 仓位上限单列一条：用户看 labels 时最先要知道「今天能上多少仓」
+                "仓位上限" to String.format(
+                    Locale.CHINA, "%.0f%%（%s）%s",
+                    capAdvice.cap * 100,
+                    capAdvice.label,
+                    if (capAdvice.gates.isEmpty()) "" else "·闸门 " + capAdvice.gates.joinToString("/"),
+                ),
                 "封板率" to (seal?.let { s ->
                     String.format(Locale.CHINA, "%.0f%%（涨停 %d / 炸板 %d）", (s.ratio ?: 0.0) * 100, s.limitUp, s.broken)
                 } ?: "不可得（缺最高价/昨收）"),
@@ -228,6 +273,13 @@ object EngineFeedLive {
                     "${emotion.size} 个交易日的涨停/连板/晋级/封板率走势（本地存档累积）"
                 } else "仅当日（本地存档 ${history.size} 天，攒够 2 天出走势）",
                 "存档" to "本地日级快照 ${history.size} 天（${history.firstOrNull()?.date ?: "-"} ~ $date）",
+                // 数据时点单独一条：用户需要知道这一屏结论是按「此刻」还是按「几分钟前」算的
+                "数据时点" to when {
+                    snapshot.isEmpty() -> "无全市场快照（相关块不可得）"
+                    snapTs <= 0 -> "快照缺时间戳"
+                    stale -> "陈旧 ${snapAgeMs / 60_000} 分钟（接口不可达，已回退上一份缓存）"
+                    else -> "此刻（快照滞后 ${snapAgeMs / 1000} 秒）"
+                },
             ),
         )
 
@@ -246,11 +298,10 @@ object EngineFeedLive {
             ts = iso,
             marketRegime = regimeOf(pulse.label),
             positionAdvice = EngineFeed.PositionAdvice(
-                level = ((pulse.phaseScore + 100) / 2 / 100).coerceIn(0.0, 1.0),
-                label = pulse.label,
-                cap = (0.8 * ((pulse.phaseScore + 100) / 2 / 100)).coerceIn(0.0, 0.8),
-                reason = "实时相位 ${pulse.label}：${pulse.up} 涨 / ${pulse.down} 跌，" +
-                    "涨停 ${pulse.limitUp} / 跌停 ${pulse.limitDown}",
+                level = capAdvice.cap,
+                label = capAdvice.label,
+                cap = capAdvice.cap,
+                reason = capAdvice.reasons.joinToString("；"),
             ),
             cards = scored.take(10).map { s ->
                 EngineFeed.DecisionCard(
@@ -272,10 +323,6 @@ object EngineFeedLive {
                 .take(10),
         )
 
-        val cyclePool = LiveExtras.cycle(sectors, ts, history = history)
-        val rpsRotation = if (snapshot.isEmpty()) null else LiveExtras.rps(snapshot, ts, history = history)
-        val aiPick = if (snapshot.isEmpty()) null else LiveExtras.aiPick(snapshot, screened, ts)
-
         return EngineFeed.EngineFeeds(
             ts = ts,
             engineV5 = EngineFeed.EngineV5Payload(ts = iso, top = top, staleTop = emptyList()),
@@ -286,8 +333,10 @@ object EngineFeedLive {
             globalMarkets = global,
             aiPick = aiPick,
             decision = decision,
-            missing = missingOf(cyclePool, rpsRotation, strategy, aiPick, seal, board),
-            source = "live",
+            missing = missingOf(cyclePool, rpsRotation, strategy, aiPick, seal, board).let { m ->
+                if (stale) m + "snapshot (全市场快照陈旧 ${snapAgeMs / 60_000} 分钟：接口不可达时回退上一份缓存，本屏结论按陈旧数据算)" else m
+            },
+            source = if (stale) "live-stale" else "live",
         )
     }
 

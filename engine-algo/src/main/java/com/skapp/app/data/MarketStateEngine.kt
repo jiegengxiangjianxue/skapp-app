@@ -271,10 +271,12 @@ object MarketStateEngine {
                 v < -5 -> -1
                 else -> 0
             }
-        }.filter { it != 0 }
-        val agree = if (signs.isNotEmpty()) {
-            maxOf(signs.count { it == 1 }, signs.count { it == -1 }).toDouble() / signs.size
-        } else 0.0
+        }
+        // 中性部件**必须计入分母**：旧写法先把 0 剔掉再算比例，
+        // 于是「1 个看多 + 1 个走平」也能拿到 100% 一致，直接进「进攻」。
+        // 这和 LocalEngine.resonanceOf（分母含中性引擎）也是同一口径。
+        val agree = if (signs.isEmpty()) 0.0
+        else maxOf(signs.count { it == 1 }, signs.count { it == -1 }).toDouble() / signs.size
 
         val state = stateOf(E, agree)
         MarketState(

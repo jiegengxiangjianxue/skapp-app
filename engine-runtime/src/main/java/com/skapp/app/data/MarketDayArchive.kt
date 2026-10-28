@@ -32,9 +32,15 @@ object MarketDayArchive {
     private const val DIR_NAME = "market_days"
     private const val MAX_DAYS = 420
     private const val INTRADAY_MIN_INTERVAL_MS = 60_000L
-    /** v2 起每行多一位「是否摸过涨停」（封板率历史的原料）；v1 文件仍能读（退化处理）。 */
-    private const val HEADER = "#v2"
-    private val KNOWN_HEADERS = setOf("#v1", "#v2")
+    /**
+     * 存档版本（逐版只**追加**列，不重排、不删除，旧文件永远能读）：
+     *
+     * - v1：`R code pct amount limitUp close`（缺「摸过涨停」，封板率不可得）
+     * - v2：+ `touched`（摸过涨停 → 封板率历史的原料）
+     * - v3：+ `high low open`（当根振幅 → 长下影/区间位置/多周期位置的前提）
+     */
+    private const val HEADER = "#v3"
+    private val KNOWN_HEADERS = setOf("#v1", "#v2", "#v3")
 
     @Volatile private var root: File? = null
     @Volatile private var lastWriteAt = 0L
@@ -114,6 +120,9 @@ object MarketDayArchive {
                     limitUp = it.atLimitUp,
                     close = it.price,
                     touchedLimit = it.atLimitUp || it.brokenBoard,
+                    high = it.high,
+                    low = it.low,
+                    open = it.open,   // f17 今开：长下影/区间位置要用当根振幅
                 )
             },
             sectors = run {
@@ -124,6 +133,8 @@ object MarketDayArchive {
                 // 不能因为「这一次没传」就把当天的板块历史抹掉
                 if (fresh.isNotEmpty()) fresh else load(date)?.sectors.orEmpty()
             },
+            hasTouchInfo = true,
+            hasRangeInfo = true,   // 本次写的就是 v3：最高/最低/开盘都在
         )
 
         val ok = runCatching { writeToFile(File(dir, "$date.dat.gz"), snapshot) }.isSuccess
@@ -146,7 +157,8 @@ object MarketDayArchive {
             for (e in snap.entries) {
                 w.write(
                     "R\t${e.code}\t${fmt(e.pctChg)}\t${fmt(e.amount)}\t${if (e.limitUp) 1 else 0}\t" +
-                        "${fmt(e.close)}\t${if (e.touchedLimit) 1 else 0}\n",
+                        "${fmt(e.close)}\t${if (e.touchedLimit) 1 else 0}\t" +
+                        "${fmt(e.high)}\t${fmt(e.low)}\t${fmt(e.open)}\n",
                 )
             }
             for (s in snap.sectors) {
@@ -176,6 +188,7 @@ object MarketDayArchive {
         var ts = 0L
         var final = false
         var hasTouchInfo = true
+        var hasRangeInfo = false
         val entries = ArrayList<DayMarketSnapshot.Entry>()
         val sectors = ArrayList<DayMarketSnapshot.SectorDay>()
         GZIPInputStream(file.inputStream().buffered()).use { input ->
@@ -184,7 +197,8 @@ object MarketDayArchive {
                 val p = line.split('\t')
                 when (p[0]) {
                     in KNOWN_HEADERS -> {
-                        hasTouchInfo = p[0] == "#v2"
+                        hasTouchInfo = p[0] != "#v1"
+                        hasRangeInfo = p[0] == "#v3"
                         date = p.getOrNull(1).orEmpty()
                         ts = p.getOrNull(2)?.toLongOrNull() ?: 0L
                         final = p.getOrNull(3) == "1"
@@ -200,6 +214,9 @@ object MarketDayArchive {
                             // v1 存档没有这一位：退化为「涨停即摸过」，于是那几天的封板率
                             // 只能是 100%（等于不可得），绝不能反过来假设「没摸过」
                             touchedLimit = if (p.size >= 7) p[6] == "1" else limitUp,
+                            high = p.getOrNull(7)?.let(::num)?.takeIf { it > 0 },
+                            low = p.getOrNull(8)?.let(::num)?.takeIf { it > 0 },
+                            open = p.getOrNull(9)?.let(::num)?.takeIf { it > 0 },
                         )
                     }
                     "S" -> if (p.size >= 6) {
@@ -215,7 +232,7 @@ object MarketDayArchive {
             }
         }
         if (date.isEmpty()) return null
-        return DayMarketSnapshot(date, ts, final, entries, sectors, hasTouchInfo)
+        return DayMarketSnapshot(date, ts, final, entries, sectors, hasTouchInfo, hasRangeInfo)
     }
 
     /** 已存档的交易日，升序。 */

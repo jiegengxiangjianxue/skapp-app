@@ -382,7 +382,7 @@ fun StockDetailSheet(vm: SkappViewModel, state: UiState) {
                 }
                 Text("中枢总结：${state.centralEngineSummary?.takeIf { it.isNotBlank() } ?: "暂无数据：中枢总结未返回。"}",
                     style = MaterialTheme.typography.bodySmall)
-                Text("共振：${state.centralEngineResonance?.let { String.format("%.0f%%", it * 100) } ?: "insufficient"} · 状态：${state.centralEngineStatus}",
+                Text("族级共振：${state.centralEngineResonance?.let { String.format("%.0f%%", it * 100) } ?: "insufficient"}（趋势/动量/通道/量能/波动/位置 6 族，同族不重复计票）· 状态：${state.centralEngineStatus}",
                     style = MaterialTheme.typography.bodySmall, color = Color.Gray)
                 Text(
                     "基于 ${eng?.barsUsed ?: 0} 根日 K，有效引擎 ${eng?.nValid ?: 0}/12",
@@ -513,6 +513,63 @@ fun StockDetailSheet(vm: SkappViewModel, state: UiState) {
                             color = if (com.skapp.app.data.RecoupCalc.gatePass(rc)) Color(0xFF3FB950) else Color(0xFFD29922),
                         )
                     }
+                }
+            }
+        }
+
+        // ── 退出纪律（端侧 ExitPlan）──
+        // 全市场都在教人买，几乎没人管卖。这块只放机械规则：破位清仓、回吐过半减仓、长下影观察。
+        val ep = state.exitPlan
+        if (ep != null) {
+            SectionCard("退出纪律（本地机械规则，不是预测）") {
+                Column {
+                    val tone = when (ep.action) {
+                        com.skapp.app.data.ExitPlan.ACT_CLEAR -> Color(0xFFF85149)
+                        com.skapp.app.data.ExitPlan.ACT_TRIM -> Color(0xFFD29922)
+                        com.skapp.app.data.ExitPlan.ACT_WATCH -> Color(0xFF58A6FF)
+                        else -> Color(0xFF3FB950)
+                    }
+                    Text(
+                        "今日处置：${ep.action}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = tone,
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    val cells = listOfNotNull(
+                        ep.stopLine?.let { "清仓线" to String.format("%.2f", it) },
+                        ep.stopDistPct?.let { "距清仓线" to String.format("%+.1f%%", it) },
+                        ep.trailLine?.let { "止盈线" to String.format("%.2f", it) },
+                        ep.peakDrawdownPct?.let { "距高点回撤" to String.format("%.1f%%", it) },
+                        ep.rangePos?.let { "区间位置" to String.format("%.0f%%", it * 100) },
+                        ep.lowerShadow?.let { "下影占比" to String.format("%.0f%%", it * 100) },
+                    )
+                    cells.chunked(3).forEach { rowCells ->
+                        Row(
+                            Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            rowCells.forEach { (label, value) ->
+                                Column(Modifier.weight(1f)) {
+                                    Text(label, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                                    Text(
+                                        value,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        fontWeight = FontWeight.Medium,
+                                    )
+                                }
+                            }
+                            repeat(3 - rowCells.size) { Spacer(Modifier.weight(1f)) }
+                        }
+                    }
+                    ep.reasons.forEach { r ->
+                        Text("· $r", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                    }
+                    Text(
+                        "节奏提示：${ep.timeHint ?: "历史不足，时间窗未算"}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color.Gray,
+                    )
                 }
             }
         }

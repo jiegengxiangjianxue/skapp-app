@@ -39,6 +39,19 @@ object LocalSectors {
         val limitDown: Int = 0,
         val leader: String?,
         val leaderPct: Double?,
+        /**
+         * 板块「止跌/破位」结构（0~1，成员当根收盘在最低—最高区间的平均位置）。
+         *
+         * 意义：文章里「看科技里面的 pcb 压根没有要止跌的意思」是**看结构**而不是看涨跌幅——
+         * 板块跌 1% 但成员普遍收在区间上沿（长下影），跟前一天跌 1% 全是实体阴线收在最低，
+         * 是两件完全不同的事。这里把这件事量化：收盘位置高 + 长下影多 = 止跌雏形；
+         * 收盘位置低 = 还在单边下杀。缺 low/open 时返回 null（不猜）。
+         */
+        val closePos: Double? = null,
+        /** 长下影（下影占振幅 ≥50% 且当日收阴）的成员家数。 */
+        val longShadowN: Int = 0,
+        /** 结构判定：止跌雏形 / 单边下杀 / 中性；数据不足为 null。 */
+        val stopping: String? = null,
     )
 
     data class Result(
@@ -234,6 +247,9 @@ object LocalSectors {
         var limitDown = 0
         var leader: String? = null
         var leaderPct: Double? = null
+        var posSum = 0.0
+        var posN = 0
+        var longShadowN = 0
 
         fun add(r: LiveMarket.Row) {
             // 停牌（无价无量）不进板块统计：它会把板块家数虚增、把均值往 0 稀释，
@@ -250,6 +266,21 @@ object LocalSectors {
                     leaderPct = it
                     leader = r.name ?: r.code
                 }
+                // 收盘位置 / 长下影：需要当根 high/low（f15/f16），拿不到就不进这个统计
+                val hi = r.high
+                val lo = r.low
+                val px = r.price
+                if (hi != null && lo != null && px != null && hi > lo) {
+                    val amp = hi - lo
+                    val closePos = ((px - lo) / amp).coerceIn(0.0, 1.0)
+                    posSum += closePos
+                    posN++
+                    val open = r.open ?: r.prevClose
+                    if (open != null && it < 0) {
+                        val shadow = ((minOf(open, px) - lo) / amp).coerceIn(0.0, 1.0)
+                        if (shadow >= 0.5) longShadowN++
+                    }
+                }
             }
             heat += r.amount ?: 0.0
         }
@@ -265,6 +296,27 @@ object LocalSectors {
             limitDown = limitDown,
             leader = leader,
             leaderPct = leaderPct,
+            closePos = avgClosePos(),
+            longShadowN = longShadowN,
+            stopping = stoppingOf(),
         )
+
+        private fun avgClosePos(): Double? = if (posN == 0) null else posSum / posN
+
+        /**
+         * 结构判定（只用当根横截面，不做预测）：
+         * 收盘普遍贴在区间上沿 + 长下影家数够多 → 止跌雏形；收盘普遍贴下沿 → 还在单边下杀。
+         */
+        private fun stoppingOf(): String? {
+            val cp = avgClosePos() ?: return null
+            if (n == 0) return null
+            val shadowShare = longShadowN.toDouble() / n
+            return when {
+                cp >= 0.6 && shadowShare >= 0.15 -> "止跌雏形"
+                cp <= 0.35 -> "单边下杀"
+                cp >= 0.55 -> "修复中"
+                else -> "中性"
+            }
+        }
     }
 }

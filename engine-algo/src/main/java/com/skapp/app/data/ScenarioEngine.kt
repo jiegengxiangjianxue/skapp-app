@@ -31,6 +31,15 @@ enum class MarketScene(val label: String) {
             val limitUp = (m["limit_up"] as? Number)?.toInt() ?: 0
             val limitDown = (m["limit_down"] as? Number)?.toInt() ?: 0
 
+            // 输入全缺时不能落进下方任何一个分支：advance=decline=0 会让 upPct 算出 0，
+            // 而 upPct <= 25 正是「极端」的第一条——接口抖动一下，市场就被判成暴跌。
+            // 缺数据就说不确定，不猜极端（也不让后续收紧过滤/仓位）。
+            val hasAnyInput = advance + decline > 0 || m["up_pct"] != null ||
+                limitUp > 0 || limitDown > 0
+            if (!hasAnyInput) {
+                return RANGE to "市场数据不可得（涨跌家数/涨停/跌停全为空），不按极端场景处理"
+            }
+
             val reasons = buildList {
                 add("上涨占比${upPct.toInt()}%")
                 add("涨停$limitUp")

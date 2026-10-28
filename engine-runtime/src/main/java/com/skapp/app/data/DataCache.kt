@@ -12,7 +12,20 @@ package com.skapp.app.data
  *   detail:{code}                  → StockDetail（云端）
  *   minute:{code}                  → List<Map>（分时，盘中 60s TTL）
  */
-private class CacheEntry(val value: Any?, val expiresAt: Long)
+private class CacheEntry(
+    val value: Any?,
+    val expiresAt: Long,
+    /**
+     * 日 K 类条目：一旦从「非交易时段」跨进盘中就必须失效。
+     *
+     * 长 TTL 是在 put 那一刻按当时时段定死的：午休 11:31 写入会拿到 6 小时 TTL，
+     * 于是 13:00–15:00 的「实时」分析一直在用 11:30 那根未完成 bar；
+     * 盘前 08:00 写入则把昨收口径冻结到 14:00。所以记住写入时是否在盘中，
+     * 让 get 在跨进盘中时直接判过期，而不是等 TTL 自然到期。
+     */
+    val intradaySensitive: Boolean = false,
+    val writtenInTradingWindow: Boolean = false,
+)
 
 object DataCache {
 
@@ -36,15 +49,26 @@ object DataCache {
     @Suppress("UNCHECKED_CAST")
     fun <T> get(key: String): T? {
         val e = synchronized(store) { store[key] } ?: return null
-        if (e.expiresAt < now()) {
+        val inWindow = MarketHours.isTrading() || MarketHours.isAuction()
+        val staleBySession = e.intradaySensitive && !e.writtenInTradingWindow && inWindow
+        if (e.expiresAt < now() || staleBySession) {
             synchronized(store) { store.remove(key) }
             return null
         }
         return try { e.value as? T } catch (t: Throwable) { null }
     }
 
-    fun put(key: String, value: Any?, ttlMs: Long) {
-        synchronized(store) { store[key] = CacheEntry(value, now() + ttlMs) }
+    fun put(key: String, value: Any?, ttlMs: Long) = put(key, value, ttlMs, intradaySensitive = false)
+
+    fun put(key: String, value: Any?, ttlMs: Long, intradaySensitive: Boolean) {
+        synchronized(store) {
+            store[key] = CacheEntry(
+                value = value,
+                expiresAt = now() + ttlMs,
+                intradaySensitive = intradaySensitive,
+                writtenInTradingWindow = MarketHours.isTrading() || MarketHours.isAuction(),
+            )
+        }
     }
 
     fun invalidate(key: String) {
@@ -69,7 +93,8 @@ object DataCache {
         val key = klineKey(code, adjust, count)
         if (!force) get<List<KBar>>(key)?.let { return it }
         val bars = MarketDataClient.dayKline(code, count, adjust)
-        put(key, bars, dayTtlMs())
+        // intradaySensitive：午休/盘前写入的长 TTL 一旦跨进盘中就作废（详见 CacheEntry 注释）
+        put(key, bars, dayTtlMs(), intradaySensitive = true)
         return bars
     }
 
@@ -112,7 +137,7 @@ object DataCache {
         get<LocalEngineResult>(key)?.let { return it }
         invalidatePrefix(prefix)
         val r = LocalEngine.analyze(bars)
-        put(key, r, dayTtlMs())
+        put(key, r, dayTtlMs(), intradaySensitive = true)
         return r
     }
 

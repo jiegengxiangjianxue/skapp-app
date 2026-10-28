@@ -102,7 +102,12 @@ object NewsCalcEngine {
     /** 从标题里识别股票：先代码，后名称（用全市场 symbols 名称表） */
     fun resolveStocks(title: String, symbols: List<SymbolEntry>): List<String> {
         val hits = LinkedHashSet<String>()
-        val codeHit = Regex("(hk)?\\d{4,6}").find(title)?.value
+        // 只认「6 位 A 股代码」或「hk + 3~5 位港股代码」。
+        // 旧写法 (hk)?\d{4,6} 会吃下标题里的年份/点位（2026、3100），
+        // 而 Code.normalize 会把 4~5 位数字 padStart 成 6 位——「2026 年」变成 002026，
+        // 于是一条与股票无关的快讯被凭空挂上一只票的实时行情（编造关联）。
+        val codeHit = Regex("(?<![0-9A-Za-z])(?:hk\\d{3,5}|\\d{6})(?![0-9])", RegexOption.IGNORE_CASE)
+            .find(title)?.value
         if (codeHit != null) Code.normalize(codeHit)?.let { hits.add(it) }
         if (hits.isEmpty()) {
             symbols.asSequence()

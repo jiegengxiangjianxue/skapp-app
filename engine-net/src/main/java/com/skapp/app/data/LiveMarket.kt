@@ -51,6 +51,12 @@ object LiveMarket {
          * 拿不到时保持 null —— 宁可显示不可得，也不填 0。
          */
         val high: Double? = null,       // f15 最高价
+        /**
+         * f16 最低价、f17 今开：退出纪律（长下影/区间位置）要用当根振幅，
+         * 只有 high 算不出下影线。同在这一次 clist 批量里，零额外请求。
+         */
+        val low: Double? = null,        // f16 最低价
+        val open: Double? = null,       // f17 今开
         val prevClose: Double? = null,  // f18 昨收
         val chg60d: Double? = null,     // f24 60 日涨跌幅 %
         val chgYtd: Double? = null,     // f25 年初至今涨跌幅 %
@@ -196,7 +202,7 @@ object LiveMarket {
             "&fs=m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81+s:2048" +
             // f15/f18/f24/f25 一并取：RPS（60日/年初至今涨幅）与封板率（最高价 vs 涨停价）
             // 都要它们，放在同一次批量里不增加请求数。
-            "&fields=f2,f3,f5,f6,f7,f8,f9,f10,f12,f14,f15,f18,f20,f22,f24,f25,f62"
+            "&fields=f2,f3,f5,f6,f7,f8,f9,f10,f12,f14,f15,f16,f17,f18,f20,f22,f24,f25,f62"
         val txt = httpGet(url) ?: return emptyList()
         val obj = runCatching { JSONObject(txt) }.getOrNull() ?: return emptyList()
         val arr = obj.optJSONObject("data")?.optJSONArray("diff") ?: return emptyList()
@@ -219,6 +225,8 @@ object LiveMarket {
                 mainNet = o.num("f62"),
                 ts = ts,
                 high = o.num("f15"),
+                low = o.num("f16"),
+                open = o.num("f17"),
                 prevClose = o.num("f18"),
                 chg60d = o.num("f24"),
                 chgYtd = o.num("f25"),

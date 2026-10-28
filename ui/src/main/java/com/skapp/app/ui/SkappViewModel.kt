@@ -163,6 +163,8 @@ data class UiState(
     /** 十关键位（端侧引擎 KeyLevels）与实时回本率（RecoupCalc），随 K 线一起算 */
     val keyLevels: com.skapp.app.data.KeyLevels.Levels? = null,
     val recoup: com.skapp.app.data.RecoupCalc.Result? = null,
+    /** 退出纪律（端侧引擎 ExitPlan）：清仓线/止盈线/今日形态/动作，随 K 线一起算 */
+    val exitPlan: com.skapp.app.data.ExitPlan.Result? = null,
     val askQuestion: String = "",
     val askAnswer: String? = null,
     val askLoading: Boolean = false,
@@ -518,9 +520,13 @@ class SkappViewModel : ViewModel() {
         val today = java.time.LocalDate.now().toString()
         val midday = _state.value.localMiddayPicks
         val premarket = _state.value.localPremarketPicks
+        // 只要「今天跑过深算」就返回产物，不再要求 picks 非空：
+        // 弱市/达标 0 只时 status=defensive，metadata 里还带着观察名单。
+        // 旧写法要求 picks.isNotEmpty()，把「算完了但没达标」当成「尚未完成」，
+        // 观察名单被丢掉，首屏报的是一个不存在的状态（待完成）。
         return when {
-            midday.date == today && midday.picks.isNotEmpty() -> midday
-            premarket.date == today && premarket.picks.isNotEmpty() -> premarket
+            midday.date == today -> midday
+            premarket.date == today -> premarket
             else -> null
         }
     }
@@ -1156,6 +1162,7 @@ class SkappViewModel : ViewModel() {
                 klineSource = null,
                 keyLevels = null,
                 recoup = null,
+                exitPlan = null,
             )
             try {
                 supervisorScope {
@@ -1235,6 +1242,10 @@ class SkappViewModel : ViewModel() {
                             }.getOrNull(),
                             recoup = runCatching {
                                 withContext(Dispatchers.Default) { com.skapp.app.data.RecoupCalc.compute(bars) }
+                            }.getOrNull(),
+                            // 退出纪律：同一批 K 线顺手算，零额外请求。缺历史时引擎自己返回「数据不足」
+                            exitPlan = runCatching {
+                                withContext(Dispatchers.Default) { com.skapp.app.data.ExitPlan.compute(bars) }
                             }.getOrNull(),
                         )
                         val engine = requestResult {

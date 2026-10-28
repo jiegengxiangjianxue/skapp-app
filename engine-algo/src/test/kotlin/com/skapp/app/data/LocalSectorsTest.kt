@@ -153,4 +153,53 @@ class LocalSectorsTest {
         assertTrue(snap.degradedReason!!.contains("概念"))
         assertTrue(snap.concepts.isEmpty())
     }
+
+    // ── 止跌结构（收盘位置 + 长下影）────────────────────────────
+
+    /** 造一根带 high/low/open 的当根盘口：用于结构判定。 */
+    private fun barRow(
+        code: String,
+        price: Double,
+        open: Double,
+        high: Double,
+        low: Double,
+        pct: Double,
+    ) = LiveMarket.Row(
+        code = code, name = "股$code", price = price, pctChg = pct,
+        volumeLots = 1.0, amount = 1.0e8, amplitude = 1.0, turnoverRate = 1.0,
+        pe = 10.0, volRatio = 1.0, mv = 1.0e9, mainNet = 0.0, ts = 1_700_000_000_000L,
+        high = high, low = low, open = open, prevClose = open,
+    )
+
+    @Test
+    fun `收在区间上沿且长下影 - 判止跌雏形`() {
+        // 每只：low 9.0 high 10.0，收盘 9.9（收位 90%），下影从 9.5 拉到 9.9 → 长下影，当日收阴
+        val rows = (1..4).map { i ->
+            barRow("60000$i", price = 9.9, open = 9.95, high = 10.0, low = 9.0, pct = -0.5)
+        }
+        val res = LocalSectors.aggregate(rows, sectorOf = { "科技" })
+        val r = res.rows.single()
+        assertEquals("止跌雏形", r.stopping)
+        assertTrue(r.closePos!! >= 0.85)
+        assertEquals(4, r.longShadowN)
+    }
+
+    @Test
+    fun `收在区间下沿 - 判单边下杀`() {
+        // low 9.0 high 10.0，收盘 9.05（收位 5%）：这就是「阴线实体、贴着最低收」
+        val rows = (1..3).map { i ->
+            barRow("60001$i", price = 9.05, open = 10.0, high = 10.0, low = 9.0, pct = -9.5)
+        }
+        val r = LocalSectors.aggregate(rows, sectorOf = { "科技" }).rows.single()
+        assertEquals("单边下杀", r.stopping)
+        assertTrue(r.closePos!! <= 0.1)
+    }
+
+    @Test
+    fun `缺 high-low 时不猜结构`() {
+        val res = LocalSectors.aggregate(listOf(row("600000", 1.0)), sectorOf = { "银行" })
+        val r = res.rows.single()
+        assertNull(r.closePos)
+        assertNull(r.stopping, "没有当根区间就不该给结构结论")
+    }
 }

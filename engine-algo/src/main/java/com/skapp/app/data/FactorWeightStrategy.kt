@@ -485,19 +485,28 @@ object FactorWeightStrategy {
             }
 
             // ExtendedIndicators.superTrend 的上/下轨写法与标准相反，这里用本地修正版
+            // 用指标库的标准逐日实现。早期这里另写了一个「本地近似版」：拿最后一根的
+            // hl2 ± 3·ATR 判方向，价格几乎不可能越出 ±3 ATR，于是绝大多数票落到 else 分支
+            // 去看「period 日净变化」——SuperTrend 被退化成了又一个动量因子（与 CMO/VWMA 同轴）。
             "SuperTrend" -> {
-                val trend = superTrendFixed(bars, 10, 3.0) ?: return null
-                val atr = ExtendedIndicators.atr(bars, 10) ?: return null
+                val (dir, _) = ExtendedIndicators.superTrend(bars, 10, 3.0)
+                if (dir == null) return null
+                val atr = ExtendedIndicators.atr(bars, 10)
                 v(
-                    trend, 0.6,
-                    if (trend > 0) "多头" else "空头",
-                    "ATR %.2f".format(atr)
+                    if (dir > 0) 1 else -1, 0.6,
+                    if (dir > 0) "多头" else "空头",
+                    atr?.let { "ATR %.2f".format(it) } ?: "ATR 不可得",
                 )
             }
 
             "ElderForce" -> {
                 val ef = ExtendedIndicators.elderForce(bars, 13) ?: return null
-                val scale = bars.takeLast(13).sumOf { abs(it.close) * it.vol } / 13 + 1e-9
+                // 强度分母必须与 EF 同量纲：EF 是 (收盘变动 × 成交量) 的 EMA，
+                // 旧写法拿「收盘价 × 成交量」当尺度，差一整个价格量级，
+                // 于是 |EF|/scale 恒在 0.001 量级——这个因子在族内几乎不贡献强度。
+                val scale = bars.takeLast(14)
+                    .zipWithNext { a, b -> abs(b.close - a.close) * b.vol }
+                    .average() + 1e-9
                 v(
                     if (ef > 0) 1 else if (ef < 0) -1 else 0,
                     min(abs(ef) / scale, 1.0),
@@ -602,29 +611,6 @@ object FactorWeightStrategy {
             val range = b.high - b.low
             if (range > 0) acc += ((b.close - b.low) - (b.high - b.close)) / range * b.vol
             acc
-        }
-    }
-
-    /**
-     * 标准 SuperTrend：上轨 = HL2 + mult×ATR，下轨 = HL2 - mult×ATR，收盘穿越翻向。
-     * 返回 1（多头）/ -1（空头）。
-     */
-    private fun superTrendFixed(bars: List<KBar>, period: Int, mult: Double): Int? {
-        if (bars.size < period + 2) return null
-        val atr = ExtendedIndicators.atr(bars, period) ?: return null
-        // 用整段近似固定带宽（只判方向，不做逐日重算，够用且不会引入未来函数）
-        val last = bars.last()
-        val hl2 = (last.high + last.low) / 2
-        val upper = hl2 + mult * atr
-        val lower = hl2 - mult * atr
-        return when {
-            last.close > upper -> 1
-            last.close < lower -> -1
-            else -> {
-                // 在带内：看最近 period 根的净变化方向
-                val prev = bars[bars.size - 1 - period]
-                if (last.close >= prev.close) 1 else -1
-            }
         }
     }
 

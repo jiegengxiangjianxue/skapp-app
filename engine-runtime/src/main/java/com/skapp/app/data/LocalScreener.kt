@@ -51,6 +51,13 @@ object LocalScreener {
         val detailStatus: String,     // ok | insufficient
         val reason: String? = null,
         val buyable: Boolean? = null,
+        /**
+         * 退出纪律（[ExitPlan]）：清仓线/止盈线/今日形态/动作。
+         *
+         * 放在这里是因为**候选池的日 K 本来就在手上**（同一次 deep calc），
+         * 加这一项零额外请求；也让「破位的票不进推荐」成为硬规则而不是界面提示。
+         */
+        val exitPlan: ExitPlan.Result? = null,
         val snapshotStatus: String = "live",
     )
 
@@ -135,6 +142,10 @@ object LocalScreener {
                     // 统一剔除最后一根，保证「盘前推股」口径不随打开时间漂移。
                     val bars = if (dropLastBar && barsRaw.size > 1) barsRaw.dropLast(1) else barsRaw
                     val eng = if (bars.size >= 30) DataCache.engine(code, "qfq", bars) else null
+                    // 退出纪律：破位（收盘跌破 20 日最低）的票一票否决，不再进推荐
+                    val exit = if (bars.size >= ExitPlan.LOOKBACK + 1) {
+                        runCatching { ExitPlan.compute(bars) }.getOrNull()
+                    } else null
                     Screened(
                         code = code,
                         name = m.name,
@@ -147,9 +158,17 @@ object LocalScreener {
                         mv = m.mv,
                         engine = eng,
                         detailStatus = if (eng != null) "ok" else "insufficient",
-                        reason = if (eng == null) "K线不足，无法本地计算" else null,
+                        reason = when {
+                            eng == null -> "K线不足，无法本地计算"
+                            exit?.action == ExitPlan.ACT_CLEAR -> "已破位：" + exit.reasons.first()
+                            exit?.action == ExitPlan.ACT_TRIM -> "高位回吐过半：" + (exit.reasons.firstOrNull() ?: "")
+                            else -> null
+                        },
+                        exitPlan = exit,
                         buyable = (m.price?.let { it > 0.0 } == true) &&
-                            (m.pctChg ?: Double.POSITIVE_INFINITY) < c.maxChgPct,
+                            (m.pctChg ?: Double.POSITIVE_INFINITY) < c.maxChgPct &&
+                            // 破位票不可买：跌穿 20 日最低的票，「评分高」只是下跌惯性
+                            exit?.action != ExitPlan.ACT_CLEAR,
                         // 快照新鲜度如实标出来：LiveMarket 拉不到新数据时会退回上一份缓存，
                         // 那这时结果就不是「实时」而是「旧值」，界面必须能区分（5 分钟内算实时）
                         snapshotStatus = if (m.ts > 0 && System.currentTimeMillis() - m.ts > 5 * 60_000L) "stale" else "live",

@@ -50,13 +50,20 @@ object LocalPicks {
         if (eng.bullCount > 0) add("12 引擎看多 ${eng.bullCount} 个")
         if (eng.bearCount > 0) add("看空 ${eng.bearCount} 个")
         if (eng.nValid > 0) add("有效引擎 ${eng.nValid}/${eng.engines.size}")
-        eng.resonanceRatio?.let { add("共振 ${"%.0f".format(it * 100)}%") }
+        eng.resonanceRatio?.let { add("族级共振 ${"%.0f".format(it * 100)}%（按趋势/动量/通道/量能/波动/位置 6 族算，同族不重复计票）") }
         s.volRatio?.let { add("量比 ${"%.2f".format(it)}") }
         s.pctChg?.let { add("涨幅 ${"%+.2f%%".format(it)}") }
         eng.engines.filter { it.signal == "bullish" && it.score != null }
             .sortedByDescending { it.score ?: 0.0 }
             .take(2)
             .forEach { add("${it.engine} ${"%.0f".format(it.score!!)}") }
+        // 退出纪律跟着推荐一起给：买点旁边必须放着卖点，否则用户只能靠感觉走
+        s.exitPlan?.stopLine?.let { stop ->
+            add("清仓线 " + "%.2f".format(stop) + "（20 日最低）")
+        }
+        s.exitPlan?.trailLine?.let { trail ->
+            add("止盈线 " + "%.2f".format(trail) + "（回吐波幅一半）")
+        }
         if (isEmpty()) add("本地引擎已跑通，但无单因子给出强信号")
     }
 
@@ -127,6 +134,7 @@ object LocalPicks {
                             "code" to it.code,
                             "name" to it.name,
                             "score" to it.centralScore,
+                            "snapshotStatus" to it.snapshotStatus,
                         )
                     },
                 )
@@ -138,15 +146,21 @@ object LocalPicks {
                 totalSnapshot == 0 -> "本地行情快照为空（接口不可达或非交易时段无返回），不编造推股。"
                 screened.isEmpty() -> "本地预筛命中 0 只，无候选可算。"
                 usable.isEmpty() -> "候选池 ${screened.size} 只，但 K 线不足 30 根，无法本地算指标。"
-                else -> "本地深算 ${usable.size} 只，达标（评分≥${MIN_SCORE.toInt()} 且未涨停）0 只，不编造推荐。"
+                else -> "本地深算 ${usable.size} 只，达标（评分≥${MIN_SCORE.toInt()} 且未涨停）0 只：" +
+                    "弱市不凑数，下方观察名单仅作跟踪，建议轻仓或空仓。"
             }
+            // 有数据但一只都没达标 = 弱市（defensive），不是数据不足（insufficient）。
+            // 两者在界面上含义完全不同：前者是「今天不该追」，后者是「还算不出来」。
+            // 旧实现一律返回 insufficient，上层又把空 picks 当成「尚未完成」，
+            // 于是已经算出来的观察名单被丢掉、首屏报的是一个不存在的状态。
+            val status = if (usable.isNotEmpty()) "defensive" else "insufficient"
             return StructuredPickArtifact(
                 generatedAt = calcTime,
                 calculationTime = calcTime,
                 date = calcTime.take(10),
                 session = session.key,
                 engine = "本地中枢引擎 · 12 引擎 / 29 因子",
-                status = "insufficient",
+                status = status,
                 reason = reason,
                 picks = emptyList(),
                 metadata = metadata,
