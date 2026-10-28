@@ -202,4 +202,35 @@ class LocalSectorsTest {
         assertNull(r.closePos)
         assertNull(r.stopping, "没有当根区间就不该给结构结论")
     }
+
+    @Test
+    fun `板块强度四维加权且缺项重新归一`() {
+        // 4 只全涨（均值 1.625%）+ 无涨停 + 无 high/low（结构维缺席）
+        //   涨幅 50+1.625/3*50 = 77.08 × 0.35
+        //   广度 100 × 0.30
+        //   涨停 0/4 = 0 × 0.15
+        //   结构 缺项不计入权重 → 总权重 0.80
+        val res = LocalSectors.aggregate(
+            listOf(row("600000", 2.0), row("600036", 1.0), row("000001", 3.0), row("601398", 0.5)),
+            sectorOf = { "银行" },
+        )
+        val s = res.rows.single().strength
+        assertEquals(71.2, s!!, 0.6, "缺结构维时按 0.35/0.30/0.15 重新归一，不能当 0 分拉低")
+    }
+
+    @Test
+    fun `全员下跌的板块强度应远低于中性`() {
+        val res = LocalSectors.aggregate(
+            listOf(row("600000", -2.0), row("600036", -3.0), row("000001", -1.0)),
+            sectorOf = { "银行" },
+        )
+        val s = res.rows.single().strength!!
+        assertTrue(s < 20.0, "全员下跌 + 广度 0，强度应变 $s")
+    }
+
+    @Test
+    fun `没有任何可算维度时强度为 null`() {
+        val res = LocalSectors.aggregate(listOf(row("600000", null)), sectorOf = { "银行" })
+        assertNull(res.rows.single().strength, "没数据就不给强度，不能默认 50")
+    }
 }

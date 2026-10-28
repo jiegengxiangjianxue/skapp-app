@@ -52,6 +52,13 @@ object LocalSectors {
         val longShadowN: Int = 0,
         /** 结构判定：止跌雏形 / 单边下杀 / 中性；数据不足为 null。 */
         val stopping: String? = null,
+        /**
+         * 板块强度（0~100）：涨幅 0.35 + 广度 0.30 + 结构 0.20 + 涨停 0.15，缺项按剩余权重重新归一。
+         *
+         * 只用于给个股**排序**加权（[LocalScreener]），不进个股综合分——板块强弱是环境，
+         * 个股分数是这只票本身的强弱；混进同一个数会让「板块普涨的烂票」盖过「弱板块里的强势股」。
+         */
+        val strength: Double? = null,
     )
 
     data class Result(
@@ -299,7 +306,30 @@ object LocalSectors {
             closePos = avgClosePos(),
             longShadowN = longShadowN,
             stopping = stoppingOf(),
+            strength = strengthOf(),
         )
+
+        /**
+         * 板块强度：四维加权，缺项重新归一而不是当 0 分。
+         *
+         * 涨幅按「每 3% 折 50 分」映射（-3% → 0，0 → 50，+3% → 100）——
+         * 直接用涨幅原值没有上界，一个 8% 的板块会把其余三维全压掉。
+         * 涨停维度用「涨停家数 / 上涨家数」：20% 以上给满分，因为小板块 3 只涨停
+         * 与 200 只板块 30 只涨停是同一件事，比绝对家数可比。
+         */
+        private fun strengthOf(): Double? {
+            val parts = ArrayList<Pair<Double, Double>>()
+            if (pctN > 0) {
+                parts += (50.0 + (sumPct / pctN) / 3.0 * 50.0).coerceIn(0.0, 100.0) to 0.35
+            }
+            val breadth = up + down
+            if (breadth > 0) parts += (up.toDouble() / breadth * 100.0) to 0.30
+            avgClosePos()?.let { parts += (it * 100.0) to 0.20 }
+            if (up > 0) parts += ((limitUp.toDouble() / up) / 0.2 * 100.0).coerceIn(0.0, 100.0) to 0.15
+            if (parts.isEmpty()) return null
+            val weight = parts.sumOf { it.second }
+            return parts.sumOf { it.first * it.second } / weight
+        }
 
         private fun avgClosePos(): Double? = if (posN == 0) null else posSum / posN
 

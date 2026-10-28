@@ -59,6 +59,12 @@ object LocalScreener {
          */
         val exitPlan: ExitPlan.Result? = null,
         val snapshotStatus: String = "live",
+        /** 所属板块（SectorLink 查表）；未映射为 null */
+        val sector: String? = null,
+        /** 板块强度（0~100，见 [LocalSectors.Row.strength]）；板块未映射或数据不足为 null */
+        val sectorStrength: Double? = null,
+        /** 排序分 = centralScore + 板块偏移，见 [effectiveScoreOf]；只影响排序，不影响 minScore 过滤 */
+        val effectiveScore: Double? = null,
     )
 
     /**
@@ -104,6 +110,15 @@ object LocalScreener {
         onProgress("正在实时拉取全市场行情…")
         val snap = LiveMarket.snapshot()
         if (snap.isEmpty()) return@coroutineScope emptyList()
+
+        // 板块强度表：只用于排序加权，映射表拿不到就整块降级（不拖垮筛选，也不编强度）
+        val board = runCatching { SectorLink.load() }.getOrNull()
+        val strengthByName: Map<String, Double> = board?.let { b ->
+            runCatching {
+                LocalSectors.aggregate(snap, sectorOf = { b.sectorNameOf(it) })
+                    .rows.mapNotNull { r -> r.strength?.let { s -> r.name to s } }.toMap()
+            }.getOrNull()
+        }.orEmpty()
         val limitup = mode == "limitup"
         onProgress("全市场快照 ${snap.size} 只，预筛中（${if (limitup) "涨停扫描" else "涨幅/量比/非ST/主板"}）…")
 
@@ -142,6 +157,9 @@ object LocalScreener {
                     // 统一剔除最后一根，保证「盘前推股」口径不随打开时间漂移。
                     val bars = if (dropLastBar && barsRaw.size > 1) barsRaw.dropLast(1) else barsRaw
                     val eng = if (bars.size >= 30) DataCache.engine(code, "qfq", bars) else null
+                    val central = eng?.centralScore ?: eng?.composite
+                    val sectorName = board?.sectorNameOf(code)
+                    val sectorStrength = sectorName?.let { strengthByName[it] }
                     // 退出纪律：破位（收盘跌破 20 日最低）的票一票否决，不再进推荐
                     val exit = if (bars.size >= ExitPlan.LOOKBACK + 1) {
                         runCatching { ExitPlan.compute(bars) }.getOrNull()
@@ -172,6 +190,9 @@ object LocalScreener {
                         // 快照新鲜度如实标出来：LiveMarket 拉不到新数据时会退回上一份缓存，
                         // 那这时结果就不是「实时」而是「旧值」，界面必须能区分（5 分钟内算实时）
                         snapshotStatus = if (m.ts > 0 && System.currentTimeMillis() - m.ts > 5 * 60_000L) "stale" else "live",
+                        sector = sectorName,
+                        sectorStrength = sectorStrength,
+                        effectiveScore = effectiveScoreOf(central, sectorStrength),
                     )
                     }
                 }
@@ -193,7 +214,7 @@ object LocalScreener {
                 (it.pctChg ?: Double.POSITIVE_INFINITY) < c.maxChgPct &&
                 // 普通推荐不接受涨停扫描结果，即使上游误标了可买。
                 (it.pctChg ?: Double.POSITIVE_INFINITY) < 9.5
-        }.sortedByDescending { it.centralScore ?: 0.0 }
+        }.sortedByDescending { it.effectiveScore ?: it.centralScore ?: 0.0 }
         if (scored.isNotEmpty()) return@coroutineScope scored
         // 评分不足时只展示可买且有可用本地引擎的实时结果，不把 insufficient 伪装成推荐。
         onProgress("评分达标 0 只，暂无可买推荐（数据不足或过滤涨停）")
@@ -201,6 +222,18 @@ object LocalScreener {
     }
     /** 单只股票的 K 线 + 引擎计算超时（毫秒）。 */
     private const val PER_STOCK_TIMEOUT_MS = 20_000L
+
+    /** 板块强度对排序分的最大影响：±10 分（板块强度 0 / 100 时）——够挪一档，改不动「够不够格」。 */
+    private const val SECTOR_BOOST_K = 0.2
+
+    /**
+     * 排序分 = 个股综合分 + 板块偏移。
+     *
+     * 板块未知时原样返回个股分，不拿 50 分（中性）顶替：本项目板块映射只覆盖 2706/5900，
+     * 拿中性垫底等于「没映射到的票不动」，但拿 0 分顶替会让 46% 的票被系统性降权。
+     */
+    internal fun effectiveScoreOf(central: Double?, sectorStrength: Double?): Double? =
+        central?.let { if (sectorStrength != null) it + (sectorStrength - 50.0) * SECTOR_BOOST_K else it }
 
     /**
      * 候选池预选：涨幅 / 量比 / 成交额 / 主力净流入 四维**秩和**，各占权重。
