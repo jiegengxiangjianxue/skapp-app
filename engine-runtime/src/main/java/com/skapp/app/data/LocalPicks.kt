@@ -46,6 +46,15 @@ object LocalPicks {
     const val MAX_OBSERVED = 3
 
     private fun buildWhy(s: LocalScreener.Screened): List<String> = buildList {
+        // 排序就按板块强度加过权，理由里不写出来，用户会以为顺序还是纯个股分。
+        // 放在 engine 判空之前：K 线不足的观察位同样要能看到板块归属。
+        s.sector?.let { name ->
+            val st = s.sectorStrength
+            add(
+                if (st != null) "板块 $name · 强度 ${"%.0f".format(st)}（已按 ±10 分参与排序）"
+                else "板块 $name（强度数据不足，未参与排序）",
+            )
+        }
         val eng = s.engine ?: return@buildList
         if (eng.bullCount > 0) add("12 引擎看多 ${eng.bullCount} 个")
         if (eng.bearCount > 0) add("看空 ${eng.bearCount} 个")
@@ -106,11 +115,12 @@ object LocalPicks {
                     it.buyable == true &&
                     (it.pctChg ?: Double.POSITIVE_INFINITY) < MAX_CHG_PCT
             }
-            .sortedByDescending { it.centralScore ?: 0.0 }
-
+            // 按 effectiveScore（个股分 + 板块偏移）排：这里再按 centralScore 排一次会把
+            // LocalScreener 的板块加权整个盖掉——卡片上的前 3 名与页面上「推荐」就不会是同一批票
+            .sortedByDescending { it.effectiveScore ?: it.centralScore ?: 0.0 }
         val observed = usable
             .filter { it.code !in qualified.map { q -> q.code }.toSet() }
-            .sortedByDescending { it.centralScore ?: 0.0 }
+            .sortedByDescending { it.effectiveScore ?: it.centralScore ?: 0.0 }
             .take(MAX_OBSERVED)
 
         val picks = qualified.take(MAX_PICKS).map { toSignal(it, calcTime) }

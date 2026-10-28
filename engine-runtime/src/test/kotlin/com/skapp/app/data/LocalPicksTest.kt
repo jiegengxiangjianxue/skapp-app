@@ -121,4 +121,45 @@ class LocalPicksTest {
         assertEquals(null, LocalPicks.sessionFor(MarketHours.Phase.AFTER_HOURS))
         assertEquals(null, LocalPicks.sessionFor(MarketHours.Phase.CLOSED_DAY))
     }
+
+    @Test
+    fun `板块强度能改变推股顺序`() {
+        // 70 分在弱板块（20）→ 64；62 分在强板块（100）→ 72
+        val weakSector = row("600001", 70.0).copy(
+            sector = "弱板块",
+            sectorStrength = 20.0,
+            effectiveScore = LocalScreener.effectiveScoreOf(70.0, 20.0),
+        )
+        val strongSector = row("600002", 62.0).copy(
+            sector = "强板块",
+            sectorStrength = 100.0,
+            effectiveScore = LocalScreener.effectiveScoreOf(62.0, 100.0),
+        )
+        val artifact = LocalPicks.build(
+            screened = listOf(weakSector, strongSector),
+            session = LocalPicks.Session.MIDDAY,
+            calcTime = "2026-10-28T10:00:00+08:00",
+        )
+        assertEquals(
+            listOf("600002", "600001"),
+            artifact.picks.map { it.code },
+            "推股卡片必须按 effectiveScore 排：这里再按 centralScore 排一次会把筛选页的加权盖掉",
+        )
+    }
+
+    @Test
+    fun `推股理由写明板块与强度`() {
+        val s = row("600001", 70.0).copy(
+            sector = "白酒",
+            sectorStrength = 72.0,
+            effectiveScore = LocalScreener.effectiveScoreOf(70.0, 72.0),
+        )
+        val artifact = LocalPicks.build(
+            screened = listOf(s),
+            session = LocalPicks.Session.MIDDAY,
+            calcTime = "2026-10-28T10:00:00+08:00",
+        )
+        val why = artifact.picks.single().why
+        assertTrue(why.any { it.contains("白酒") && it.contains("72") }, "理由里要给出板块与强度：$why")
+    }
 }
