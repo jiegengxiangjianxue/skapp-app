@@ -122,7 +122,7 @@ object EngineFeedLive {
         val stale = snapshot.isNotEmpty() && snapTs > 0 && snapAgeMs > STALE_MS
 
         val scored = screened.filter { (it.centralScore ?: 0.0) > 0.0 }
-            .sortedByDescending { it.centralScore ?: 0.0 }
+            .sortedByDescending { it.effectiveScore ?: it.centralScore ?: 0.0 }
             .take(limit)
 
         val top = scored.mapIndexed { i, s ->

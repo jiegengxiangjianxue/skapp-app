@@ -164,7 +164,8 @@ object LocalSnapshot {
         }
 
         val scored = screened.filter { (it.centralScore ?: 0.0) > 0.0 }
-            .sortedByDescending { it.centralScore ?: 0.0 }
+            // 展示顺序与筛选/推股卡片一致：再按 centralScore 排会出现「决策卡与推股卡顺序不同」
+            .sortedByDescending { it.effectiveScore ?: it.centralScore ?: 0.0 }
 
         val cards = scored.take(10).map { s ->
             val eng = s.engine
