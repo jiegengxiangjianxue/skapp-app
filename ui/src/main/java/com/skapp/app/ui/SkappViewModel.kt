@@ -186,6 +186,14 @@ data class UiState(
     val centralEngineScore: Double? = null,
     val centralEngineResonance: Double? = null,
     val centralEngineStatus: String = "insufficient",
+    /** 规格聚合分（含 flow/tape 外部票）：与云端 engine_v5 同构的那一份；null = 不可用，不是 0 */
+    val canonicalScore: Double? = null,
+    val canonicalResonance: Double? = null,
+    /** 规格链路健康：版本 / 漂移 / 降级项。界面状态带直接读这三项。 */
+    val engineSpecVersion: String? = null,
+    val engineSpecDrift: Boolean = false,
+    val chainDegraded: List<String> = emptyList(),
+    val chainStatus: String = "insufficient",
     val detailAdjust: String = "qfq",
     val fundFlow: List<Map<String, Any?>> = emptyList(),
     /** 当日分钟级资金流（交易时段实时） */
@@ -475,8 +483,17 @@ class SkappViewModel : ViewModel() {
 
             try {
                 // 标定参数属数据库表，统一经 Db 取（界面层不再直接读云端）
-                val calibDoc = com.skapp.app.data.Db.calibrationDocs()[com.skapp.app.data.ArchiveDoc.WEIGHT_CALIBRATION]
-                val calib = com.skapp.app.data.FactorWeightStrategy.parseCalibration(calibDoc?.json)
+                val calibDocs = com.skapp.app.data.Db.calibrationDocs()
+                val calibDoc = calibDocs[com.skapp.app.data.ArchiveDoc.WEIGHT_CALIBRATION]
+                // 参数清单缺失（云端还没发布/网络失败）时继续用标定——不能因为校验机制自己没就绪
+                // 就把功能停掉；只有「明确版本不一致」才降级到内置默认口径。
+                val manifestJson = calibDocs[com.skapp.app.data.ArchiveDoc.ENGINE_MANIFEST]?.json
+                val manifestCheck = com.skapp.app.data.EngineManifest.check(manifestJson)
+                val calib = if (manifestJson == null || manifestCheck.ok) {
+                    com.skapp.app.data.FactorWeightStrategy.parseCalibration(calibDoc?.json)
+                } else {
+                    null
+                }
                 val gate = runCatching { com.skapp.app.data.SignalCalibration.load() }.getOrNull()
                 // 板块主线与因子板一起取：两者在界面上是并列的两道过滤，分开加载会错位
                 val sectors = runCatching { com.skapp.app.data.SectorLink.load() }.getOrNull()
@@ -919,7 +936,7 @@ class SkappViewModel : ViewModel() {
                 mode = "all",
                 dropLastBar = dropLast,
             )
-            val artifact = com.skapp.app.data.LocalPicks.build(
+            val artifact = com.skapp.app.data.LocalPicks.buildWithMarket(
                 screened = screened,
                 session = session,
                 calcTime = calcTime,
@@ -1311,7 +1328,19 @@ class SkappViewModel : ViewModel() {
                         val engine = requestResult {
                             withContext(Dispatchers.Default) { DataCache.engine(code, adjust, bars) }
                         }.getOrNull()
-                        val central = engine?.let { centralEngine(it) }
+                        // 详情页没有全市场横截面（拿不到就不编），flow 会自己降成 local_abs；
+                        // tape 只要日 K 就能算，所以这里链路是「技术 + 盘口」两段，不是残废链路。
+                        val chain = requestResult {
+                            withContext(Dispatchers.Default) {
+                                com.skapp.app.data.EngineChain.analyze(
+                                    com.skapp.app.data.EngineChain.Inputs(
+                                        bars = bars,
+                                        nowMs = System.currentTimeMillis(),
+                                    )
+                                )
+                            }
+                        }.getOrNull()
+                        val central = engine?.let { centralEngine(it, chain) }
                             ?: CentralEngine("中枢引擎：数据不足，无法形成有效总结。", null, null, "insufficient")
                         _state.value = _state.value.copy(
                             localEngine = engine,
@@ -1319,6 +1348,12 @@ class SkappViewModel : ViewModel() {
                             centralEngineScore = central.score,
                             centralEngineResonance = central.resonance,
                             centralEngineStatus = central.status,
+                            canonicalScore = chain?.canonicalScore,
+                            canonicalResonance = chain?.canonical?.resonance,
+                            engineSpecVersion = chain?.specVersion,
+                            engineSpecDrift = chain?.specDrift ?: false,
+                            chainDegraded = chain?.degraded.orEmpty(),
+                            chainStatus = chain?.status ?: central.status,
                         )
                         val local = requestResult {
                             bundleFromLocal(code, bars, _state.value.liveQuote, holo)
@@ -1399,17 +1434,29 @@ class SkappViewModel : ViewModel() {
         }
         var engine = _state.value.localEngine
         var central: CentralEngine? = null
+        var chain: com.skapp.app.data.EngineChain.ChainResult? = null
         if (now - lastEngineAt > 5_000 && updated.size >= 30) {
             lastEngineAt = now
             runCatching { LocalEngine.analyze(updated) }.getOrNull()?.let {
                 engine = it
-                central = centralEngine(it)
+                chain = runCatching {
+                    com.skapp.app.data.EngineChain.analyze(
+                        com.skapp.app.data.EngineChain.Inputs(bars = updated, nowMs = now)
+                    )
+                }.getOrNull()
+                central = centralEngine(it, chain)
             }
         }
         _state.value = _state.value.copy(
             liveQuote = quote,
             kline = updated,
             localEngine = engine,
+            canonicalScore = chain?.canonicalScore ?: _state.value.canonicalScore,
+            canonicalResonance = chain?.canonical?.resonance ?: _state.value.canonicalResonance,
+            engineSpecVersion = chain?.specVersion ?: _state.value.engineSpecVersion,
+            engineSpecDrift = chain?.specDrift ?: _state.value.engineSpecDrift,
+            chainDegraded = chain?.degraded ?: _state.value.chainDegraded,
+            chainStatus = chain?.status ?: _state.value.chainStatus,
             centralEngineScore = central?.score ?: _state.value.centralEngineScore,
             centralEngineResonance = central?.resonance ?: _state.value.centralEngineResonance,
             centralEngineSummary = central?.summary ?: _state.value.centralEngineSummary,
@@ -1484,15 +1531,39 @@ class SkappViewModel : ViewModel() {
         val status: String,
     )
 
-    private fun centralEngine(engine: LocalEngineResult): CentralEngine {
+    /**
+     * 中枢引擎展示口径：**优先规格聚合分**（[EngineChain] canonical，与云端 engine_v5 同构），
+     * 规格分不可得才回落到老 12 引擎加权分，并在文案里标明用的是哪一套。
+     *
+     * 两个分数长得一样、名字都叫「中枢」，混着显示过一次就再也查不清某天推荐用的是谁。
+     */
+    private fun centralEngine(
+        engine: LocalEngineResult,
+        chain: com.skapp.app.data.EngineChain.ChainResult? = null,
+    ): CentralEngine {
         val valid = engine.engines.filter { it.score != null }
-        val score = engine.centralScore ?: engine.weightedComposite ?: engine.composite
+        val legacy = engine.centralScore ?: engine.weightedComposite ?: engine.composite
+        val canonical = chain?.canonicalScore
+        val score = canonical ?: legacy
         if (valid.isEmpty() || score == null) {
             return CentralEngine(engine.summary ?: "中枢引擎：数据不足，无法形成有效总结。", null, null, "insufficient")
         }
-        val resonance = engine.resonanceRatio
-        val summary = engine.summary ?: "中枢引擎：综合 ${"%.1f".format(score)}，共振 ${"%.0f%%".format((resonance ?: 0.0) * 100)}，有效 ${valid.size}/${engine.engines.size}。"
-        return CentralEngine(summary, score, resonance, engine.status)
+        val resonance = chain?.canonical?.resonance ?: engine.resonanceRatio
+        val summary = when {
+            canonical != null -> buildString {
+                append("中枢引擎（规格口径 V${chain?.specVersion ?: "?"}）：规格分 ")
+                append("%.1f".format(canonical))
+                append("，共振 %.0f%%".format((resonance ?: 0.0) * 100))
+                append("，票数 多 ${chain?.canonical?.bull ?: 0}/空 ${chain?.canonical?.bear ?: 0}/中 ${chain?.canonical?.neutral ?: 0}")
+                append("，外部票 ${chain?.votes?.size ?: 0} 张")
+                val bad = chain?.degraded.orEmpty()
+                if (bad.isNotEmpty()) append("；降级 ").append(bad.joinToString("、"))
+                if (chain?.specDrift == true) append("；**规格漂移**")
+                chain?.riskFlag?.let { append("；风控：").append(it) }
+            }
+            else -> engine.summary ?: "中枢引擎（老口径 12 引擎）：综合 ${"%.1f".format(score)}，共振 ${"%.0f%%".format((resonance ?: 0.0) * 100)}，有效 ${valid.size}/${engine.engines.size}。"
+        }
+        return CentralEngine(summary, score, resonance, chain?.status ?: engine.status)
     }
 
     /** 快讯 + 主线：逐条标题下实时算（标题命中的股票 → 实时行情 + 中枢引擎） */

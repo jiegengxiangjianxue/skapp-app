@@ -1,5 +1,7 @@
 package com.skapp.app.ui.screens
 
+import com.skapp.app.ui.theme.SkColors
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -73,7 +75,7 @@ fun PoolsScreen(vm: SkappViewModel, state: UiState) {
                 Text(
                     "板块数据降级：${sec.degradedReason ?: "部分板块成分未更新"}（当日 ${sec.freshBoards} / 过期 ${sec.staleBoards}）",
                     style = MaterialTheme.typography.bodySmall,
-                    color = Color(0xFFD29922),
+                    color = SkColors.warn,
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
                 )
             }

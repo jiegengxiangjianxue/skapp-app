@@ -1,5 +1,7 @@
 package com.skapp.app.ui.screens
 
+import com.skapp.app.ui.theme.SkColors
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -11,12 +13,16 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import com.skapp.app.ui.components.ParityStrip
+import com.skapp.app.ui.components.parityViewOfArtifact
+import com.skapp.app.ui.components.SkCard
 import androidx.compose.material3.Card
 import androidx.compose.material3.Button
 import androidx.compose.material3.CardDefaults
@@ -43,8 +49,8 @@ import com.skapp.app.ui.UiState
  * 看板首页：盘面解读、市场总览与个股查询。
  * 板块池与涨停池统一从多池页面进入，避免重复列表。
  */
-private val UP = Color(0xFFF85149)
-private val DOWN = Color(0xFF3FB950)
+private val UP = SkColors.marketUp
+private val DOWN = SkColors.marketDown
 
 @Composable
 fun DashboardScreen(vm: SkappViewModel, state: UiState) {
@@ -68,7 +74,7 @@ fun DashboardScreen(vm: SkappViewModel, state: UiState) {
                         (b["ts"]?.toString() ?: "时点暂无") +
                             " · " + (if (b["source"] == "local") "本地实时" else "库表回看") +
                             " · " + heartbeatText(state),
-                        style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+                        style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary,
                     )
                 }
                 Text("刷新", Modifier.clickable { vm.loadBoard() },
@@ -91,14 +97,14 @@ fun DashboardScreen(vm: SkappViewModel, state: UiState) {
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     KpiCard("涨停", limitUp?.toInt()?.toString(), UP, Modifier.weight(1f))
                     KpiCard("跌停", limitDown?.toInt()?.toString(), DOWN, Modifier.weight(1f))
-                    KpiCard("炸板", broken?.toInt()?.toString(), Color(0xFFD29922), Modifier.weight(1f))
+                    KpiCard("炸板", broken?.toInt()?.toString(), SkColors.warn, Modifier.weight(1f))
                     KpiCard("上涨", advance?.toInt()?.toString(), UP, Modifier.weight(1f))
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     KpiCard("下跌", decline?.toInt()?.toString(), DOWN, Modifier.weight(1f))
-                    KpiCard("成交(亿)", turnover?.let { String.format("%.0f", it) }, Color.LightGray, Modifier.weight(1f))
-                    KpiCard("阶段", phase, Color(0xFF58A6FF), Modifier.weight(1f))
-                    KpiCard("阶段分", phaseScore?.let { String.format("%.1f", it) }, Color(0xFF58A6FF), Modifier.weight(1f))
+                    KpiCard("成交(亿)", turnover?.let { String.format("%.0f", it) }, SkColors.textTertiary, Modifier.weight(1f))
+                    KpiCard("阶段", phase, SkColors.primary, Modifier.weight(1f))
+                    KpiCard("阶段分", phaseScore?.let { String.format("%.1f", it) }, SkColors.primary, Modifier.weight(1f))
                 }
                 // 宽度热力条（涨跌家数比）
                 if (advance != null && decline != null && advance + decline > 0) {
@@ -111,7 +117,7 @@ fun DashboardScreen(vm: SkappViewModel, state: UiState) {
                     }
                     Text(
                         "市场宽度 上涨 ${advance.toInt()} / 下跌 ${decline.toInt()}",
-                        style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+                        style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary,
                     )
                 }
             }
@@ -126,56 +132,56 @@ fun DashboardScreen(vm: SkappViewModel, state: UiState) {
                 Text(
                     "全市场预筛 · ${state.marketPulseTs ?: "暂无时点"} · " +
                         "排序：横截面相对强度（涨幅分位 45% + 量比分位 35% + 资金分位 20%），连续 2 轮确认优先",
-                    style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+                    style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary,
                 )
                 if (state.pulseDropped.isNotEmpty()) {
                     Text(
                         "本轮掉出：${state.pulseDropped.joinToString("、")}",
-                        style = MaterialTheme.typography.labelSmall, color = Color.Gray,
+                        style = MaterialTheme.typography.labelSmall, color = SkColors.textSecondary,
                     )
                 }
                 if (state.marketPulseLoading) CircularProgressIndicator(modifier = Modifier.height(20.dp), strokeWidth = 2.dp)
-                state.marketPulse.take(10).forEach { row ->
-                    Card(
-                        modifier = Modifier.fillMaxWidth().clickable { vm.openDetail(row.code) },
-                        colors = CardDefaults.cardColors(),
-                    ) {
-                        Row(Modifier.fillMaxWidth().padding(10.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Column(Modifier.weight(1f)) {
-                                Text("${row.name} ${row.code}", fontWeight = FontWeight.Medium)
-                                Text(
-                                    "板块 ${row.board ?: "暂无数据"}",
-                                    style = MaterialTheme.typography.bodySmall, color = Color.Gray,
-                                )
-                                Text(
-                                    "强度 ${row.relStrength?.let { "%.0f".format(it) } ?: "暂无"} · " +
-                                        "涨幅 ${row.pctChg?.let { "%+.2f%%".format(it) } ?: "暂无数据"} · " +
-                                        "量比 ${row.volRatio?.let { "%.2f".format(it) } ?: "暂无数据"} · " +
-                                        "判断 ${outlookText(row.outlook)}",
-                                    style = MaterialTheme.typography.bodySmall,
-                                )
-                                Text(
-                                    when {
-                                        row.streak >= 2 -> "连续 ${row.streak} 轮同向（已确认）"
-                                        else -> "本轮新进（未经 2 轮确认，仅观察）"
-                                    } + " · 涨速 " + (row.speed?.let { "%+.2f%%".format(it) } ?: "暂无") +
-                                        when (row.speedSource) {
-                                            "tick" -> "（30 秒快照差）"
-                                            "field" -> "（东财字段·首轮替代）"
-                                            else -> ""
-                                        },
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = if (row.streak >= 2) Color.Gray else MaterialTheme.colorScheme.primary,
-                                )
-                                Text(row.outlookReason ?: "暂无推断依据", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-                                if (row.eventTitle != null) Text(
-                                    "事件：${row.eventTitle} · ${row.eventDirection ?: "方向暂无"} · ${row.eventReason ?: "理由暂无"} · 时点 ${row.evidenceTs ?: "暂无"}",
-                                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary,
-                                ) else Text("事件：未匹配消息，不能据此归因", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-                            }
-                            Text("详情 ›", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodySmall)
-                        }
+            }
+        }
+        items(state.marketPulse.take(10), key = { it.code }) { row ->
+            Card(
+                modifier = Modifier.fillMaxWidth().clickable { vm.openDetail(row.code) },
+                colors = CardDefaults.cardColors(),
+            ) {
+                Row(Modifier.fillMaxWidth().padding(10.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Column(Modifier.weight(1f)) {
+                        Text("${row.name} ${row.code}", fontWeight = FontWeight.Medium)
+                        Text(
+                            "板块 ${row.board ?: "暂无数据"}",
+                            style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary,
+                        )
+                        Text(
+                            "强度 ${row.relStrength?.let { "%.0f".format(it) } ?: "暂无"} · " +
+                                "涨幅 ${row.pctChg?.let { "%+.2f%%".format(it) } ?: "暂无数据"} · " +
+                                "量比 ${row.volRatio?.let { "%.2f".format(it) } ?: "暂无数据"} · " +
+                                "判断 ${outlookText(row.outlook)}",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        Text(
+                            when {
+                                row.streak >= 2 -> "连续 ${row.streak} 轮同向（已确认）"
+                                else -> "本轮新进（未经 2 轮确认，仅观察）"
+                            } + " · 涨速 " + (row.speed?.let { "%+.2f%%".format(it) } ?: "暂无") +
+                                when (row.speedSource) {
+                                    "tick" -> "（30 秒快照差）"
+                                    "field" -> "（东财字段·首轮替代）"
+                                    else -> ""
+                                },
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (row.streak >= 2) SkColors.textSecondary else MaterialTheme.colorScheme.primary,
+                        )
+                        Text(row.outlookReason ?: "暂无推断依据", style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
+                        if (row.eventTitle != null) Text(
+                            "事件：${row.eventTitle} · ${row.eventDirection ?: "方向暂无"} · ${row.eventReason ?: "理由暂无"} · 时点 ${row.evidenceTs ?: "暂无"}",
+                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary,
+                        ) else Text("事件：未匹配消息，不能据此归因", style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
                     }
+                    Text("详情 ›", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodySmall)
                 }
             }
         }
@@ -203,7 +209,7 @@ fun DashboardScreen(vm: SkappViewModel, state: UiState) {
             item {
                 Text(
                     "数据源 $s",
-                    style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+                    style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary,
                 )
             }
         }
@@ -230,7 +236,7 @@ private fun numOf(v: Any?): Double? = when (v) {
 private fun KpiCard(label: String, value: String?, color: Color, modifier: Modifier = Modifier) {
     Card(modifier = modifier, colors = CardDefaults.cardColors()) {
         Column(Modifier.padding(10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(label, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+            Text(label, style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
             Spacer(Modifier.height(2.dp))
             Text(value ?: "—", fontWeight = FontWeight.Bold, color = color, fontSize = 18.sp)
         }
@@ -240,7 +246,7 @@ private fun KpiCard(label: String, value: String?, color: Color, modifier: Modif
 @Composable
 private fun CommentaryCard(summary: Map<String, Any?>) {
     val t = (summary["premarket"] ?: summary["text"])?.toString()?.takeIf { it.isNotBlank() } ?: return
-    Card(colors = CardDefaults.cardColors()) {
+    SkCard(contentPadding = PaddingValues(0.dp)) {
         Column(Modifier.padding(12.dp)) {
             Text("盘前分析", fontWeight = FontWeight.SemiBold,
                 style = MaterialTheme.typography.bodySmall)
@@ -250,7 +256,7 @@ private fun CommentaryCard(summary: Map<String, Any?>) {
                 .take(18)
                 .forEach {
                     Text(it.trimStart('#').trim(),
-                        style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                        style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
                 }
         }
     }
@@ -259,20 +265,20 @@ private fun CommentaryCard(summary: Map<String, Any?>) {
 @Composable
 private fun DashboardNewsSection(state: UiState, vm: SkappViewModel) {
     val rows = state.news.items.take(8)
-    Card(colors = CardDefaults.cardColors()) {
+    SkCard(contentPadding = PaddingValues(0.dp)) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
             Text("实时异动", fontWeight = FontWeight.SemiBold)
             Text("盘前分析后的实时消息异动；板块和涨停数据在多池选股查看。",
-                style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
             if (rows.isEmpty() && state.newsCalcs.isEmpty()) {
-                Text("暂无数据：实时消息异动尚未返回。", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                Text("暂无数据：实时消息异动尚未返回。", style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
             } else if (rows.isNotEmpty()) {
                 rows.forEach { row ->
                     val title = (row["title"] ?: row["newsTitle"] ?: row["content"] ?: "暂无标题").toString()
                     val meta = listOfNotNull(row["source"]?.toString(), row["time"]?.toString(), row["verdict"]?.toString())
                         .filter { it.isNotBlank() }.joinToString(" · ")
                     Text(title, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
-                    if (meta.isNotBlank()) Text(meta, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                    if (meta.isNotBlank()) Text(meta, style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
                     extractNewsCodes(row).take(5).forEach { code ->
                         Text("影响个股：$code", style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.primary,
@@ -281,7 +287,7 @@ private fun DashboardNewsSection(state: UiState, vm: SkappViewModel) {
                 }
             } else {
                 Text("${state.newsCalcs.size} 条实时异动已计算，原始消息正文暂无。",
-                    style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                    style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
             }
         }
     }
@@ -304,7 +310,7 @@ private fun extractNewsCodes(row: Map<String, Any?>): List<String> {
 private fun StockSearchCard(vm: SkappViewModel, state: UiState) {
     var query by remember { mutableStateOf("") }
     var searched by remember { mutableStateOf(false) }
-    Card(colors = CardDefaults.cardColors()) {
+    SkCard(contentPadding = PaddingValues(0.dp)) {
         Column(Modifier.padding(12.dp)) {
             Text("个股查（panel-stock）", fontWeight = FontWeight.SemiBold,
                 style = MaterialTheme.typography.bodySmall)
@@ -341,7 +347,7 @@ private fun StockSearchCard(vm: SkappViewModel, state: UiState) {
                     }
                 }
             } else if (searched) {
-                Text("暂无匹配股票，请检查代码或名称。", color = Color.Gray,
+                Text("暂无匹配股票，请检查代码或名称。", color = SkColors.textSecondary,
                     style = MaterialTheme.typography.bodySmall)
             }
         }
@@ -350,7 +356,7 @@ private fun StockSearchCard(vm: SkappViewModel, state: UiState) {
 
 @Composable
 private fun EmptyNote(msg: String) {
-    Text(msg, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+    Text(msg, style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
 }
 
 /** 本文件的 SectionTitle（原引 BoardScreen 的 private 版本，编译报 private-in-file） */
@@ -362,12 +368,12 @@ private fun SectionTitle(t: String) {
 /** 市场状态卡（简化版；原引 BoardScreen 的 private MarketStateCard） */
 @Composable
 private fun MarketStateCard(ms: com.skapp.app.data.MarketState) {
-    Card(colors = CardDefaults.cardColors()) {
+    SkCard(contentPadding = PaddingValues(0.dp)) {
         Column(Modifier.padding(12.dp)) {
             Text("市场状态机", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
             Text(
                 "${ms.state} · E=${String.format("%.1f", ms.E)} · agreement=${String.format("%.0f", ms.agreement * 100)}%",
-                style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+                style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary,
             )
         }
     }
@@ -418,7 +424,7 @@ private fun IndexTableSection(state: UiState) {
         if (g.isNotEmpty()) IndexTable("全球市场", g, sort)
         Text(
             "涨跌口径为当日涨跌幅；点右上角切换排序。全球市场仅供参考，不入选股池。",
-            style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+            style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary,
         )
     }
 }
@@ -430,11 +436,11 @@ private fun IndexTable(title: String, rows: List<Map<String, Any?>>, sort: PctSo
         PctSort.DESC -> rows.sortedByDescending { numOf(it["pctChg"]) ?: Double.NEGATIVE_INFINITY }
         PctSort.ASC -> rows.sortedBy { numOf(it["pctChg"]) ?: Double.POSITIVE_INFINITY }
     }
-    Card(colors = CardDefaults.cardColors()) {
+    SkCard(contentPadding = PaddingValues(0.dp)) {
         Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text(title, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
-                Text("${rows.size} 项", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                Text("${rows.size} 项", style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
             }
             Row(Modifier.fillMaxWidth().padding(top = 2.dp)) {
                 Text("名称", modifier = Modifier.weight(2.2f), style = HeadCell)
@@ -449,11 +455,11 @@ private fun IndexTable(title: String, rows: List<Map<String, Any?>>, sort: PctSo
                 val pct = numOf(item["pctChg"])
                 val price = numOf(item["price"])
                 val chg = numOf(item["chg"])
-                val color = pct?.let { if (it >= 0) UP else DOWN } ?: Color.Gray
+                val color = pct?.let { if (it >= 0) UP else DOWN } ?: SkColors.textSecondary
                 Row(Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
                     Column(Modifier.weight(2.2f)) {
                         Text(name, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
-                        if (code != null && code != name) Text(code, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                        if (code != null && code != name) Text(code, style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
                     }
                     Text(
                         price?.let { String.format("%.2f", it) } ?: "—",
@@ -473,7 +479,7 @@ private fun IndexTable(title: String, rows: List<Map<String, Any?>>, sort: PctSo
     }
 }
 
-private val HeadCell = androidx.compose.ui.text.TextStyle(fontSize = 11.sp, color = Color.Gray)
+private val HeadCell = androidx.compose.ui.text.TextStyle(fontSize = 12.sp, color = SkColors.textSecondary)
 
 /** 选股跟踪：今日推股信号价 vs 实时报价（state.pickQuotes），可点进详情。 */
 @Composable
@@ -491,14 +497,22 @@ private fun PickTrackingSection(state: UiState, vm: SkappViewModel) {
             SectionTitle("选股跟踪")
             Text(
                 "实时 $liveCount/${rows.size}",
-                style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+                style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary,
             )
         }
-        Card(colors = CardDefaults.cardColors()) {
+        // 口径标签：分数旁边必须能读到「今天是什么环境、权重是不是云端标定的」。
+        // 数据来自推股产物 metadata（LocalPicks 写入），界面不自己算。
+        ParityStrip(
+            parityViewOfArtifact(
+                if (state.localMiddayPicks.picks.isNotEmpty()) state.localMiddayPicks.metadata
+                else state.localPremarketPicks.metadata,
+            ),
+        )
+        SkCard(contentPadding = PaddingValues(0.dp)) {
             Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(
                     "信号时点 ${ts ?: "暂无"} · 实时价来自腾讯行情" + if (liveCount == 0) "（休市或未取到，显示信号价）" else "",
-                    style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+                    style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary,
                 )
                 Row(Modifier.fillMaxWidth().padding(top = 2.dp)) {
                     Text("名称", modifier = Modifier.weight(2.2f), style = HeadCell)
@@ -516,7 +530,7 @@ private fun PickTrackingSection(state: UiState, vm: SkappViewModel) {
                     val diff = if (livePrice != null && refPrice != null && refPrice != 0.0) {
                         (livePrice - refPrice) / refPrice * 100
                     } else null
-                    val color = livePct?.let { if (it >= 0) UP else DOWN } ?: Color.Gray
+                    val color = livePct?.let { if (it >= 0) UP else DOWN } ?: SkColors.textSecondary
                     Row(
                         Modifier.fillMaxWidth().clickable { vm.openDetail(s.code) }.padding(vertical = 3.dp),
                     ) {
@@ -527,7 +541,7 @@ private fun PickTrackingSection(state: UiState, vm: SkappViewModel) {
                             )
                             Text(
                                 listOfNotNull(s.code, s.score?.let { String.format("分 %.1f", it) }).joinToString(" · "),
-                                style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+                                style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary,
                             )
                         }
                         Text(
@@ -541,19 +555,19 @@ private fun PickTrackingSection(state: UiState, vm: SkappViewModel) {
                         )
                         Text(
                             refPrice?.let { String.format("%.2f", it) } ?: "—",
-                            style = MaterialTheme.typography.bodySmall, color = Color.Gray, modifier = Modifier.weight(1.2f),
+                            style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary, modifier = Modifier.weight(1.2f),
                         )
                         Text(
                             diff?.let { String.format("%+.2f%%", it) } ?: "—",
                             style = MaterialTheme.typography.bodySmall,
-                            color = diff?.let { if (it >= 0) UP else DOWN } ?: Color.Gray,
+                            color = diff?.let { if (it >= 0) UP else DOWN } ?: SkColors.textSecondary,
                             modifier = Modifier.weight(1.2f),
                         )
                     }
                 }
                 Text(
                     "点任意行看详情；「较信号」= 现价相对信号价的变动，用于判断是否已追高。",
-                    style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+                    style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary,
                 )
             }
         }

@@ -49,6 +49,7 @@ object PositionCap {
      * @param heightPrev  前几个交易日的连板高度（退潮判断用）；null=不可得
      * @param promo       晋级率（0~1）；null=不可得
      * @param sectorRet5d 板块 5 日动量中位数（%）；null=不可得（存档不足 5 天）
+     * @param volScale    波动率目标闸门系数（0.2~1.0，[VolTargetGate]）；null=不可得，不参与
      */
     fun compute(
         breadth: Double?,
@@ -59,6 +60,7 @@ object PositionCap {
         heightPrev: Int? = null,
         promo: Double? = null,
         sectorRet5d: Double? = null,
+        volScale: Double? = null,
     ): Result {
         val gates = mutableListOf<String>()
 
@@ -104,6 +106,16 @@ object PositionCap {
             reasons += "连板高度：不可得（本地存档不足 2 天），趋势项取中性 0.5"
         }
         sectorRet5d?.let { reasons += "板块 5 日动量中位数 %+.2f%%".format(it) }
+        // 波动率闸门：只降不升，且不改变硬闸门已经定下的天花板高低（取 min）
+        if (volScale != null) {
+            val before = cap
+            cap = (cap * volScale.coerceIn(0.0, 1.0)).coerceIn(0.0, MAX_CAP)
+            if (cap < before) {
+                reasons += "波动率闸门：系数 %.2f → 上限 %.0f%% → %.0f%%".format(
+                    volScale, before * 100, cap * 100,
+                )
+            }
+        }
         // 注意：闸门文案里自带 %（如「宽度 22%」），这里必须走 %s 参数，不能把它拼回格式串
         gates.forEach { g -> reasons += "闸门命中：%s → 上限压到 %.0f%%".format(g, GATE_CAP * 100) }
 

@@ -1,5 +1,12 @@
 package com.skapp.app.ui.screens
 
+import com.skapp.app.ui.components.ParityStrip
+import com.skapp.app.ui.components.parityViewOfArtifact
+import com.skapp.app.ui.components.SkCard
+import com.skapp.app.ui.components.StateView
+import com.skapp.app.ui.components.UiStateKind
+import com.skapp.app.ui.theme.SkColors
+
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -8,6 +15,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -49,7 +57,7 @@ fun DecisionScreen(vm: SkappViewModel, state: UiState) {
     ) {
         if (crash != null) {
             item {
-                Card(colors = CardDefaults.cardColors(containerColor = Color(0xFFFFEBEE))) {
+                Card(colors = CardDefaults.cardColors(containerColor = SkColors.errorContainer)) {
                     Column(Modifier.padding(10.dp)) {
                         Text(
                             "上次崩溃记录（点击清除）",
@@ -63,13 +71,13 @@ fun DecisionScreen(vm: SkappViewModel, state: UiState) {
                         Text(
                             crash.take(700),
                             style = MaterialTheme.typography.bodySmall,
-                            color = Color(0xFF8B2500),
+                            color = SkColors.errorText,
                         )
                         Text(
                             "完整堆栈已导出到 Download/skapp_crash_*.txt（重启后生成），" +
                                 "直接把这个文件发我即可；截图本页也可以。",
                             style = MaterialTheme.typography.bodySmall,
-                            color = Color.Gray,
+                            color = SkColors.textSecondary,
                         )
                     }
                 }
@@ -82,13 +90,13 @@ fun DecisionScreen(vm: SkappViewModel, state: UiState) {
                 Text(
                     listOfNotNull(d.ts, d.engine).joinToString(" · ").ifEmpty { "暂无数据" },
                     style = MaterialTheme.typography.bodySmall,
-                    color = Color.Gray,
+                    color = SkColors.textSecondary,
                 )
             }
         }
 
         item {
-            Card(colors = CardDefaults.cardColors()) {
+            SkCard(contentPadding = PaddingValues(0.dp)) {
                 Column(Modifier.padding(12.dp)) {
                     Text(
                         "市场状态：${d.marketRegime ?: "暂无数据"}",
@@ -98,6 +106,13 @@ fun DecisionScreen(vm: SkappViewModel, state: UiState) {
                     if (!regimeDetail.isNullOrBlank()) {
                         Text(regimeDetail, style = MaterialTheme.typography.bodySmall)
                     }
+                    // 口径：市场环境 → gate，权重来源是否云端标定。与推股卡同一数据源（产物 metadata）。
+                    ParityStrip(
+                        parityViewOfArtifact(
+                            if (state.localMiddayPicks.picks.isNotEmpty()) state.localMiddayPicks.metadata
+                            else state.localPremarketPicks.metadata,
+                        ),
+                    )
                     val pa = d.positionAdvice
                     if (pa.isNotEmpty()) {
                         Spacer(Modifier.height(6.dp))
@@ -110,7 +125,7 @@ fun DecisionScreen(vm: SkappViewModel, state: UiState) {
                             fontWeight = FontWeight.Medium,
                         )
                         if (reason != null) {
-                            Text(reason, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                            Text(reason, style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
                         }
                         // 硬闸门单独一行标红：这是「今天别做」的判定，不能混在灰字理由里被读漏
                         val gates = (pa["gates"] as? List<*>)?.mapNotNull { it?.toString() }.orEmpty()
@@ -118,7 +133,7 @@ fun DecisionScreen(vm: SkappViewModel, state: UiState) {
                             Text(
                                 "闸门命中：$g",
                                 style = MaterialTheme.typography.bodySmall,
-                                color = Color(0xFFD29922),
+                                color = SkColors.warn,
                                 fontWeight = FontWeight.Medium,
                             )
                         }
@@ -130,7 +145,7 @@ fun DecisionScreen(vm: SkappViewModel, state: UiState) {
                             Text(
                                 "① ETF 份额信号：$adjReason",
                                 style = MaterialTheme.typography.bodySmall,
-                                color = if (changed) MaterialTheme.colorScheme.primary else Color.Gray,
+                                color = if (changed) MaterialTheme.colorScheme.primary else SkColors.textSecondary,
                             )
                         }
 
@@ -142,7 +157,7 @@ fun DecisionScreen(vm: SkappViewModel, state: UiState) {
                                 "② 校准闸门：${gate.confidenceLabel} · 可信度 ${(gate.confidence * 100).toInt()}%" +
                                     " × 买入折扣 ${(gate.buyFactor * 100).toInt()}% = 仓位系数 ${gate.positionPctLabel}",
                                 style = MaterialTheme.typography.bodySmall,
-                                color = if (capped < afterSm) MaterialTheme.colorScheme.primary else Color.Gray,
+                                color = if (capped < afterSm) MaterialTheme.colorScheme.primary else SkColors.textSecondary,
                             )
                             if (capped < afterSm) {
                                 Text(
@@ -173,14 +188,14 @@ fun DecisionScreen(vm: SkappViewModel, state: UiState) {
             items(d.cards.filter { isMainBoardPick(it.code) }, key = { it.code }) { c -> DecisionCardView(c, vm) }
         } else {
             item {
-                Text("暂无数据：上游未产出或文件不可达。", color = Color.Gray)
+                StateView(UiStateKind.Empty, "暂无数据：上游未产出或文件不可达。")
             }
         }
 
         if (d.avoid.isNotEmpty()) {
             item { SectionHeader("回避名单") }
             item {
-                Card(colors = CardDefaults.cardColors()) {
+                SkCard(contentPadding = PaddingValues(0.dp)) {
                     Text(
                         d.avoid.take(20).joinToString("、") { it.toString() },
                         Modifier.padding(12.dp),
@@ -196,10 +211,10 @@ fun DecisionScreen(vm: SkappViewModel, state: UiState) {
 private fun DecisionCardView(c: DecisionCard, vm: SkappViewModel) {
     val pct = c.pctChg
     val color = when {
-        pct == null -> Color.Gray
-        pct > 0 -> Color(0xFFF85149)
-        pct < 0 -> Color(0xFF3FB950)
-        else -> Color.Gray
+        pct == null -> SkColors.textSecondary
+        pct > 0 -> SkColors.marketUp
+        pct < 0 -> SkColors.marketDown
+        else -> SkColors.textSecondary
     }
     Card(
         modifier = Modifier.fillMaxWidth().clickable { vm.openDetail(c.code) },
@@ -209,7 +224,7 @@ private fun DecisionCardView(c: DecisionCard, vm: SkappViewModel) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Column {
                     Text(c.name ?: c.code, fontWeight = FontWeight.Medium)
-                    Text(c.code, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                    Text(c.code, style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
                 }
                 Column(horizontalAlignment = Alignment.End) {
                     Text(
@@ -249,7 +264,7 @@ private fun DecisionCardView(c: DecisionCard, vm: SkappViewModel) {
                 Text("持有 ${c.holdingDays} 天", style = MaterialTheme.typography.bodySmall)
             }
             if (!c.risk.isNullOrBlank()) {
-                Text("风险：${c.risk}", style = MaterialTheme.typography.bodySmall, color = Color(0xFFD29922))
+                Text("风险：${c.risk}", style = MaterialTheme.typography.bodySmall, color = SkColors.warn)
             }
             val reasons = c.reasons.filter { it.isNotBlank() }
             if (reasons.isNotEmpty()) {
@@ -273,7 +288,7 @@ private fun SectionHeader(t: String) {
 @Composable
 private fun SmartMoneyCard(state: UiState, vm: SkappViewModel) {
     val sm = state.smartMoney
-    Card(colors = CardDefaults.cardColors()) {
+    SkCard(contentPadding = PaddingValues(0.dp)) {
         Column(Modifier.padding(12.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text("聪明钱 · 宽基 ETF 份额", fontWeight = FontWeight.SemiBold)
@@ -287,16 +302,16 @@ private fun SmartMoneyCard(state: UiState, vm: SkappViewModel) {
             if (sm == null) {
                 Text(
                     "暂无数据：etf_shares.json 不可达或解析失败。",
-                    style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+                    style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary,
                 )
                 return@Column
             }
             Text(
                 listOfNotNull(sm.ts, sm.source).joinToString(" · ").ifBlank { "时点暂无" },
-                style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+                style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary,
             )
             sm.staleText?.let {
-                Text(it, style = MaterialTheme.typography.bodySmall, color = Color(0xFFB8860B))
+                Text(it, style = MaterialTheme.typography.bodySmall, color = SkColors.warn)
             }
             Spacer(Modifier.height(6.dp))
             if (sm.ready) {
@@ -310,7 +325,7 @@ private fun SmartMoneyCard(state: UiState, vm: SkappViewModel) {
             } else {
                 Text(
                     "历史真值 ${sm.progressText}，不足 ${sm.minHistoryDays} 天：仅展示可核验的份额变动，不参与仓位调整",
-                    style = MaterialTheme.typography.bodySmall, color = Color(0xFFD29922),
+                    style = MaterialTheme.typography.bodySmall, color = SkColors.warn,
                 )
             }
             val d1 = sm.d1NetYi
@@ -325,11 +340,11 @@ private fun SmartMoneyCard(state: UiState, vm: SkappViewModel) {
                 Spacer(Modifier.height(8.dp))
                 // 表头
                 Row(Modifier.fillMaxWidth()) {
-                    Text("ETF", style = MaterialTheme.typography.bodySmall, color = Color.Gray, modifier = Modifier.weight(2.4f))
-                    Text("份额(亿)", style = MaterialTheme.typography.bodySmall, color = Color.Gray, modifier = Modifier.weight(1.3f))
-                    Text("日", style = MaterialTheme.typography.bodySmall, color = Color.Gray, modifier = Modifier.weight(1f))
-                    Text("5日", style = MaterialTheme.typography.bodySmall, color = Color.Gray, modifier = Modifier.weight(1f))
-                    Text("20日", style = MaterialTheme.typography.bodySmall, color = Color.Gray, modifier = Modifier.weight(1.05f))
+                    Text("ETF", style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary, modifier = Modifier.weight(2.4f))
+                    Text("份额(亿)", style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary, modifier = Modifier.weight(1.3f))
+                    Text("日", style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary, modifier = Modifier.weight(1f))
+                    Text("5日", style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary, modifier = Modifier.weight(1f))
+                    Text("20日", style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary, modifier = Modifier.weight(1.05f))
                 }
                 HorizontalDivider()
                 sm.etfs.forEach { e ->
@@ -339,7 +354,7 @@ private fun SmartMoneyCard(state: UiState, vm: SkappViewModel) {
                             Text(
                                 if (e.nEtfs > 1) "${e.nEtfs} 只 ETF 合计 · ${e.liveDays} 天历史"
                                 else "${e.code} · ${e.liveDays} 天历史",
-                                style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+                                style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary,
                             )
                         }
                         Text(
@@ -355,11 +370,11 @@ private fun SmartMoneyCard(state: UiState, vm: SkappViewModel) {
                 Text(
                     "每个指数取该指数下全部 ETF 的份额合计（沪深300 就聚合了 30 只），来源为上交所 ETF 规模 / " +
                         "深交所基金规模日度披露，单位亿份；日/5日/20日为份额变动百分比，样本不足显示「—」，不用估算补齐。",
-                    style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+                    style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary,
                 )
             }
             sm.positionNote?.let {
-                Text("口径：$it", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                Text("口径：$it", style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
             }
         }
     }
@@ -368,10 +383,10 @@ private fun SmartMoneyCard(state: UiState, vm: SkappViewModel) {
 @Composable
 private fun PctCell(v: Double?, modifier: Modifier) {
     val color = when {
-        v == null -> Color.Gray
-        v > 0 -> Color(0xFFF85149)
-        v < 0 -> Color(0xFF3FB950)
-        else -> Color.Gray
+        v == null -> SkColors.textSecondary
+        v > 0 -> SkColors.marketUp
+        v < 0 -> SkColors.marketDown
+        else -> SkColors.textSecondary
     }
     Text(
         v?.let { String.format("%+.2f%%", it) } ?: "—",
@@ -405,7 +420,7 @@ private fun FactorBoardCard(state: UiState, vm: SkappViewModel) {
             if (fb == null) {
                 Text(
                     "点「重算」加载：需要云端 weight_calibration.json + 本地日 K（≥60 根）。",
-                    style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+                    style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary,
                 )
                 return@Column
             }
@@ -416,10 +431,10 @@ private fun FactorBoardCard(state: UiState, vm: SkappViewModel) {
                     "${calib.engine} · ${calib.horizon} 日持有 · ${calib.specs.size} 个指标 · " +
                         "看多基准 ${calib.bullBaseRate?.let { String.format("%.1f", it) } ?: "—"}% / " +
                         "看空 ${calib.bearBaseRate?.let { String.format("%.1f", it) } ?: "—"}%",
-                    style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+                    style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary,
                 )
             } else {
-                Text("云端标定不可用，无法打分。", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                Text("云端标定不可用，无法打分。", style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
             }
 
             fb.gate?.let { g ->
@@ -430,7 +445,7 @@ private fun FactorBoardCard(state: UiState, vm: SkappViewModel) {
                     style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium,
                 )
                 g.notes.take(2).forEach {
-                    Text("· $it", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                    Text("· $it", style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
                 }
             }
 
@@ -455,24 +470,24 @@ private fun FactorBoardCard(state: UiState, vm: SkappViewModel) {
                                 color = when (sc.verdict) {
                                     com.skapp.app.data.FactorWeightStrategy.Verdict.AVOID ->
                                         MaterialTheme.colorScheme.error
-                                    com.skapp.app.data.FactorWeightStrategy.Verdict.WATCH -> Color(0xFFB8860B)
-                                    else -> Color.Gray
+                                    com.skapp.app.data.FactorWeightStrategy.Verdict.WATCH -> SkColors.warn
+                                    else -> SkColors.textSecondary
                                 },
                             )
                             Spacer(Modifier.width(6.dp))
                             Text(
                                 "多${sc.bullCount}/空${sc.bearCount}",
-                                style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+                                style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary,
                             )
                         }
                         sc.reasons.take(2).forEach {
-                            Text(it, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                            Text(it, style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
                         }
                     }
                     Text(
                         String.format("%+.2f", sc.netScore),
                         style = MaterialTheme.typography.bodySmall,
-                        color = if (sc.netScore < 0) MaterialTheme.colorScheme.error else Color.Gray,
+                        color = if (sc.netScore < 0) MaterialTheme.colorScheme.error else SkColors.textSecondary,
                     )
                 }
             }
@@ -481,10 +496,10 @@ private fun FactorBoardCard(state: UiState, vm: SkappViewModel) {
             Text(
                 fb.scored.firstOrNull()?.score?.caveat
                     ?: "AVOID 才是有信息量的结论；PASS 只表示本模块没有否决它。",
-                style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+                style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary,
             )
             if (fb.dataNote.isNotBlank()) {
-                Text("云端数据：${fb.dataNote}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                Text("云端数据：${fb.dataNote}", style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
             }
         }
     }
@@ -508,7 +523,7 @@ private fun SectorBoardCard(state: UiState) {
                 Text(
                     listOfNotNull(sb.date.ifBlank { null }, "${sb.sectors.size} 个板块")
                         .joinToString(" · "),
-                    style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+                    style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary,
                 )
             }
 
@@ -529,7 +544,7 @@ private fun SectorBoardCard(state: UiState) {
                             top.chg5d?.let { "5日 ${String.format("%+.1f%%", it)}" },
                             top.momentum?.let { "动量 ${String.format("%.0f", it)}" },
                         ).joinToString(" · "),
-                        style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+                        style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary,
                     )
                 }
             }
@@ -545,7 +560,7 @@ private fun SectorBoardCard(state: UiState) {
                         color = when (r.grade) {
                             "B" -> MaterialTheme.colorScheme.primary
                             "D" -> MaterialTheme.colorScheme.error
-                            else -> Color.Gray
+                            else -> SkColors.textSecondary
                         },
                     )
                     Text(r.name, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
@@ -579,16 +594,16 @@ private fun SectorBoardCard(state: UiState) {
                     "个股归属：成分股反查 ${sb.stockToSector.size} 只，其中 " +
                         "${sb.mappedCount} 只落在本板块表" +
                         (if (sb.mappedSectorTotal > 0) "（板块表只跟踪 ${sb.sectors.size}/${sb.mappedSectorTotal} 个板块）" else ""),
-                    style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+                    style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary,
                 )
                 com.skapp.app.data.SectorLink.MapSource.INDUSTRY_MAP_EM -> Text(
                     "个股归属：只有兜底的行业名映射，覆盖 ${String.format("%.1f%%", cov * 100)}" +
                         "（行业层级与板块不一致，多数票只能标「未知板块」）",
-                    style = MaterialTheme.typography.bodySmall, color = Color(0xFFB8860B),
+                    style = MaterialTheme.typography.bodySmall, color = SkColors.warn,
                 )
                 com.skapp.app.data.SectorLink.MapSource.NONE -> Text(
                     "缺个股行业映射：只显示板块级强弱，个股归属不可用",
-                    style = MaterialTheme.typography.bodySmall, color = Color(0xFFB8860B),
+                    style = MaterialTheme.typography.bodySmall, color = SkColors.warn,
                 )
             }
         }

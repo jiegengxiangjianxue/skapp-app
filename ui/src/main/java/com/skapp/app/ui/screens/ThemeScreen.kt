@@ -1,5 +1,9 @@
 package com.skapp.app.ui.screens
 
+import com.skapp.app.ui.components.StateView
+import com.skapp.app.ui.components.UiStateKind
+import com.skapp.app.ui.theme.SkColors
+
 import androidx.compose.foundation.layout.Arrangement
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -52,17 +56,17 @@ fun ThemeScreen(vm: SkappViewModel, state: UiState) {
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         when {
-            loading -> Text("正在加载题材报告…", color = Color.Gray, style = MaterialTheme.typography.bodySmall)
+            loading -> Text("正在加载题材报告…", color = SkColors.textSecondary, style = MaterialTheme.typography.bodySmall)
             failed -> {
                 val fallback = state.news.themes
                 if (fallback.isEmpty()) {
                     Text(
                         "题材报告加载失败：请检查网络；云端文件存在时会显示题材数与更新时间。",
-                        color = Color.Gray, style = MaterialTheme.typography.bodySmall,
+                        color = SkColors.textSecondary, style = MaterialTheme.typography.bodySmall,
                     )
                 } else {
                     Text("theme_report 不可达，以下仅为旧热点 fallback（${fallback.size}）",
-                        color = Color.Gray, style = MaterialTheme.typography.bodySmall)
+                        color = SkColors.textSecondary, style = MaterialTheme.typography.bodySmall)
                     fallback.forEach { theme ->
                         Text((theme["name"] ?: theme["theme"] ?: "insufficient").toString(),
                             style = MaterialTheme.typography.bodyMedium)
@@ -73,11 +77,11 @@ fun ThemeScreen(vm: SkappViewModel, state: UiState) {
                 val root = json!!
                 Text(
                     "生成 ${root.optString("ts")} · ${root.optInt("n_themes")} 个题材",
-                    style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+                    style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary,
                 )
                 val themes = root.optJSONArray("themes")
                 if (themes == null || themes.length() == 0) {
-                    Text("本轮无题材产出。", color = Color.Gray)
+                    StateView(UiStateKind.Empty, "本轮无题材产出。")
                 } else {
                     for (i in 0 until themes.length()) {
                         ThemeCard(themes.optJSONObject(i) ?: continue, vm)
@@ -98,7 +102,7 @@ private fun ThemeCard(t: JSONObject, vm: SkappViewModel) {
                 Text(t.optString("theme"), fontWeight = FontWeight.Bold)
                 Text(
                     "${t.optString("tier")} · 龙头 ${t.opt("leader") ?: "暂无"}",
-                    style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+                    style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary,
                 )
             }
             Spacer(Modifier.height(4.dp))
@@ -110,7 +114,7 @@ private fun ThemeCard(t: JSONObject, vm: SkappViewModel) {
                     style = MaterialTheme.typography.bodySmall)
                 for (i in 0 until path.length()) {
                     Text("· ${path.optString(i)}",
-                        style = MaterialTheme.typography.bodySmall, color = Color(0xFFD29922))
+                        style = MaterialTheme.typography.bodySmall, color = SkColors.warn)
                 }
                 Spacer(Modifier.height(4.dp))
             }
@@ -118,7 +122,7 @@ private fun ThemeCard(t: JSONObject, vm: SkappViewModel) {
             // 板块涨幅
             Text(
                 "板块 1日 ${t.opt("chg_1d") ?: "—"} / 5日 ${t.opt("chg_5d") ?: "—"} / 20日 ${t.opt("chg_20d") ?: "—"}　热度 ${t.opt("score") ?: "—"}",
-                style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+                style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary,
             )
             Spacer(Modifier.height(6.dp))
             HorizontalDivider()
@@ -136,7 +140,7 @@ private fun ThemeCard(t: JSONObject, vm: SkappViewModel) {
                         Text("${h.optString("name")} ${h.optString("code")}",
                             style = MaterialTheme.typography.bodySmall)
                         Text("${h.opt("lianban") ?: 0}板 · 封板${h.optString("seal_label")} · 20日${h.opt("chg20") ?: "—"}%",
-                            style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                            style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
                     }
                 }
             }
@@ -162,7 +166,7 @@ private fun ThemeCard(t: JSONObject, vm: SkappViewModel) {
                     Text("${w.optString("code")}　${"★".repeat(star)}",
                         style = MaterialTheme.typography.bodySmall)
                     Text("20日 ${w.opt("chg20") ?: "—"}% · 位置 ${w.opt("pos") ?: "—"}% · 现价 ${w.opt("close") ?: "—"}",
-                        style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                        style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
                 }
             }
 
@@ -171,7 +175,7 @@ private fun ThemeCard(t: JSONObject, vm: SkappViewModel) {
                 Spacer(Modifier.height(4.dp))
                 for (i in 0 until deg.length()) {
                     Text("降级：${deg.optString(i)}",
-                        style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                        style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
                 }
             }
         }

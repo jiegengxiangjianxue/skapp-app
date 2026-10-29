@@ -1,5 +1,7 @@
 package com.skapp.app.ui.screens
 
+import com.skapp.app.ui.theme.SkColors
+
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -7,10 +9,12 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import com.skapp.app.ui.components.SkCard
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -47,24 +51,24 @@ fun UnifiedAskScreen(vm: SkappViewModel, state: UiState) {
         Text(
             "GitCode 优先、GitHub Models 备份；所有结论仅基于已拉取的真实数据。",
             style = MaterialTheme.typography.bodySmall,
-            color = Color.Gray,
+            color = SkColors.textSecondary,
         )
 
-        Card(colors = CardDefaults.cardColors()) {
+        SkCard(contentPadding = PaddingValues(0.dp)) {
             Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text("双源状态", fontWeight = FontWeight.SemiBold)
                 Text("GitCode：${providerState(state.aiConfigured)}")
                 Text("GitHub Models：${providerState(state.githubConfigured)}")
                 if (state.aiProviderStatus.isNotBlank()) {
-                    Text(state.aiProviderStatus, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                    Text(state.aiProviderStatus, style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
                 }
                 state.aiLastProvider?.let {
-                    Text("最近调用：$it", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                    Text("最近调用：$it", style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
                 }
             }
         }
 
-        Card(colors = CardDefaults.cardColors()) {
+        SkCard(contentPadding = PaddingValues(0.dp)) {
             Column(Modifier.padding(12.dp)) {
                 Text("token 配置", fontWeight = FontWeight.SemiBold)
                 OutlinedTextField(
@@ -84,7 +88,7 @@ fun UnifiedAskScreen(vm: SkappViewModel, state: UiState) {
                 Text(
                     if (state.aiConfigured) "已配置，可用" else "未配置",
                     style = MaterialTheme.typography.bodySmall,
-                    color = if (state.aiConfigured) Color(0xFF3FB950) else Color(0xFFD29922),
+                    color = if (state.aiConfigured) SkColors.success else SkColors.warn,
                 )
                 Spacer(Modifier.height(8.dp))
                 HorizontalDivider()
@@ -106,22 +110,22 @@ fun UnifiedAskScreen(vm: SkappViewModel, state: UiState) {
                 Text(
                     if (state.githubConfigured) "已配置，可用" else "未配置",
                     style = MaterialTheme.typography.bodySmall,
-                    color = if (state.githubConfigured) Color(0xFF3FB950) else Color(0xFFD29922),
+                    color = if (state.githubConfigured) SkColors.success else SkColors.warn,
                 )
             }
         }
 
-        Card(colors = CardDefaults.cardColors()) {
+        SkCard(contentPadding = PaddingValues(0.dp)) {
             Column(Modifier.padding(12.dp)) {
                 Text("个股复盘", fontWeight = FontWeight.SemiBold)
                 Text(
                     "使用当前详情页的实时行情、12 引擎、29 因子、技术面、财务、新闻和板块数据。",
                     style = MaterialTheme.typography.bodySmall,
-                    color = Color.Gray,
+                    color = SkColors.textSecondary,
                 )
                 Spacer(Modifier.height(6.dp))
                 if (detail == null) {
-                    Text("暂无数据：请先打开一只股票的详情页。", color = Color(0xFFD29922))
+                    Text("暂无数据：请先打开一只股票的详情页。", color = SkColors.warn)
                 } else {
                     Text("当前股票：${detail.name ?: detail.code}", style = MaterialTheme.typography.bodySmall)
                     Button(
@@ -140,21 +144,21 @@ fun UnifiedAskScreen(vm: SkappViewModel, state: UiState) {
             }
         }
 
-        Card(colors = CardDefaults.cardColors()) {
+        SkCard(contentPadding = PaddingValues(0.dp)) {
             Column(Modifier.padding(12.dp)) {
                 Text("市场总结", fontWeight = FontWeight.SemiBold)
-                Text("来源：实时总结接口；时点：$summaryStamp", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                Text("来源：实时总结接口；时点：$summaryStamp", style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
                 Text(summaryText ?: "暂无数据：市场总结未返回有效内容。", style = MaterialTheme.typography.bodySmall)
             }
         }
 
-        Card(colors = CardDefaults.cardColors()) {
+        SkCard(contentPadding = PaddingValues(0.dp)) {
             Column(Modifier.padding(12.dp)) {
                 Text("数据问答", fontWeight = FontWeight.SemiBold)
                 Text(
                     "可追问行情、推股、决策、消息、多池和当前详情股；缺少真实数据时返回 unknown。",
                     style = MaterialTheme.typography.bodySmall,
-                    color = Color.Gray,
+                    color = SkColors.textSecondary,
                 )
                 Spacer(Modifier.height(6.dp))
                 OutlinedTextField(
@@ -177,7 +181,7 @@ fun UnifiedAskScreen(vm: SkappViewModel, state: UiState) {
         state.aiAnswer?.let { AiOutputBlock("数据问答结果", it) }
 
         if (!aiAvailable) {
-            Text("请至少配置一个 AI token；未配置时 AI 结果为 unknown。", color = Color.Gray,
+            Text("请至少配置一个 AI token；未配置时 AI 结果为 unknown。", color = SkColors.textSecondary,
                 style = MaterialTheme.typography.bodySmall)
         }
     }
@@ -187,7 +191,7 @@ private fun providerState(configured: Boolean): String = if (configured) "已配
 
 @Composable
 private fun AiOutputBlock(title: String, text: String) {
-    Card(colors = CardDefaults.cardColors()) {
+    SkCard(contentPadding = PaddingValues(0.dp)) {
         Column(Modifier.padding(12.dp)) {
             Text(title, fontWeight = FontWeight.SemiBold)
             HorizontalDivider()

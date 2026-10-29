@@ -1,5 +1,7 @@
 package com.skapp.app.ui.screens
 
+import com.skapp.app.ui.theme.SkColors
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -9,9 +11,11 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import com.skapp.app.ui.components.SkCard
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -32,8 +36,8 @@ import com.skapp.app.data.NewsCalc
 import com.skapp.app.ui.SkappViewModel
 import com.skapp.app.ui.UiState
 
-private val UP = Color(0xFFF85149)
-private val DOWN = Color(0xFF3FB950)
+private val UP = SkColors.marketUp
+private val DOWN = SkColors.marketDown
 
 @Composable
 fun NewsScreen(vm: SkappViewModel, state: UiState) {
@@ -70,7 +74,7 @@ fun NewsScreen(vm: SkappViewModel, state: UiState) {
             val sourceLine = state.news.sourceStatus.entries.joinToString(" · ") { "${it.key}:${it.value}" }
             Text(
                 "本地多源 ${if (sourceLine.isBlank()) "暂无状态" else sourceLine} · 抓取 ${state.news.fetchedAt ?: "暂无数据"} · 去重 ${state.news.dedupCount ?: "暂无数据"}",
-                style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+                style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary,
             )
             if (state.news.sourceErrors.isNotEmpty()) {
                 Text("部分源失败：${state.news.sourceErrors.joinToString("；")}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
@@ -83,7 +87,7 @@ fun NewsScreen(vm: SkappViewModel, state: UiState) {
         if (snapshotRows.isEmpty() && calcRows.isEmpty() && !state.newsCalcLoading) {
             Text(
                 if (tab == 1) "暂无数据：主线消息未返回。" else "暂无数据：快讯未返回。",
-                Modifier.fillMaxWidth().padding(24.dp), color = Color.Gray,
+                Modifier.fillMaxWidth().padding(24.dp), color = SkColors.textSecondary,
             )
         } else {
             LazyColumn(
@@ -123,7 +127,7 @@ fun NewsScreen(vm: SkappViewModel, state: UiState) {
 
 @Composable
 private fun RawNewsCard(row: Map<String, Any?>, calc: NewsCalc?, vm: SkappViewModel) {
-    Card(colors = CardDefaults.cardColors()) {
+    SkCard(contentPadding = PaddingValues(0.dp)) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
             Text(newsTitle(row), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
             val meta = listOfNotNull(
@@ -131,7 +135,7 @@ private fun RawNewsCard(row: Map<String, Any?>, calc: NewsCalc?, vm: SkappViewMo
                 row["time"] ?: row["updated"] ?: row["ts"],
                 row["verdict"] ?: row["direction"],
             ).map { it.toString() }.filter { it.isNotBlank() }.joinToString(" · ")
-            if (meta.isNotBlank()) Text(meta, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+            if (meta.isNotBlank()) Text(meta, style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
             val reason = row["reason"] ?: row["analysis"] ?: row["note"]
             reason?.toString()?.takeIf { it.isNotBlank() }?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
             extractCodes(row).forEach { code ->
@@ -146,7 +150,7 @@ private fun RawNewsCard(row: Map<String, Any?>, calc: NewsCalc?, vm: SkappViewMo
 
 @Composable
 private fun NewsCalcCard(calc: NewsCalc, vm: SkappViewModel) {
-    Card(colors = CardDefaults.cardColors()) {
+    SkCard(contentPadding = PaddingValues(0.dp)) {
         Column(Modifier.padding(12.dp)) {
             Text(calc.newsTitle, fontWeight = FontWeight.Medium)
             NewsCalcInline(calc, vm)
@@ -159,13 +163,13 @@ private fun NewsCalcInline(n: NewsCalc, vm: SkappViewModel) {
     HorizontalDivider(Modifier.padding(vertical = 5.dp))
     Text(
         listOfNotNull(n.source, n.ts, n.verdict.takeIf { it.isNotBlank() }).joinToString(" · ").ifBlank { "实时分析 · 时点暂无" },
-        style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+        style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary,
     )
     Text("方向：${n.direction.ifBlank { "insufficient" }} · 判定：${n.verdict.ifBlank { "insufficient" }}",
-        style = MaterialTheme.typography.bodySmall, color = if (n.direction == "neg" || n.verdict == "利空") DOWN else if (n.direction == "pos" || n.verdict.contains("利好")) UP else Color.Gray)
+        style = MaterialTheme.typography.bodySmall, color = if (n.direction == "neg" || n.verdict == "利空") DOWN else if (n.direction == "pos" || n.verdict.contains("利好")) UP else SkColors.textSecondary)
     if (n.positiveReason?.isNotBlank() == true && n.positiveReason != "insufficient") Text("利好理由：${n.positiveReason}", style = MaterialTheme.typography.bodySmall, color = UP)
     if (n.negativeReason?.isNotBlank() == true && n.negativeReason != "insufficient") Text("利空理由：${n.negativeReason}", style = MaterialTheme.typography.bodySmall, color = DOWN)
-    if (n.sentimentHits.isNotEmpty()) Text("命中依据：${n.sentimentHits.joinToString("、")}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+    if (n.sentimentHits.isNotEmpty()) Text("命中依据：${n.sentimentHits.joinToString("、")}", style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
     if (n.impactCodes.isNotEmpty() && n.stocks.isEmpty()) Text("影响个股：${n.impactCodes.joinToString("、")}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
     if (n.boards.isNotEmpty()) {
         val detail = n.boards.joinToString("、") { name ->
@@ -179,13 +183,13 @@ private fun NewsCalcInline(n: NewsCalc, vm: SkappViewModel) {
                 m <= -1.5 -> "板块整体走弱（均跌 ${"%+.2f".format(m)}%），利好需防高开低走"
                 else -> "板块分化（均涨 ${"%+.2f".format(m)}%）"
             }
-            Text("板块研判：$tag", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+            Text("板块研判：$tag", style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
         }
     }
     if (n.themes.isNotEmpty()) Text("影响题材：${n.themes.joinToString("、")}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
     if (n.stocks.isEmpty()) {
         Text(if (n.status == "no_stock") "该条未提及具体股票，无个股计算。" else if (n.status == "board_only") (n.note ?: "仅命中板块，个股待确认。") else "计算中或数据不足。",
-            style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+            style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
     } else {
         n.stocks.forEach { stock ->
             Row(
@@ -198,8 +202,8 @@ private fun NewsCalcInline(n: NewsCalc, vm: SkappViewModel) {
                         style = MaterialTheme.typography.bodySmall, color = pctColor(stock.pctChg))
                     Text("中枢引擎 ${stock.localScore?.let { "%.1f".format(it) } ?: "insufficient"} · ${signalText(stock.signal)} · 量比 ${stock.volRatio?.let { "%.2f".format(it) } ?: "暂无"}",
                         style = MaterialTheme.typography.bodySmall, color = signalColor(stock.signal))
-                    if (stock.topReasons.isNotEmpty()) Text("证据：${stock.topReasons.joinToString("；")}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-                    stock.centralSummary?.takeIf { it.isNotBlank() }?.let { Text("引擎摘要：$it", style = MaterialTheme.typography.bodySmall, color = Color.Gray) }
+                    if (stock.topReasons.isNotEmpty()) Text("证据：${stock.topReasons.joinToString("；")}", style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
+                    stock.centralSummary?.takeIf { it.isNotBlank() }?.let { Text("引擎摘要：$it", style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary) }
                 }
                 Text("详情 ›", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
             }
@@ -211,9 +215,9 @@ private fun NewsCalcInline(n: NewsCalc, vm: SkappViewModel) {
 private fun NewsTab(name: String, count: Int, selected: Boolean, onClick: () -> Unit) {
     Card(modifier = Modifier.clickable { onClick() }, colors = CardDefaults.cardColors()) {
         Column(Modifier.padding(horizontal = 10.dp, vertical = 5.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(name, color = if (selected) MaterialTheme.colorScheme.primary else Color.Gray,
+            Text(name, color = if (selected) MaterialTheme.colorScheme.primary else SkColors.textSecondary,
                 style = MaterialTheme.typography.bodySmall, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal)
-            Text("$count", color = if (selected) MaterialTheme.colorScheme.primary else Color.Gray,
+            Text("$count", color = if (selected) MaterialTheme.colorScheme.primary else SkColors.textSecondary,
                 style = MaterialTheme.typography.bodySmall)
         }
     }
@@ -242,10 +246,10 @@ private fun extractCodes(row: Map<String, Any?>): List<String> {
 }
 
 private fun pctColor(pct: Double?): Color = when {
-    pct == null -> Color.Gray
+    pct == null -> SkColors.textSecondary
     pct > 0 -> UP
     pct < 0 -> DOWN
-    else -> Color.Gray
+    else -> SkColors.textSecondary
 }
 
 private fun signalText(signal: String?): String = when (signal) {
@@ -258,5 +262,5 @@ private fun signalText(signal: String?): String = when (signal) {
 private fun signalColor(signal: String?): Color = when (signal) {
     "bullish" -> UP
     "bearish" -> DOWN
-    else -> Color.Gray
+    else -> SkColors.textSecondary
 }

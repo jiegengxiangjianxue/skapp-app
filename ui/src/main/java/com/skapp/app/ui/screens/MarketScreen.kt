@@ -1,5 +1,7 @@
 package com.skapp.app.ui.screens
 
+import com.skapp.app.ui.theme.SkColors
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -37,8 +39,8 @@ import com.skapp.app.ui.SkappViewModel
 import com.skapp.app.ui.UiState
 import com.skapp.app.ui.Watchlist
 
-private val UP = Color(0xFFF85149)
-private val DOWN = Color(0xFF3FB950)
+private val UP = SkColors.marketUp
+private val DOWN = SkColors.marketDown
 
 /** 行情 Tab：自选股实时报价 + 搜索入口 */
 @Composable
@@ -54,14 +56,14 @@ fun MarketScreen(vm: SkappViewModel, state: UiState) {
             fontWeight = FontWeight.Bold,
         )
         state.quoteTs?.let {
-            Text("报价时点：$it", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+            Text("报价时点：$it", style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
         }
         if (!state.autoRefresh) {
             state.nextRefreshIn?.let { ms ->
                 Text(
                     "下次自动刷新：${fmtUntil(ms)}",
                     style = MaterialTheme.typography.bodySmall,
-                    color = Color(0xFFD29922),
+                    color = SkColors.warn,
                 )
             }
         }
@@ -73,7 +75,7 @@ fun MarketScreen(vm: SkappViewModel, state: UiState) {
             "已接入数据源 ${sources.size} 个：" +
                 sources.take(6).joinToString("、") { it.first } + " 等",
             style = MaterialTheme.typography.bodySmall,
-            color = Color.Gray,
+            color = SkColors.textSecondary,
         )
         Spacer(Modifier.height(8.dp))
 
@@ -118,7 +120,7 @@ fun MarketScreen(vm: SkappViewModel, state: UiState) {
         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             if (query.isNotBlank()) {
                 if (state.searchResults.isEmpty()) {
-                    item { Text("没有匹配的股票。", color = Color.Gray) }
+                    item { Text("没有匹配的股票。", color = SkColors.textSecondary) }
                 }
                 items(state.searchResults, key = { it.code }) { s ->
                     Card(
@@ -134,7 +136,7 @@ fun MarketScreen(vm: SkappViewModel, state: UiState) {
                             ) {
                                 Column {
                                     Text(s.name ?: s.code, fontWeight = FontWeight.Medium)
-                                    Text(s.code, color = Color.Gray, style = MaterialTheme.typography.bodySmall)
+                                    Text(s.code, color = SkColors.textSecondary, style = MaterialTheme.typography.bodySmall)
                                 }
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     TextButton(onClick = { Watchlist.add(ctx, s.code) }) {
@@ -151,7 +153,7 @@ fun MarketScreen(vm: SkappViewModel, state: UiState) {
                             Text(
                                 "点击查看：实时行情 + 12 引擎 + 29 因子 + 日/周/月K + 资金流 + 板块",
                                 style = MaterialTheme.typography.bodySmall,
-                                color = Color.Gray,
+                                color = SkColors.textSecondary,
                             )
                         }
                     }
@@ -172,10 +174,10 @@ fun MarketScreen(vm: SkappViewModel, state: UiState) {
 private fun IndexCard(idx: Map<String, Any?>) {
     val pct = (idx["pctChg"] as? Number)?.toDouble()
     val color = when {
-        pct == null -> Color.Gray
+        pct == null -> SkColors.textSecondary
         pct > 0 -> UP
         pct < 0 -> DOWN
-        else -> Color.Gray
+        else -> SkColors.textSecondary
     }
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -192,7 +194,7 @@ private fun IndexCard(idx: Map<String, Any?>) {
                     fontWeight = FontWeight.Medium,
                 )
                 (idx["source"] as? String)?.let {
-                    Text(it, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                    Text(it, style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
                 }
             }
             Column(horizontalAlignment = Alignment.End) {
@@ -227,10 +229,10 @@ private fun QuoteCard(row: com.skapp.app.ui.QuoteRow?, code: String, onClick: ()
                       onDelete: (() -> Unit)? = null) {
     val pct = row?.pctChg
     val color = when {
-        pct == null -> Color.Gray
+        pct == null -> SkColors.textSecondary
         pct > 0 -> UP
         pct < 0 -> DOWN
-        else -> Color.Gray
+        else -> SkColors.textSecondary
     }
     Card(
         modifier = Modifier.fillMaxWidth().clickable { onClick() },
@@ -243,7 +245,7 @@ private fun QuoteCard(row: com.skapp.app.ui.QuoteRow?, code: String, onClick: ()
         ) {
             Column {
                 Text(row?.name ?: code, fontWeight = FontWeight.Medium)
-                Text(row?.display ?: code, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                Text(row?.display ?: code, style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
             }
             Column(horizontalAlignment = Alignment.End) {
                 Text(
@@ -258,7 +260,7 @@ private fun QuoteCard(row: com.skapp.app.ui.QuoteRow?, code: String, onClick: ()
                 )
                 if (onDelete != null) {
                     TextButton(onClick = onDelete) {
-                        Text("删除", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                        Text("删除", style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
                     }
                 }
             }

@@ -29,6 +29,10 @@ object LocalScreener {
         val maxChgPct: Double = 9.6,   // 推股不追涨停：主板涨停附近(≥9.6%)不可买入
         val minVolRatio: Double = 1.2,
         val minScore: Double = 55.0,
+        /** 规格聚合分门槛。与 [minScore] 分开：切换期可以只开一个，不用二选一。 */
+        val minCanonical: Double = 55.0,
+        /** 资金/盘口双弱的票是否一票否决（默认开；关掉只用于回测对照） */
+        val vetoByRiskFlag: Boolean = true,
         val excludeST: Boolean = true,
         val maxCandidates: Int = 40,   // 逐只拉 K 线的上限（控制耗时/流量）
         val klineCount: Int = 120,
@@ -45,6 +49,16 @@ object LocalScreener {
         val pe: Double?,
         val mv: Double?,
         val engine: LocalEngineResult?,
+        /**
+         * 规格驱动链路结果（[EngineChain]）：含 flow/tape 外部票与规格聚合分。
+         * 与 [engine] 并存而不是替换：`engine` 是 12 引擎老口径，历史样本可比；
+         * `chain` 是与云端 `engine_v5` 同构的那一份，新逻辑一律读它。
+         */
+        val chain: EngineChain.ChainResult? = null,
+        /** 规格聚合分（含外部票）。bars < 30 或规格不可用时为 null，**不回落成 0**。 */
+        val canonicalScore: Double? = chain?.canonicalScore,
+        /** 新引擎的风控否决标记（资金与盘口双弱等）；null = 无否决 */
+        val riskFlag: String? = chain?.riskFlag,
         val centralScore: Double? = engine?.centralScore ?: engine?.composite,
         val resonanceRatio: Double? = engine?.resonanceRatio,
         val centralSummary: String? = engine?.summary,
@@ -113,12 +127,27 @@ object LocalScreener {
 
         // 板块强度表：只用于排序加权，映射表拿不到就整块降级（不拖垮筛选，也不编强度）
         val board = runCatching { SectorLink.load() }.getOrNull()
-        val strengthByName: Map<String, Double> = board?.let { b ->
-            runCatching {
-                LocalSectors.aggregate(snap, sectorOf = { b.sectorNameOf(it) })
-                    .rows.mapNotNull { r -> r.strength?.let { s -> r.name to s } }.toMap()
-            }.getOrNull()
-        }.orEmpty()
+        // 板块聚合只算一次，结果同时给「排序加权」和 rotation 引擎：分两次算会得到两个时点的热度。
+        val sectorsRes: LocalSectors.Result? = board?.let { b ->
+            runCatching { LocalSectors.aggregate(snap, sectorOf = { b.sectorNameOf(it) }) }.getOrNull()
+        }
+        val strengthByName: Map<String, Double> = sectorsRes?.rows
+            ?.mapNotNull { r -> r.strength?.let { s -> r.name to s } }?.toMap().orEmpty()
+
+        // 横截面（flow 分位）与广度一轮只算一次：逐票重算 = 5000×5000 次比较。
+        val breadth: Double? = runCatching {
+            val up = snap.count { (it.pctChg ?: 0.0) > 0.0 }
+            val down = snap.count { (it.pctChg ?: 0.0) < 0.0 }
+            if (up + down > 0) up.toDouble() / (up + down) else null
+        }.getOrNull()
+        // 盘中早期换手率是「已交易分钟」口径，按已过分钟还原成全天预估，否则一律判低换手。
+        val turnScale: Double = runCatching {
+            val m = TapeEngine.minuteOfDay(System.currentTimeMillis())
+            if (m > 570 && m < 897) (240.0 / (m - 570).toDouble()).coerceIn(1.0, 16.0) else 1.0
+        }.getOrDefault(1.0)
+        val flowOf: Map<String, FlowEngine.Result> = runCatching {
+            FlowEngine.screen(snap, emptyMap(), emptyMap(), breadth, turnScale).associateBy { it.code }
+        }.getOrDefault(emptyMap())
         val limitup = mode == "limitup"
         onProgress("全市场快照 ${snap.size} 只，预筛中（${if (limitup) "涨停扫描" else "涨幅/量比/非ST/主板"}）…")
 
@@ -157,6 +186,20 @@ object LocalScreener {
                     // 统一剔除最后一根，保证「盘前推股」口径不随打开时间漂移。
                     val bars = if (dropLastBar && barsRaw.size > 1) barsRaw.dropLast(1) else barsRaw
                     val eng = if (bars.size >= 30) DataCache.engine(code, "qfq", bars) else null
+                    val nowMs = System.currentTimeMillis()
+                    val chain = if (bars.size >= 30) runCatching {
+                        EngineChain.analyze(
+                            EngineChain.Inputs(
+                                bars = bars,
+                                row = m,
+                                precomputedFlow = flowOf[m.code],
+                                breadth = breadth,
+                                sectors = sectorsRes,
+                                turnScale = turnScale,
+                                nowMs = nowMs,
+                            )
+                        )
+                    }.getOrNull() else null
                     val central = eng?.centralScore ?: eng?.composite
                     val sectorName = board?.sectorNameOf(code)
                     val sectorStrength = sectorName?.let { strengthByName[it] }
@@ -175,6 +218,7 @@ object LocalScreener {
                         pe = m.pe,
                         mv = m.mv,
                         engine = eng,
+                        chain = chain,
                         detailStatus = if (eng != null) "ok" else "insufficient",
                         reason = when {
                             eng == null -> "K线不足，无法本地计算"
@@ -189,7 +233,7 @@ object LocalScreener {
                             exit?.action != ExitPlan.ACT_CLEAR,
                         // 快照新鲜度如实标出来：LiveMarket 拉不到新数据时会退回上一份缓存，
                         // 那这时结果就不是「实时」而是「旧值」，界面必须能区分（5 分钟内算实时）
-                        snapshotStatus = if (m.ts > 0 && System.currentTimeMillis() - m.ts > 5 * 60_000L) "stale" else "live",
+                        snapshotStatus = FreshnessPolicy.snapshotStatus(m.ts, System.currentTimeMillis()),
                         sector = sectorName,
                         sectorStrength = sectorStrength,
                         effectiveScore = effectiveScoreOf(central, sectorStrength),
@@ -209,8 +253,12 @@ object LocalScreener {
             "all" -> return@coroutineScope out.sortedByDescending { it.centralScore ?: (it.pctChg ?: 0.0) }
         }
         val scored = out.filter {
+            // 规格分缺失（规格不可用/bars 不足）时不拦：否则规格读失败会把整个候选池清空，
+            // 用户看到的是「今天没机会」，而不是「引擎没跑起来」——这两种必须先能区分。
+            val canonicalOk = it.canonicalScore == null || it.canonicalScore >= c.minCanonical
+            val riskOk = !c.vetoByRiskFlag || it.riskFlag == null
             it.detailStatus == "ok" && it.centralScore != null &&
-                it.centralScore >= c.minScore && it.buyable == true &&
+                it.centralScore >= c.minScore && canonicalOk && riskOk && it.buyable == true &&
                 (it.pctChg ?: Double.POSITIVE_INFINITY) < c.maxChgPct &&
                 // 普通推荐不接受涨停扫描结果，即使上游误标了可买。
                 (it.pctChg ?: Double.POSITIVE_INFINITY) < 9.5

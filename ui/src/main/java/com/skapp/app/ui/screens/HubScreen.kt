@@ -12,7 +12,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AccessTime
 import androidx.compose.material.icons.filled.AutoGraph
 import androidx.compose.material.icons.filled.Dashboard
 import androidx.compose.material.icons.filled.Layers
@@ -36,45 +35,42 @@ import com.skapp.app.ui.GlassCard
 import com.skapp.app.ui.GlassPill
 import com.skapp.app.ui.SkappViewModel
 import com.skapp.app.ui.UiState
+import com.skapp.app.ui.theme.SkColors
 
-/** 唯一模块入口。每个稳定模块 ID 只出现一次，业务页面仍由 MainScreen 按旧编号渲染。 */
+/**
+ * 唯一模块入口，按**决策链三段**组织：看盘 → 选股 → 复盘。
+ *
+ * 之前是「市场/决策/资讯/AI/系统」五组平铺，用户要先知道「看板块该点哪个」才能找到入口；
+ * 分段后每一段对应决策链的一步，段标题就是这一步要回答的问题。
+ * 业务页面仍由 MainScreen 按旧编号渲染，编号不动——改名会牵动 12 处跳转。
+ */
 @Composable
 fun HubScreen(vm: SkappViewModel, state: UiState, onNavigate: (Int) -> Unit) {
     val groups = listOf(
         ModuleGroup(
-            title = "市场",
-            subtitle = "指数与市场总览",
+            title = "① 看盘",
+            subtitle = "今天市场是什么状态：指数、板块、题材",
             modules = listOf(
                 ModuleSpec("行情看板", "指数与市场总览", "看板", 0, Icons.Filled.Dashboard),
                 ModuleSpec("全球与自选", "A 股指数与自选行情", "行情", 5, Icons.Filled.ShowChart),
-            ),
-        ),
-        ModuleGroup(
-            title = "决策",
-            subtitle = "中枢刷新与多池数据",
-            modules = listOf(
-                ModuleSpec("实时总结", "刷新反馈、中枢引擎说明与 AI 二次总结", "实时总结", 1, Icons.Filled.AutoGraph),
-                ModuleSpec("多池选股", "推荐、风险、周期及策略池", "多池", 7, Icons.Filled.Layers),
-            ),
-        ),
-        ModuleGroup(
-            title = "资讯",
-            subtitle = "新闻与题材变化",
-            modules = listOf(
                 ModuleSpec("消息与题材", "按题材展开消息，未匹配内容归入未知", "消息与题材", 3, Icons.Filled.Newspaper),
             ),
         ),
         ModuleGroup(
-            title = "AI",
-            subtitle = "双源模型总结",
+            title = "② 选股",
+            subtitle = "从哪几只里选：候选池、中枢刷新与结论",
             modules = listOf(
-                ModuleSpec("AI 总结", "GitCode/GitHub 双源、个股复盘与市场总结", "AI", 11, Icons.Filled.Psychology),
+                ModuleSpec("多池选股", "推荐、风险、周期及策略池", "多池", 7, Icons.Filled.Layers),
+                ModuleSpec("实时总结", "刷新反馈、中枢引擎说明与 AI 二次总结", "实时总结", 1, Icons.Filled.AutoGraph),
+                ModuleSpec("决策台", "中枢结论与执行纪律", "决策", 6, Icons.Filled.QueryStats),
             ),
         ),
         ModuleGroup(
-            title = "系统",
-            subtitle = "数据链路与健康状态",
+            title = "③ 复盘",
+            subtitle = "选出来之后怎么样：引擎一致性、数据健康、AI 复盘",
             modules = listOf(
+                ModuleSpec("引擎输出", "规格链路：族方向、外部票、云端榜", "引擎", 13, Icons.Filled.AutoGraph),
+                ModuleSpec("AI 总结", "GitCode/GitHub 双源、个股复盘与市场总结", "AI", 11, Icons.Filled.Psychology),
                 ModuleSpec("数据源自检", "HTTP 状态与解析数量", "系统", 12, Icons.Filled.MonitorHeart),
             ),
         ),
@@ -87,7 +83,9 @@ fun HubScreen(vm: SkappViewModel, state: UiState, onNavigate: (Int) -> Unit) {
         contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(18.dp),
     ) {
-        item {
+        // 全局状态带放在最上面：规格版本、数据时点、降级项数三个数决定「下面这些分数能不能信」。
+        item(key = "status_band") { StatusBand(state) }
+        item(key = "hub_header") {
             GlassPill(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -102,7 +100,8 @@ fun HubScreen(vm: SkappViewModel, state: UiState, onNavigate: (Int) -> Unit) {
                 )
             }
         }
-        items(groups) { group ->
+        // 分组必须带 key：无 key 的 items 在重排时会按位置复用节点，展开态与滚动位置会串到别的组。
+        items(groups, key = { it.title }) { group ->
             Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
                 Text(
                     text = group.title,
@@ -118,6 +117,50 @@ fun HubScreen(vm: SkappViewModel, state: UiState, onNavigate: (Int) -> Unit) {
                 group.modules.forEach { module ->
                     ModuleCard(module, state, onNavigate)
                 }
+            }
+        }
+    }
+}
+
+/**
+ * 全局状态带：规格版本 / 数据时点 / 降级项数。
+ *
+ * 三个数各管一件事——版本不一致说明算法可能不是你以为的那套，时点不是今天说明数据是旧的，
+ * 降级项 >0 说明有引擎没跑起来（分数会系统性偏低但不是 0）。三者任一异常都必须一眼可见，
+ * 否则用户看到的是一个「看起来正常」的分数。
+ */
+@Composable
+fun StatusBand(state: UiState, modifier: Modifier = Modifier) {
+    val degraded = state.chainDegraded.size
+    val bad = state.engineSpecDrift || degraded > 0
+    GlassPill(modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    text = "规格 V${state.engineSpecVersion ?: "?"} · ${state.chainStatus}" +
+                        if (state.engineSpecDrift) " · 漂移" else "",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = if (bad) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    text = "数据时点 ${state.screenedAt?.replace("T", " ")?.take(19) ?: "尚未计算"} · 降级 $degraded 项",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = SkColors.textSecondary,
+                )
+            }
+            if (bad) {
+                Text(
+                    text = "降级",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.error,
+                    fontWeight = FontWeight.SemiBold,
+                )
             }
         }
     }
@@ -148,6 +191,7 @@ private fun ModuleCard(
         1 -> "${state.picks.signals.size + state.picks.values.size} 条候选"
         5 -> "${state.aShareIndices.size + state.globalIndices.size} 个指数"
         7 -> "${state.pools.size} 个选股池"
+        13 -> state.canonicalScore?.let { "规格 " + String.format("%.1f", it) } ?: "未计算"
         else -> module.category
     }
     GlassCard(

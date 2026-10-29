@@ -51,6 +51,9 @@ object Db {
                 CloudFeed.Doc.INDUSTRY_MAP,
             ),
             force,
+            // 板块强度表按「库表」消费（成分股/行业映射的同一份源），不含个股结论；
+            // 端上板块引擎落地后这里应收窄成只读映射两张表。
+            allowJudgement = true,
         )
         return SectorTables(
             sector = docs[CloudFeed.Doc.SECTOR_ENGINE]?.json,
@@ -59,21 +62,50 @@ object Db {
         )
     }
 
-    /** 权重标定参数（walkforward 样本外 + 分市场状态的权重表）。 */
+    /** 权重标定参数（walkforward 样本外 + 分市场状态的权重表）与参数清单。 */
     suspend fun calibration(force: Boolean = false): CalibrationTables {
         val docs = calibrationDocs(force)
         return CalibrationTables(
             walkforward = docs[CloudFeed.Doc.WALKFORWARD]?.json,
             weightCalibration = docs[CloudFeed.Doc.WEIGHT_CALIBRATION]?.json,
+            manifest = docs[CloudFeed.Doc.ENGINE_MANIFEST]?.json,
         )
     }
 
     /** 同上，但保留「是否陈旧/抓取时间」等状态，界面上的数据说明要用。 */
     suspend fun calibrationDocs(force: Boolean = false): Map<ArchiveDoc, CloudFeed.CloudDoc> =
-        archiveMany(listOf(CloudFeed.Doc.WALKFORWARD, CloudFeed.Doc.WEIGHT_CALIBRATION), force)
+        archiveMany(
+            listOf(
+                CloudFeed.Doc.ENGINE_MANIFEST,
+                CloudFeed.Doc.WALKFORWARD,
+                CloudFeed.Doc.WEIGHT_CALIBRATION,
+            ),
+            force,
+        )
 
     /** 数据新鲜度说明（纯格式化，转发 CloudFeed 实现，避免界面层 import CloudFeed）。 */
     fun healthText(docs: Collection<CloudFeed.CloudDoc>): String = CloudFeed.healthText(docs)
+
+    /**
+     * 参数板（[CloudParams]）需要的云端文档：key = 参数板里的稳定键，value = 云端文件。
+     *
+     * 映射必须留在这层：业务侧不允许出现 `CloudFeed.` 引用（`tools/layer_source_guard.py` 规则 1）。
+     */
+    private val PARAM_DOCS: Map<String, CloudFeed.Doc> = linkedMapOf(
+        "engine_weights" to CloudFeed.Doc.ENGINE_WEIGHTS,
+        "walkforward" to CloudFeed.Doc.WALKFORWARD,
+        "central_review" to CloudFeed.Doc.CENTRAL_REVIEW,
+        "tomorrow_candidate" to CloudFeed.Doc.TOMORROW_CANDIDATE,
+        "morning_pick" to CloudFeed.Doc.MORNING_PICK,
+        "regime" to CloudFeed.Doc.REGIME,
+        "anomaly_report" to CloudFeed.Doc.ANOMALY_REPORT,
+    )
+
+    /** 参数板文档（带陈旧/失败状态），按参数键返回。 */
+    suspend fun paramDocs(force: Boolean = false): Map<String, CloudFeed.CloudDoc> {
+        val loaded = CloudFeed.loadMany(PARAM_DOCS.values, force)
+        return PARAM_DOCS.mapNotNull { (key, doc) -> loaded[doc]?.let { key to it } }.toMap()
+    }
 
     /** ETF 份额（交易所每日披露，端上拿不到，只能当库数据）。 */
     suspend fun etfShares(force: Boolean = false): JSONObject? = etfSharesState(force).json
@@ -98,13 +130,31 @@ object Db {
      * ⚠️ 这些是**已发生的归档**，只能用于「回看/对照/兜底展示」。
      * 当日分析结论必须由本地实时数据算，不许把这里的字段直接当今日判断。
      */
-    suspend fun archive(doc: ArchiveDoc, force: Boolean = false): CloudFeed.CloudDoc =
-        CloudFeed.load(doc, force)
+    suspend fun archive(
+        doc: ArchiveDoc,
+        force: Boolean = false,
+        allowJudgement: Boolean = false,
+    ): CloudFeed.CloudDoc = CloudFeed.load(doc, force, allowJudgement)
 
     suspend fun archiveMany(
         docs: List<ArchiveDoc>,
         force: Boolean = false,
-    ): Map<ArchiveDoc, CloudFeed.CloudDoc> = CloudFeed.loadMany(docs, force)
+        allowJudgement: Boolean = false,
+    ): Map<ArchiveDoc, CloudFeed.CloudDoc> = CloudFeed.loadMany(docs, force, allowJudgement)
+
+    /**
+     * 对照面板专用入口：允许读判断类文件（[ArchiveDoc.JUDGEMENT_DOCS]）。
+     *
+     * 读到的内容**只能展示与对比**，不得回流成当日结论——选股/决策/推股路径
+     * 一律走 `archive` / `archiveMany`（对判断类文件拒供）。
+     */
+    suspend fun compareDocs(
+        docs: List<ArchiveDoc>,
+        force: Boolean = false,
+    ): Map<ArchiveDoc, CloudFeed.CloudDoc> = archiveMany(docs, force, allowJudgement = true)
+
+    /** 判断类文件清单（端上自算、云端只归档），供界面打「仅对照」标签。 */
+    val judgementDocs: Set<ArchiveDoc> get() = ArchiveDoc.JUDGEMENT_DOCS
 
     /** 任意云端 JSON（个别库表没进 CloudFeed 目录时用，例如封板概率表）。 */
     suspend fun json(url: String): JSONObject? = SkappApi.fetchJson(url)
@@ -118,5 +168,7 @@ object Db {
     data class CalibrationTables(
         val walkforward: JSONObject?,
         val weightCalibration: JSONObject?,
+        /** 引擎参数清单（版本 + sha256 + 回测基线），用 [EngineManifest.check] 判断口径是否匹配 */
+        val manifest: JSONObject? = null,
     )
 }

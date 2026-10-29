@@ -205,7 +205,7 @@ object EngineFeed {
      * 按文件自身 ts 标陈旧、失败退回旧缓存——单文件挂掉不再连累其它引擎。
      */
     suspend fun loadAll(): EngineFeeds = withContext(Dispatchers.IO) {
-        val docs = Db.archiveMany(
+        val docs = Db.compareDocs(
             listOf(
                 ArchiveDoc.ENGINE_V5,
                 ArchiveDoc.CYCLE_POOL,

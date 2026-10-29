@@ -1,5 +1,10 @@
 package com.skapp.app.ui.screens
 
+import com.skapp.app.ui.components.SkCard
+import com.skapp.app.ui.components.StateView
+import com.skapp.app.ui.components.UiStateKind
+import com.skapp.app.ui.theme.SkColors
+
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -8,6 +13,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Card
@@ -46,7 +52,7 @@ fun SectorsScreen(vm: SkappViewModel, state: UiState) {
         Text(
             (s.ts ?: "暂无数据") + if (openBk != null) "　·　$openBk" else "",
             style = MaterialTheme.typography.bodySmall,
-            color = Color.Gray,
+            color = SkColors.textSecondary,
         )
         Spacer(Modifier.height(8.dp))
 
@@ -59,7 +65,7 @@ fun SectorsScreen(vm: SkappViewModel, state: UiState) {
 
         val detail = openBk?.let { bk -> s.boardMembers[bk] }
         if (detail != null) {
-            Card(colors = CardDefaults.cardColors()) {
+            SkCard(contentPadding = PaddingValues(0.dp)) {
                 Column(Modifier.padding(12.dp)) {
                     Text(
                         "${detail["name"] ?: openBk}（$openBk）",
@@ -68,7 +74,7 @@ fun SectorsScreen(vm: SkappViewModel, state: UiState) {
                     Text(
                         "成分股共 ${detail["n"] ?: "暂无"} 只",
                         style = MaterialTheme.typography.bodySmall,
-                        color = Color.Gray,
+                        color = SkColors.textSecondary,
                     )
                     HorizontalDivider()
                     Spacer(Modifier.height(6.dp))
@@ -83,11 +89,11 @@ fun SectorsScreen(vm: SkappViewModel, state: UiState) {
                                 horizontalArrangement = Arrangement.SpaceBetween,
                             ) {
                                 Text(mm?.get("name")?.toString() ?: code)
-                                Text(code, color = Color.Gray, style = MaterialTheme.typography.bodySmall)
+                                Text(code, color = SkColors.textSecondary, style = MaterialTheme.typography.bodySmall)
                             }
                         }
                     } else {
-                        Text("成分股：暂无数据", color = Color.Gray)
+                        Text("成分股：暂无数据", color = SkColors.textSecondary)
                     }
                 }
             }
@@ -95,7 +101,7 @@ fun SectorsScreen(vm: SkappViewModel, state: UiState) {
         }
 
         if (boards.isEmpty()) {
-            Text("暂无数据：板块列表不可达。", color = Color.Gray)
+            StateView(UiStateKind.Empty, "暂无数据：板块列表不可达。")
             return@Column
         }
 
@@ -119,12 +125,12 @@ fun SectorsScreen(vm: SkappViewModel, state: UiState) {
                                     b.heat?.let { String.format("热度 %.1f", it) },
                                 ).joinToString(" · ").ifBlank { "暂无热度数据" },
                                 style = MaterialTheme.typography.bodySmall,
-                                color = if ((b.chg1d ?: 0.0) >= 0) Color(0xFFF85149) else Color(0xFF3FB950),
+                                color = if ((b.chg1d ?: 0.0) >= 0) SkColors.marketUp else SkColors.marketDown,
                             )
                             Text(
                                 b.bk + "　" + (b.nStocks?.let { "$it 只" } ?: "只数暂无"),
                                 style = MaterialTheme.typography.bodySmall,
-                                color = Color.Gray,
+                                color = SkColors.textSecondary,
                             )
                         }
                         b.totalMktcap?.let {
@@ -149,7 +155,7 @@ private fun FilterChip(text: String, selected: Boolean, onClick: () -> Unit) {
         Text(
             text,
             Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-            color = if (selected) MaterialTheme.colorScheme.primary else Color.Gray,
+            color = if (selected) MaterialTheme.colorScheme.primary else SkColors.textSecondary,
             style = MaterialTheme.typography.bodySmall,
             fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
         )

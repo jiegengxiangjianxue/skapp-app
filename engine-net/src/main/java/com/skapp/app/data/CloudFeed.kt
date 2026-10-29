@@ -33,14 +33,15 @@ object CloudFeed {
 
     private const val TIMEOUT = 15000
 
-    /** 日更类数据的内存缓存时长：云端最快也是十几分钟一次，缓存 10 分钟足够。 */
-    private const val TTL_MS = 10 * 60 * 1000L
+    /** 日更类数据的内存缓存时长：云端最快也是十几分钟一次，缓存 10 分钟足够。口径见 [FreshnessPolicy]。 */
+    private const val TTL_MS = FreshnessPolicy.CLOUD_TTL_MS
 
-    /** 超过这个年龄就标记 stale。日更的任务 36 小时没更新，基本可以认为当天没跑成。 */
-    private const val STALE_HOURS = 36.0
+    /** 超过这个年龄就标记 stale。日更的任务 36 小时没更新，基本可以认为当天没跑成。口径见 [FreshnessPolicy]。 */
+    private const val STALE_HOURS = FreshnessPolicy.CLOUD_STALE_HOURS
 
     /** 云端数据文件注册表。新增一个文件只需在这里加一行。 */
     enum class Doc(val file: String, val note: String) {
+        ENGINE_MANIFEST("engine_manifest.json", "引擎参数清单：版本 + sha256 + 回测基线，端上按它校验口径"),
         WEIGHT_CALIBRATION("weight_calibration.json", "16 指标分层权重（v3 校准，5~6 万样本）"),
         WALKFORWARD("walkforward.json", "样本外回测：IS/OOS 胜率与过拟合判定"),
         RPS_ROTATION("rps_rotation.json", "RPS 区间涨幅百分位 Top30"),
@@ -59,6 +60,39 @@ object CloudFeed {
         AI_PICK_V4("ai_pick_v4.json", "AI 选股 v4"),
         PEAD_EVENTS("pead_events.json", "财报后漂移事件（按公告日倒序，最近 90 天）"),
         LIMIT_HISTORY("limit_history.json", "每日个股涨停名单（云端回算，260 个交易日）"),
+
+        /**
+         * 以下六项是「参数/对照」文件，端上只**读值**、不重算（[CloudParams] 是唯一读取口）。
+         *
+         * 实测 2026-10-29（raw.githubusercontent 直连，UA 正常）：
+         *  - `engine_weights.json` / `walkforward.json` / `anomaly_report.json` → 200，可用；
+         *  - `central_orchestrator.json` / `tomorrow_candidate_engine.json` /
+         *    `morning_pick_engine.json` / `regime_router.json` → 404（云端只写本地 data 目录，
+         *    没有发布到远端）。这四项必然走 cold_start 回落，端上用自己的引擎顶上，
+         *    等云端哪天发布后无需改代码就会自动生效——所以不能因为 404 就不注册。
+         */
+        ENGINE_WEIGHTS("engine_weights.json", "引擎权重标定 v1（特征重要性→权重，云端跑出，端上只读）"),
+        CENTRAL_REVIEW("central_orchestrator.json", "云端中枢终审（gate×Σv·D 的 S 分；未发布→cold_start）"),
+        TOMORROW_CANDIDATE("tomorrow_candidate_engine.json", "明日候选 6 维打分（未发布→端上 EarlyVoteEngine 自算）"),
+        MORNING_PICK("morning_pick_engine.json", "早盘 6 维打分（未发布→端上 EarlyVoteEngine 自算）"),
+        REGIME("regime_router.json", "市场环境判定与 gate 系数（未发布→端上 RegimeGate 自算）"),
+        ANOMALY_REPORT("anomaly_report.json", "当日异动报告（阈值类结论，端上只作对照）")
+        ;
+
+        /**
+         * 判断类文件（S3）：云端算「今天该给什么结论」的那几个。端上实时链
+         * （LocalScreener / EngineFeedLive / NewsCalcEngine）已自算同构结论，
+         * 这些只作归档与对照，**不得作为当日结论的供数**——否则会出现两套同日结论并存、
+         * 口径互不可验（云端 16 指标标定 vs 端上手写权重）。
+         */
+        val judgement: Boolean get() = this in JUDGEMENT_DOCS
+
+        companion object {
+            val JUDGEMENT_DOCS: Set<Doc> = setOf(
+                ENGINE_V5, ENGINE_FUSION, DECISION, MARKET_PHASE,
+                CYCLE_POOL, SECTOR_ENGINE, AI_PICK_V4, STRATEGY_CARD,
+            )
+        }
     }
 
     data class CloudDoc(
@@ -90,15 +124,29 @@ object CloudFeed {
 
     private fun now() = System.currentTimeMillis()
 
-    /** 一次拉多个文件：并发，互不拖累；单个失败只影响它自己。 */
+    /**
+     * 一次拉多个文件：并发，互不拖累；单个失败只影响它自己。
+     *
+     * [allowJudgement] = false 时，判断类文件（[Doc.judgement]）直接拒供，
+     * 只有对照面板（`Db.compareDocs`）显式放行才能读到——防止两套同日结论并存。
+     */
     suspend fun loadMany(
-        docs: List<Doc>,
+        // 收 Collection 而不是 List：Db.docs(wanted: Collection<Doc>) 直接转交过来，
+        // 声明成 List 会让「按 Set 去重后批量取」的调用方编译不过（Db.kt:98）。
+        docs: Collection<Doc>,
         force: Boolean = false,
+        allowJudgement: Boolean = false,
     ): Map<Doc, CloudDoc> = coroutineScope {
-        docs.map { d -> async { d to load(d, force) } }.awaitAll().toMap()
+        docs.map { d -> async { d to load(d, force, allowJudgement) } }.awaitAll().toMap()
     }
 
-    suspend fun load(doc: Doc, force: Boolean = false): CloudDoc {
+    suspend fun load(
+        doc: Doc,
+        force: Boolean = false,
+        allowJudgement: Boolean = false,
+    ): CloudDoc {
+        // 判断类文件：端上自算同构结论，这里拒供（不进缓存、不发请求）
+        if (shouldRefuseJudgement(doc, allowJudgement)) return refused(doc)
         if (!force) {
             synchronized(cache) {
                 cache[doc]?.let { e ->
@@ -117,6 +165,22 @@ object CloudFeed {
         }
         return fetched
     }
+
+    /** 判断类拒供判定（纯函数，[load] 与测试共用；不触网）。 */
+    internal fun shouldRefuseJudgement(doc: Doc, allowJudgement: Boolean): Boolean =
+        doc.judgement && !allowJudgement
+
+    /** 拒供占位：`ok == false`，`error` 写明原因，界面按「未加载」处理。 */
+    private fun refused(doc: Doc): CloudDoc = CloudDoc(
+        doc = doc,
+        json = null,
+        fetchedAt = now(),
+        ageHours = null,
+        error = ERROR_JUDGEMENT_REFUSED,
+    )
+
+    /** 判断类文件拒供时的错误文案（界面/测试共用一个口径）。 */
+    const val ERROR_JUDGEMENT_REFUSED = "judgement-refused：端上自算，仅对照面板可读"
 
     private fun fetch(doc: Doc): CloudDoc {
         var conn: HttpURLConnection? = null

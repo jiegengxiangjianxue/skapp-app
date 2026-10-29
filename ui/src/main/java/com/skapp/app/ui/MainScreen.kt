@@ -27,6 +27,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.skapp.app.ui.screens.DashboardScreen
 import com.skapp.app.ui.screens.DecisionScreen
 import com.skapp.app.ui.screens.DiagScreen
+import com.skapp.app.ui.screens.EnginesScreen
 import com.skapp.app.ui.screens.HubScreen
 import com.skapp.app.ui.screens.MarketScreen
 import com.skapp.app.ui.screens.NewsScreen
@@ -39,7 +40,7 @@ import com.skapp.app.ui.screens.UnifiedAskScreen
 /** 模块编号与 HubScreen 一致；保留旧编号，避免业务页面路由变化。 */
 private val MODULE_NAMES = mapOf(
     0 to "看板", 1 to "实时总结", 2 to "消息与题材", 3 to "消息与题材", 4 to "全部",
-    5 to "行情", 6 to "决策", 7 to "多池", 11 to "AI 总结", 12 to "自检",
+    5 to "行情", 6 to "决策", 7 to "多池", 11 to "AI 总结", 12 to "自检", 13 to "引擎",
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -63,7 +64,7 @@ fun MainScreen(vm: SkappViewModel) {
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
-            .pointerInput(module, state.detail, state.detailLoading) {
+            .pointerInput(module, state.detail?.code, state.detailLoading) {
                 var edgeStartX = Float.MAX_VALUE
                 var edgeDragX = 0f
                 detectHorizontalDragGestures(
@@ -122,6 +123,9 @@ fun MainScreen(vm: SkappViewModel) {
                     6 -> DecisionScreen(vm, state)
                     7 -> PoolsScreen(vm, state)
                     11 -> UnifiedAskScreen(vm, state)
+                    // 引擎页此前没有任何入口（写了但到不了）：三段式「复盘」段把它接上，
+                    // 否则 specs 链路健康只有开发者能看见。
+                    13 -> EnginesScreen(vm, state)
                     12 -> DiagScreen(vm, state)
                 }
             }

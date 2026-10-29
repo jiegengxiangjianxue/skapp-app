@@ -1,0 +1,31 @@
+{
+ "ts": "2026-10-29T06:37:07",
+ "E": 31.0,
+ "state": "进攻",
+ "agreement": 0.75,
+ "parts": {
+  "market_phase": {
+   "score": 40,
+   "weight": 0.3
+  },
+  "cycle_v2": {
+   "score": 0,
+   "weight": 0.25
+  },
+  "global": {
+   "score": -35.2,
+   "weight": 0.2
+  },
+  "win_loop": {
+   "score": 140.0,
+   "weight": 0.15
+  },
+  "kelly": {
+   "score": 50,
+   "weight": 0.1
+  }
+ },
+ "missing_inputs": [],
+ "n_missing": 0,
+ "note": "多引擎加权融合, 一致性低→观望, 不构成投资建议"
+}

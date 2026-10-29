@@ -1,5 +1,7 @@
 package com.skapp.app.ui.screens
 
+import com.skapp.app.ui.theme.SkColors
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -10,8 +12,10 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import com.skapp.app.ui.components.SkCard
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -34,8 +38,8 @@ import com.skapp.app.ui.UiState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-private val UP = Color(0xFFF85149)
-private val DOWN = Color(0xFF3FB950)
+private val UP = SkColors.marketUp
+private val DOWN = SkColors.marketDown
 
 /**
  * 看板 Tab —— 对应网页版「📊 看板」。
@@ -65,7 +69,7 @@ fun BoardScreen(vm: SkappViewModel, state: UiState) {
                     Text(
                         tsText + if (stale) "（数据日期 $tsDay，非今日，仅供参考）" else "",
                         style = MaterialTheme.typography.bodySmall,
-                        color = if (stale) MaterialTheme.colorScheme.error else Color.Gray,
+                        color = if (stale) MaterialTheme.colorScheme.error else SkColors.textSecondary,
                     )
                 }
                 Text(
@@ -101,7 +105,7 @@ fun BoardScreen(vm: SkappViewModel, state: UiState) {
         if (market.isNotEmpty()) {
             item { SectionTitle("市场概况") }
             item {
-                Card(colors = CardDefaults.cardColors()) {
+                SkCard(contentPadding = PaddingValues(0.dp)) {
                     Text(
                         market.entries.joinToString("　") { (k, v) -> "${marketLabel(k)} ${v ?: "—"}" },
                         Modifier.padding(12.dp),
@@ -113,7 +117,7 @@ fun BoardScreen(vm: SkappViewModel, state: UiState) {
             item {
                 Text(
                     "市场概况暂未加载：${b["reason"]?.toString() ?: "请点击刷新重试"}",
-                    style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+                    style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary,
                 )
             }
         }
@@ -127,7 +131,7 @@ fun BoardScreen(vm: SkappViewModel, state: UiState) {
                 Text(
                     "数据源：$s",
                     style = MaterialTheme.typography.labelSmall,
-                    color = Color.Gray,
+                    color = SkColors.textSecondary,
                     modifier = Modifier.padding(horizontal = 4.dp),
                 )
             }
@@ -136,7 +140,7 @@ fun BoardScreen(vm: SkappViewModel, state: UiState) {
         // 首屏加载中：骨架提示，避免白屏
         if (state.loading && state.quotes.isEmpty() && b.isEmpty()) {
             item {
-                Card(colors = CardDefaults.cardColors()) {
+                SkCard(contentPadding = PaddingValues(0.dp)) {
                     Row(
                         Modifier.fillMaxWidth().padding(16.dp),
                         horizontalArrangement = Arrangement.Center,
@@ -144,7 +148,7 @@ fun BoardScreen(vm: SkappViewModel, state: UiState) {
                     ) {
                         CircularProgressIndicator(Modifier.height(18.dp))
                         Spacer(Modifier.height(0.dp))
-                        Text("  正在拉取行情与看板数据…", color = Color.Gray)
+                        Text("  正在拉取行情与看板数据…", color = SkColors.textSecondary)
                     }
                 }
             }
@@ -168,7 +172,7 @@ fun BoardScreen(vm: SkappViewModel, state: UiState) {
                             Text(
                                 row.display,
                                 style = MaterialTheme.typography.bodySmall,
-                                color = Color.Gray,
+                                color = SkColors.textSecondary,
                             )
                         }
                         Column(horizontalAlignment = Alignment.End) {
@@ -194,7 +198,7 @@ fun BoardScreen(vm: SkappViewModel, state: UiState) {
             items(state.aShareIndices, key = { "ash_" + it.hashCode() }) { g ->
                 val pct = (g["pctChg"] as? Number)?.toDouble()
                 val price = (g["price"] as? Number)?.toDouble()
-                Card(colors = CardDefaults.cardColors()) {
+                SkCard(contentPadding = PaddingValues(0.dp)) {
                     Row(
                         Modifier.fillMaxWidth().padding(12.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -221,7 +225,7 @@ fun BoardScreen(vm: SkappViewModel, state: UiState) {
             item { SectionTitle("全球股市") }
             items(state.globalIndices, key = { "gl_" + it.hashCode() }) { g ->
                 val pct = (g["pctChg"] as? Number)?.toDouble()
-                Card(colors = CardDefaults.cardColors()) {
+                SkCard(contentPadding = PaddingValues(0.dp)) {
                     Row(
                         Modifier.fillMaxWidth().padding(12.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -240,7 +244,7 @@ fun BoardScreen(vm: SkappViewModel, state: UiState) {
             item {
                 Text(
                     "暂无数据：${b["reason"] ?: "看板源不可达"}",
-                    color = Color.Gray,
+                    color = SkColors.textSecondary,
                 )
             }
             return@LazyColumn
@@ -253,7 +257,7 @@ fun BoardScreen(vm: SkappViewModel, state: UiState) {
             item { SectionTitle("主要指数") }
             items(indices, key = { "idx_" + it.hashCode() }) { idx ->
                 val pct = (idx["pctChg"] ?: idx["pct"]) as? Number
-                Card(colors = CardDefaults.cardColors()) {
+                SkCard(contentPadding = PaddingValues(0.dp)) {
                     Row(
                         Modifier.fillMaxWidth().padding(12.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -284,7 +288,7 @@ fun BoardScreen(vm: SkappViewModel, state: UiState) {
         b["phase"]?.let { ph ->
             item { SectionTitle("市场阶段") }
             item {
-                Card(colors = CardDefaults.cardColors()) {
+                SkCard(contentPadding = PaddingValues(0.dp)) {
                     Text(ph.toString(), Modifier.padding(12.dp))
                 }
             }
@@ -362,7 +366,7 @@ fun BoardScreen(vm: SkappViewModel, state: UiState) {
                             Text(
                                 code,
                                 style = MaterialTheme.typography.bodySmall,
-                                color = Color.Gray,
+                                color = SkColors.textSecondary,
                             )
                         }
                         val boards = (g["boards"] ?: g["industry"]) as? List<*>
@@ -370,7 +374,7 @@ fun BoardScreen(vm: SkappViewModel, state: UiState) {
                             Text(
                                 boards.take(2).joinToString("、") { it.toString() },
                                 style = MaterialTheme.typography.bodySmall,
-                                color = Color.LightGray,
+                                color = SkColors.textTertiary,
                             )
                         }
                     }
@@ -386,9 +390,9 @@ private fun MarketStateCard(ms: com.skapp.app.data.MarketState) {
     val color = when {
         ms.state.startsWith("进攻") -> UP
         ms.state.startsWith("防守") -> DOWN
-        else -> Color(0xFFD29922)
+        else -> SkColors.warn
     }
-    Card(colors = CardDefaults.cardColors()) {
+    SkCard(contentPadding = PaddingValues(0.dp)) {
         Column(Modifier.fillMaxWidth().padding(12.dp)) {
             Row(
                 Modifier.fillMaxWidth(),
@@ -413,7 +417,7 @@ private fun MarketStateCard(ms: com.skapp.app.data.MarketState) {
                 "一致性 ${String.format("%.0f%%", ms.agreement * 100)}" +
                     if (ms.missingInputs.isNotEmpty()) " · 缺输入: ${ms.missingInputs.joinToString(", ")}" else "",
                 style = MaterialTheme.typography.bodySmall,
-                color = Color.Gray,
+                color = SkColors.textSecondary,
             )
             Spacer(Modifier.height(6.dp))
             Row(
@@ -425,12 +429,12 @@ private fun MarketStateCard(ms: com.skapp.app.data.MarketState) {
                         Text(
                             String.format("%+.0f", v),
                             style = MaterialTheme.typography.bodySmall,
-                            color = if (v > 0) UP else if (v < 0) DOWN else Color.Gray,
+                            color = if (v > 0) UP else if (v < 0) DOWN else SkColors.textSecondary,
                         )
                         Text(
                             partLabel(k),
                             style = MaterialTheme.typography.labelSmall,
-                            color = Color.Gray,
+                            color = SkColors.textSecondary,
                         )
                     }
                 }
@@ -458,10 +462,10 @@ private fun SectionTitle(t: String) {
 }
 
 private fun pctColor(pct: Double?): Color = when {
-    pct == null -> Color.Gray
+    pct == null -> SkColors.textSecondary
     pct > 0 -> UP
     pct < 0 -> DOWN
-    else -> Color.Gray
+    else -> SkColors.textSecondary
 }
 
 private fun marketLabel(k: String): String = when (k) {
@@ -492,7 +496,7 @@ private fun DailyBriefCard(summary: Map<String, Any?>) {
                 .filter { it.isNotEmpty() && !it.startsWith(">") }
                 .take(25)
                 .forEach {
-                    Text(it.trimStart('#').trim(), style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                    Text(it.trimStart('#').trim(), style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
                 }
         }
     }
@@ -503,24 +507,24 @@ private fun DailyBriefCard(summary: Map<String, Any?>) {
 private fun MarketBreadthCard(latest: Map<*, *>, coverage: Map<*, *>, caliber: String?) {
     fun n(key: String) = (latest[key] as? Number)?.toInt()
     fun f(key: String) = (latest[key] as? Number)?.toDouble()
-    Card(colors = CardDefaults.cardColors()) {
+    SkCard(contentPadding = PaddingValues(0.dp)) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text("交易日 ${latest["date"] ?: "暂无"}", fontWeight = FontWeight.SemiBold)
                 f("amount_yi")?.let {
                     Text(
                         String.format("两市成交 %.0f 亿", it),
-                        style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+                        style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary,
                     )
                 }
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                 Text("涨停 ${n("limit_up") ?: "—"}", style = MaterialTheme.typography.bodySmall, color = UP)
                 Text("跌停 ${n("limit_down") ?: "—"}", style = MaterialTheme.typography.bodySmall, color = DOWN)
-                Text("炸板 ${n("broken") ?: "—"}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                Text("炸板 ${n("broken") ?: "—"}", style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
                 Text(
                     "封板率 " + (f("seal_rate_pct")?.let { String.format("%.1f%%", it) } ?: "—"),
-                    style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+                    style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary,
                 )
             }
             Text(
@@ -530,16 +534,16 @@ private fun MarketBreadthCard(latest: Map<*, *>, coverage: Map<*, *>, caliber: S
             )
             Text(
                 "覆盖 ${coverage["days"] ?: "—"} 个交易日 · ${coverage["first"] ?: "—"} ~ ${coverage["last"] ?: "—"}",
-                style = MaterialTheme.typography.labelSmall, color = Color.Gray,
+                style = MaterialTheme.typography.labelSmall, color = SkColors.textSecondary,
             )
             Text(
                 "口径：${caliber ?: "涨停/跌停按分板块涨跌幅限制统计"}",
-                style = MaterialTheme.typography.labelSmall, color = Color.Gray,
+                style = MaterialTheme.typography.labelSmall, color = SkColors.textSecondary,
             )
             n("limit_up_hist")?.let {
                 Text(
                     "对照（±10% 平价口径）：涨停 $it / 跌停 ${n("limit_down_hist") ?: "—"}",
-                    style = MaterialTheme.typography.labelSmall, color = Color.Gray,
+                    style = MaterialTheme.typography.labelSmall, color = SkColors.textSecondary,
                 )
             }
         }

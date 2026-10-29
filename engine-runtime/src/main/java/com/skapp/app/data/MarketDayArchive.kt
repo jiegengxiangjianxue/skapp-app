@@ -15,16 +15,25 @@ import java.util.zip.GZIPOutputStream
  * 于是引擎池里的 `height / promo / firstBoard / ge2` 只能永远写 -1 并标「不可得」。
  * 这不是算法缺，是数据缺。
  *
- * 2026-10 起这份历史搬到了云端：`limit_history.json`（260 个交易日的涨停名单，
- * 由 stocks-ai-view 的 `build_limit_history.py` 用全市场日线回算）。端上只留当天：
- * 既满足「数据在 GitHub、本地不囤」，又不会让连板/晋级率断档。
+ * 2026-10 起「昨天谁涨停」这类历史搬到云端：`limit_history.json`（260 个交易日的涨停名单，
+ * 由 stocks-ai-view 的 `build_limit_history.py` 用全市场日线回算），端上不必为连板/晋级率囤历史。
+ *
+ * ## 但 MAX_DAYS 不能是 1（2026-10-29 改）
+ *
+ * 原先只留当天，后果是端上**任何需要 60 日序列的量都永远不可得**：
+ * 波动率目标仓位（[VolTargetGate]）要 60 个交易日的全市场日收益，
+ * 端上却连两个交易日都凑不出来。云端虽有 `limit_history`，但它只有涨停名单，
+ * **没有每天的涨跌幅**，补不出收益序列。真正能自算的只有存档这一列。
+ *
+ * 于是保留 65 天：60 天窗口 + 5 天缓冲（节假日/接口故障缺天）。
+ * 每天 gzip 后约 50KB，65 天约 3MB，相对「波动率闸门永远不可得」这个代价可以接受。
+ * 连板高度/晋级率的权威数据仍在云端，这里多留的天只喂波动率一项，不重复存储别的口径。
  *
  * ## 存哪、多大、留多久
  *
  * - 路径：`filesDir/market_days/YYYY-MM-DD.dat.gz`（一天一个文件，gzip 后约 50KB）。
  * - 格式：制表符文本，不依赖 JSON 库（单元测试里也能跑，不受 Android stub 影响）。
- * - 保留：只留当天（MAX_DAYS=1）。更早的由云端 `limit_history.json` 提供，
- *   本地不囤——这是「数据放 GitHub、端上不保留」的落地。
+ * - 保留：65 个交易日（MAX_DAYS=65），超出由 [prune] 删最旧。
  *
  * ## 写入门槛（宁可少写，不要写脏）
  *
@@ -35,7 +44,7 @@ import java.util.zip.GZIPOutputStream
 object MarketDayArchive {
 
     private const val DIR_NAME = "market_days"
-    private const val MAX_DAYS = 1
+    private const val MAX_DAYS = 65
     private const val INTRADAY_MIN_INTERVAL_MS = 60_000L
     /**
      * 存档版本（逐版只**追加**列，不重排、不删除，旧文件永远能读）：

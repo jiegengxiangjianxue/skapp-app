@@ -37,10 +37,10 @@ object EngineFeedLive {
     private const val EMOTION_DAYS = 10
 
     /** 快照新鲜度阈值：与 [LocalScreener] 的 snapshotStatus 同一口径（5 分钟）。 */
-    private const val STALE_MS = 5 * 60_000L
+    private const val STALE_MS = FreshnessPolicy.SNAPSHOT_STALE_MS
 
     /** 引擎池缓存：盘中 45s（一次装配要拉几十只日K，不能每次进页面都重算）。 */
-    private const val CACHE_TTL_MS = 45_000L
+    private const val CACHE_TTL_MS = FreshnessPolicy.ENGINE_POOL_TTL_MS
     private var cachedAt = 0L
     private var cached: EngineFeed.EngineFeeds? = null
 
@@ -76,11 +76,20 @@ object EngineFeedLive {
             com.skapp.app.data.LimitHistory.parse(com.skapp.app.data.Db.limitHistory())
         }.getOrDefault(emptyList())
         val localDays = runCatching { MarketDayArchive.recent(2) }.getOrDefault(emptyList())
+        // 波动率目标闸门：用本地存档的全市场平均涨幅序列自算，不依赖云端产物，
+        // 也不占用 clist 之外的请求。存档不足 30 天时它自己报 insufficient 并把系数留在 1.0。
+        val volGate = runCatching {
+            VolTargetGate.compute(
+                VolTargetGate.dailyMarketReturns(
+                    MarketDayArchive.recent(70).map { snap -> snap.entries.map { e -> e.pctChg } },
+                ),
+            )
+        }.getOrNull()
         val history = (cloudDays.filter { cd -> localDays.none { it.date == cd.date } } + localDays)
             .sortedBy { it.date }
         val feeds = assemble(
             pulse, screened, indices, snapshot = snap, sectors = sectors,
-            strategy = strategy, history = history,
+            strategy = strategy, history = history, volScale = volGate?.scale,
         )
 
         cached = feeds
@@ -114,6 +123,8 @@ object EngineFeedLive {
         strategy: EngineFeed.StrategyCard? = null,
         /** 本地日级快照（升序，含今日）：连板高度/晋级率/板块动量/长周期 RPS 的原料。 */
         history: List<DayMarketSnapshot> = emptyList(),
+        /** 波动率目标闸门系数（[VolTargetGate]）；null=不可得，仓位上限不参与。 */
+        volScale: Double? = null,
     ): EngineFeed.EngineFeeds {
         val date = CstTime.day(ts)
         val iso = CstTime.iso(ts)
@@ -211,6 +222,7 @@ object EngineFeedLive {
             heightPrev = heightPrev,
             promo = board?.promo,
             sectorRet5d = sectorRet5d,
+            volScale = volScale,
         )
 
         val phase = EngineFeed.MarketPhase(

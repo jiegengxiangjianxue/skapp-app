@@ -18,9 +18,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import com.skapp.app.ui.theme.SkColors
 
 internal val GlassShape = RoundedCornerShape(18.dp)
-internal val GlassOutline = Color(0xFFD5E0E8)
+internal val GlassOutline = SkColors.outlineWeak
 
 @Composable
 internal fun GlassCard(
@@ -31,7 +32,7 @@ internal fun GlassCard(
         modifier = modifier,
         shape = GlassShape,
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.88f),
+            containerColor = SkColors.surface1,
         ),
         border = BorderStroke(1.dp, GlassOutline),
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),

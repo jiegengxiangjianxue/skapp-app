@@ -88,6 +88,20 @@ jobs:
               print(path, "ok")
           PYCODE
 
+      # 端上按哪一版口径解释云端参数，写在 EngineManifest.kt 的 EXPECTED_VERSIONS 里。
+      # 云端升版而端上没跟上时，只看云端永远发现不了 —— 这一步就是那道闸门。
+      - name: Checkout app (skapp-app)
+        uses: actions/checkout@v4
+        with:
+          path: skapp-src
+
+      - name: Verify engine params match app expectations
+        run: |
+          set -euo pipefail
+          cd engine-src
+          python3 scripts/verify_engine_consistency.py \
+            --kotlin-manifest ../skapp-src/engine-core/src/main/java/com/skapp/app/data/EngineManifest.kt
+
   # ── 2. 分析计算层自检（纯计算脚本，不发网络请求）────────────────────────
   analysis-gate:
     needs: engine-gate

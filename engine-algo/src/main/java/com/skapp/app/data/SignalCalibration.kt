@@ -158,7 +158,16 @@ object SignalCalibration {
     /** 从数据库层取标定参数并构建（标定系数是慢变参数，属库表，不是当日行情） */
     suspend fun load(): Gate {
         val tables = Db.calibration()
-        return build(parseOos(tables.walkforward), parseRegime(tables.weightCalibration))
+        val gate = build(parseOos(tables.walkforward), parseRegime(tables.weightCalibration))
+
+        // 参数清单校验：云端换了口径而端上没跟上时，算出来的置信度不会报错、只会静默偏移。
+        // 这里不拦计算（不能因为版本号没同步就整块失效），但必须把事因写到 notes，
+        // 让界面上的「可信度」「仓位建议」带上这个前提。
+        val manifest = tables.manifest
+            ?: return gate.copy(notes = gate.notes + "未取到参数清单，口径未经校验")
+        val check = EngineManifest.check(manifest)
+        if (check.ok) return gate
+        return gate.copy(notes = gate.notes + "参数版本不一致：${check.summary}；结论请按保守端理解")
     }
 
     private fun round2(v: Double) = Math.round(v * 100.0) / 100.0

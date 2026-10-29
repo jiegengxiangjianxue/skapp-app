@@ -1,5 +1,7 @@
 package com.skapp.app.ui.screens
 
+import com.skapp.app.ui.theme.SkColors
+
 import android.content.Context
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -71,7 +73,7 @@ fun DiagScreen(vm: SkappViewModel, state: UiState) {
         val registry = rows.firstOrNull { it.first == "源注册表" }?.second
         Text(
             if (running) "正在逐个探测…" else "端点检查：${rows.count { it.second.startsWith("OK") }} 成功 / ${rows.count { it.second.startsWith("FAIL") }} 失败 · registry total ${stats["total"] ?: "unknown"} / tested ${stats["tested"] ?: "unknown"} / success ${stats["success"] ?: "unknown"} / failure ${stats["failure"] ?: "unknown"} / stale ${stats["stale"] ?: "unknown"} / unknown ${stats["unknown"] ?: "unknown"} · ${registry ?: "registry unknown"}",
-            style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+            style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary,
         )
         rows.forEach { (name, result) ->
             Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors()) {
@@ -82,7 +84,7 @@ fun DiagScreen(vm: SkappViewModel, state: UiState) {
                     Text(
                         result,
                         style = MaterialTheme.typography.bodySmall,
-                        color = if (result.startsWith("OK")) Color(0xFF3FB950) else Color(0xFFF85149),
+                        color = if (result.startsWith("OK")) SkColors.success else SkColors.errorText,
                     )
                 }
             }
@@ -109,7 +111,7 @@ private fun DecisionCardToggles() {
             Text("决策页卡片（闪退二分用）", fontWeight = FontWeight.SemiBold)
             Text(
                 "决策页一进就闪退时，逐个关掉再进：关掉哪张就不崩，哪张就是原因。",
-                style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+                style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary,
             )
             Row(
                 Modifier.fillMaxWidth(),
@@ -154,7 +156,7 @@ private fun SourceLedgerCard(state: UiState, vm: SkappViewModel) {
                 )
             }
             if (ds.total == 0) {
-                Text("暂无数据：api/sources.json 不可达。", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                Text("暂无数据：api/sources.json 不可达。", style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
                 return@Column
             }
             Text(
@@ -163,18 +165,18 @@ private fun SourceLedgerCard(state: UiState, vm: SkappViewModel) {
             )
             Text(
                 "可用但无执行器 ${ds.gap} · 不可用(blocked/unauth) ${ds.blocked} · 更新 ${ds.ts ?: "暂无"}",
-                style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+                style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary,
             )
             if (ds.gapIds.isNotEmpty()) {
                 Text(
                     "缺口（登记可用但没接）：${ds.gapIds.take(15).joinToString("、")}",
-                    style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+                    style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary,
                 )
             }
             if (ds.blockedIds.isNotEmpty()) {
                 Text(
                     "不可用（不绕过）：${ds.blockedIds.take(10).joinToString("、")}",
-                    style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+                    style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary,
                 )
             }
         }
@@ -228,11 +230,11 @@ private fun HealthGuardCard() {
             }
             Text(
                 "崩溃捕获只管 Java 未捕获异常；ANR、低内存被回收、native 崩溃都不抛异常。这里靠主线程心跳与内存水位在进程被杀之前留痕。",
-                style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+                style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary,
             )
             Text(status.ifBlank { "采样中…" }, style = MaterialTheme.typography.bodySmall)
             if (note.isNotBlank()) {
-                Text(note, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                Text(note, style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
             }
             Text(
                 if (detail == null) "查看最近一条健康记录" else "收起最近一条健康记录",
@@ -249,7 +251,7 @@ private fun HealthGuardCard() {
                 style = MaterialTheme.typography.bodySmall,
             )
             detail?.let {
-                Text(it, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                Text(it, style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
             }
         }
     }

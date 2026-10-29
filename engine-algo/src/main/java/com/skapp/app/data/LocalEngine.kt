@@ -132,6 +132,8 @@ data class LocalEngineResult(
     val bullFamilies: Int = 0,
     val bearFamilies: Int = 0,
     val neutralFamilies: Int = 0,
+    /** 权重来源（可回放）：见 [EngineWeights.SOURCE_DEFAULT]；接云端标定后应改为 calibration:<版本>。 */
+    val weightSource: String = EngineWeights.SOURCE_DEFAULT,
 )
 
 /**
@@ -145,14 +147,9 @@ data class LocalEngineResult(
  */
 object LocalEngine {
 
-    private val familyOf: Map<String, EngineFamily> = mapOf(
-        "trend" to EngineFamily.TREND, "supertrend" to EngineFamily.TREND, "vortex" to EngineFamily.TREND,
-        "momentum" to EngineFamily.MOMENTUM, "macd" to EngineFamily.MOMENTUM, "mfi" to EngineFamily.MOMENTUM,
-        "boll" to EngineFamily.CHANNEL, "keltner" to EngineFamily.CHANNEL,
-        "volume" to EngineFamily.VOLUME, "obv" to EngineFamily.VOLUME,
-        "choppiness" to EngineFamily.STRUCTURE,
-        "position" to EngineFamily.POSITION,
-    )
+    // 引擎 key / 族 / 默认权重的唯一来源在 [EngineWeights]：
+    // 新增引擎只改那张表；漏登记会让 familiesOf 静默漏算（EngineChainSelfCheckTest 已盯住 flow/tape）。
+    private val familyOf: Map<String, EngineFamily> = EngineWeights.familyOf()
 
     internal fun familiesOf(engines: List<EngineScore>): List<FamilyScore> =
         engines.filter { it.score != null }
@@ -180,11 +177,7 @@ object LocalEngine {
             f?.let { positionEngine(bars) },
         )
         val valid = engines.filter { it.score != null }
-        val weights = mapOf(
-            "trend" to 1.2, "momentum" to 1.1, "macd" to 1.1, "supertrend" to 1.1,
-            "volume" to 1.0, "boll" to 1.0, "keltner" to 1.0, "choppiness" to 0.9,
-            "mfi" to 1.0, "vortex" to 1.0, "obv" to 1.0, "position" to 0.9,
-        )
+        val weights = EngineWeights.weights()
         val weighted = valid.mapNotNull { score ->
             score.score?.let { value -> value to (weights[score.engine] ?: 1.0) }
         }

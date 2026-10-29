@@ -1,5 +1,9 @@
 package com.skapp.app.ui.screens
 
+import com.skapp.app.ui.components.StateView
+import com.skapp.app.ui.components.UiStateKind
+import com.skapp.app.ui.theme.SkColors
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -69,7 +73,7 @@ fun EnginesScreen(vm: SkappViewModel, state: UiState) {
                 } else if (error != null) {
                     item { Text("云端引擎产物加载失败: $error", color = Color.Red) }
                 } else if (feeds == null) {
-                    item { Text("暂无云端引擎数据", color = Color.Gray) }
+                    item { StateView(UiStateKind.Empty, "暂无云端引擎数据") }
                 } else {
                     feeds?.let { f ->
                         item { FeedHeader(f) }
@@ -110,13 +114,47 @@ private fun LocalScreenSection(state: UiState, vm: SkappViewModel) {
             }
             Text(
                 "本地引擎 · ${state.screened.size} 个候选 · 时点 ${state.screenedAt?.replace("T", " ")?.take(19) ?: "尚未计算"}",
-                style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+                style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary,
             )
+            // 规格链路健康：版本/漂移/降级必须和分数同一屏可见。
+            // 只显示分数不显示「规格漂移」，等于让人拿旧参数的分去做决定。
+            val specBad = state.engineSpecDrift || state.chainDegraded.isNotEmpty()
+            Text(
+                buildString {
+                    append("规格链路 · V").append(state.engineSpecVersion ?: "?")
+                    append(" · ").append(state.chainStatus)
+                    if (state.engineSpecDrift) append(" · 规格漂移")
+                    if (state.chainDegraded.isNotEmpty()) append(" · 降级 ").append(state.chainDegraded.size).append(" 项")
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = if (specBad) MaterialTheme.colorScheme.error else SkColors.textSecondary,
+            )
+            if (state.chainDegraded.isNotEmpty()) {
+                Text(
+                    state.chainDegraded.joinToString("、"),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+            // 分族方向：族内先抵消、族间再算一致度。不显示族，用户会把 3 票同族当成 3 份独立证据。
+            state.localEngine?.families?.takeIf { it.isNotEmpty() }?.let { fams ->
+                Text("分族方向（族内先抵消）", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)
+                fams.forEach { f ->
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("${f.family.name} · ${f.members} 引擎", style = MaterialTheme.typography.bodySmall)
+                        Text(
+                            String.format("%+.2f", f.dir),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (f.dir > 0) SkColors.marketUp else if (f.dir < 0) SkColors.marketDown else SkColors.textSecondary,
+                        )
+                    }
+                }
+            }
             when {
-                state.screening -> Text(state.screenMsg ?: "正在本地全市场深算…", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                state.screening -> Text(state.screenMsg ?: "正在本地全市场深算…", style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
                 state.screened.isEmpty() -> Text(
                     state.screenMsg ?: "暂无数据：本地深算尚未产出候选，点「重算」开始。",
-                    style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+                    style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary,
                 )
                 else -> state.screened.take(15).forEach { row ->
                     Row(
@@ -127,11 +165,27 @@ private fun LocalScreenSection(state: UiState, vm: SkappViewModel) {
                             "${row.name ?: row.code} ${row.code}",
                             style = MaterialTheme.typography.bodySmall,
                         )
-                        Text(
-                            row.centralScore?.let { String.format("%.1f", it) } ?: "暂无评分",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.primary,
-                        )
+                        Column(horizontalAlignment = Alignment.End) {
+                            Text(
+                                buildString {
+                                    append("规格 ").append(row.canonicalScore?.let { String.format("%.1f", it) } ?: "—")
+                                    append(" · 中枢 ").append(row.centralScore?.let { String.format("%.1f", it) } ?: "—")
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (row.canonicalScore != null) MaterialTheme.colorScheme.primary else SkColors.textSecondary,
+                            )
+                            Text(
+                                buildString {
+                                    append("flow ").append(row.chain?.flow?.tier ?: "—")
+                                    append(" · tape ").append(row.chain?.tape?.status ?: "—")
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = SkColors.textSecondary,
+                            )
+                            row.riskFlag?.let {
+                                Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                            }
+                        }
                     }
                 }
             }
@@ -149,7 +203,7 @@ private fun FeedHeader(f: EngineFeed.EngineFeeds) {
         Column(Modifier.padding(12.dp)) {
             Text("云端引擎产物", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(4.dp))
-            Text("生成时点：$ts", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+            Text("生成时点：$ts", style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
             if (f.missing.isNotEmpty()) {
                 Text("拉取失败: ${f.missing.joinToString(", ")}", style = MaterialTheme.typography.bodySmall, color = Color.Red)
             }
@@ -170,9 +224,9 @@ private fun EngineV5Section(e: EngineFeed.EngineV5Payload?, excludeCodes: Set<St
             Text("① 综合引擎 v5", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(4.dp))
             if (top.isEmpty()) {
-                Text("本周期无入选标的", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                Text("本周期无入选标的", style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
             } else {
-                Text("上榜 ${top.size} 只${if (e.top.size > top.size) "（已剔除与本地选股重复 ${e.top.size - top.size} 只）" else ""} · stale_top ${e.staleTop.size} 只", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                Text("上榜 ${top.size} 只${if (e.top.size > top.size) "（已剔除与本地选股重复 ${e.top.size - top.size} 只）" else ""} · stale_top ${e.staleTop.size} 只", style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
                 Spacer(Modifier.height(6.dp))
                 top.take(15).forEach { t ->
                     EngineV5Row(t)
@@ -192,7 +246,7 @@ private fun EngineV5Row(t: EngineFeed.EngineV5Top) {
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text("#${t.rank}", style = MaterialTheme.typography.labelMedium, color = Color(0xFF6B7280), modifier = Modifier.width(28.dp))
+        Text("#${t.rank}", style = MaterialTheme.typography.labelMedium, color = SkColors.textTertiary, modifier = Modifier.width(28.dp))
         Text(t.code, style = MaterialTheme.typography.labelMedium, modifier = Modifier.width(76.dp))
         Column(Modifier.weight(1f)) {
             Text(
@@ -201,15 +255,15 @@ private fun EngineV5Row(t: EngineFeed.EngineV5Top) {
                 fontWeight = FontWeight.Medium,
             )
             if (t.price != null) {
-                Text("¥${String.format("%.2f", t.price)}  ${t.date.take(10)}", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+                Text("¥${String.format("%.2f", t.price)}  ${t.date.take(10)}", style = MaterialTheme.typography.labelSmall, color = SkColors.textSecondary)
             }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            Box(Modifier.background(Color(0xFF3FB950).copy(alpha = 0.15f)).padding(horizontal = 6.dp, vertical = 2.dp)) {
-                Text("看 ${t.bull}", style = MaterialTheme.typography.labelSmall, color = Color(0xFF3FB950))
+            Box(Modifier.background(SkColors.marketDown.copy(alpha = 0.15f)).padding(horizontal = 6.dp, vertical = 2.dp)) {
+                Text("看 ${t.bull}", style = MaterialTheme.typography.labelSmall, color = SkColors.marketDown)
             }
-            Box(Modifier.background(Color(0xFFF85149).copy(alpha = 0.15f)).padding(horizontal = 6.dp, vertical = 2.dp)) {
-                Text("空 ${t.bear}", style = MaterialTheme.typography.labelSmall, color = Color(0xFFF85149))
+            Box(Modifier.background(SkColors.marketUp.copy(alpha = 0.15f)).padding(horizontal = 6.dp, vertical = 2.dp)) {
+                Text("空 ${t.bear}", style = MaterialTheme.typography.labelSmall, color = SkColors.marketUp)
             }
         }
     }
@@ -225,7 +279,7 @@ private fun CycleSection(c: EngineFeed.CycleMeta?) {
             Text("② 周期轮动（cycle_pool_v2）", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(4.dp))
             Text("指数：${c.indexName}（${c.index}）", style = MaterialTheme.typography.bodyMedium)
-            Text("样本区间：${c.spanStart} ~ ${c.spanEnd}，共 ${c.nDays} 交易日", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+            Text("样本区间：${c.spanStart} ~ ${c.spanEnd}，共 ${c.nDays} 交易日", style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
             // 本地现算才有排名行；云端 cycle_pool_v2 只给元信息，这里就空着不硬凑
             c.rows.take(10).forEach { r ->
                 Row(Modifier.fillMaxWidth().padding(top = 2.dp), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -247,16 +301,16 @@ private fun CycleSection(c: EngineFeed.CycleMeta?) {
                             } ?: ""),
                         style = MaterialTheme.typography.labelSmall,
                         color = when (r.stopping) {
-                            "止跌雏形" -> Color(0xFF58A6FF)
-                            "单边下杀" -> Color(0xFFF85149)
-                            else -> Color(0xFF6B7280)
+                            "止跌雏形" -> SkColors.primary
+                            "单边下杀" -> SkColors.marketUp
+                            else -> SkColors.textTertiary
                         },
                     )
                 }
             }
             if (c.note.isNotEmpty()) {
                 Spacer(Modifier.height(4.dp))
-                Text(c.note, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                Text(c.note, style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
             }
         }
     }
@@ -283,7 +337,7 @@ private fun AiPickSection(p: EngineFeed.AiPick?) {
             )
             if (p.note.isNotEmpty()) {
                 Spacer(Modifier.height(4.dp))
-                Text(p.note, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                Text(p.note, style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
             }
         }
     }
@@ -304,7 +358,7 @@ private fun RpsSection(r: EngineFeed.RpsPayload?) {
                     else if (t.rps20 != null) String.format("20日%.0f", t.rps20)
                     else "—"
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("#${t.rank}", style = MaterialTheme.typography.labelMedium, color = Color(0xFF6B7280), modifier = Modifier.width(28.dp))
+                    Text("#${t.rank}", style = MaterialTheme.typography.labelMedium, color = SkColors.textTertiary, modifier = Modifier.width(28.dp))
                     Text(t.symbol, style = MaterialTheme.typography.labelMedium, modifier = Modifier.width(80.dp))
                     Text(rpsLabel, style = MaterialTheme.typography.bodySmall)
                 }
@@ -312,7 +366,7 @@ private fun RpsSection(r: EngineFeed.RpsPayload?) {
             }
             if (r.note.isNotEmpty()) {
                 Spacer(Modifier.height(4.dp))
-                Text(r.note, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                Text(r.note, style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
             }
         }
     }
@@ -335,8 +389,8 @@ private fun StrategySection(s: EngineFeed.StrategyCard?) {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(c.symbol, style = MaterialTheme.typography.labelMedium, modifier = Modifier.width(80.dp))
                         Text("¥${String.format("%.2f", c.close)}", style = MaterialTheme.typography.bodySmall)
-                        Text("+${String.format("%.2f%%", c.retPct)}", style = MaterialTheme.typography.bodySmall, color = if (c.retPct >= 0) Color(0xFFF85149) else Color(0xFF3FB950))
-                        Text("量比 ${String.format("%.2f", c.vratio)}", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+                        Text("+${String.format("%.2f%%", c.retPct)}", style = MaterialTheme.typography.bodySmall, color = if (c.retPct >= 0) SkColors.marketUp else SkColors.marketDown)
+                        Text("量比 ${String.format("%.2f", c.vratio)}", style = MaterialTheme.typography.labelSmall, color = SkColors.textSecondary)
                     }
                 }
             }
@@ -375,7 +429,7 @@ private fun MarketPhaseSection(m: EngineFeed.MarketPhase?) {
                 Text(
                     m.labels["情绪序列"] ?: "",
                     style = MaterialTheme.typography.labelSmall,
-                    color = Color(0xFF6B7280),
+                    color = SkColors.textTertiary,
                     modifier = Modifier.padding(top = 2.dp),
                 )
             }
@@ -395,9 +449,9 @@ private fun findPhase(labels: Map<String, String>, seal: Double, promo: Double):
     }
 
 private fun phaseColor(label: String): Color = when {
-    label.contains("冰") || label.contains("退潮") -> Color(0xFF3FB950)
-    label.contains("高潮") || label.contains("主升") -> Color(0xFFF85149)
-    else -> Color(0xFF6B7280)
+    label.contains("冰") || label.contains("退潮") -> SkColors.marketDown
+    label.contains("高潮") || label.contains("主升") -> SkColors.marketUp
+    else -> SkColors.textTertiary
 }
 
 // ── decision ────────────────────────────────────────────────
@@ -406,9 +460,9 @@ private fun phaseColor(label: String): Color = when {
 private fun DecisionSection(d: EngineFeed.Decision?) {
     if (d == null) return
     val regimeColor = when (d.marketRegime) {
-        "bull" -> Color(0xFFF85149)
-        "bear" -> Color(0xFF3FB950)
-        else -> Color(0xFF6B7280)
+        "bull" -> SkColors.marketUp
+        "bear" -> SkColors.marketDown
+        else -> SkColors.textTertiary
     }
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(12.dp)) {
@@ -417,10 +471,10 @@ private fun DecisionSection(d: EngineFeed.Decision?) {
             Text("市场状态：${d.marketRegime.uppercase()}", style = MaterialTheme.typography.titleMedium, color = regimeColor, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(2.dp))
             Text("仓位建议：${d.positionAdvice.label}（上限 ${String.format("%.0f%%", d.positionAdvice.cap * 100)}%）", style = MaterialTheme.typography.bodyMedium)
-            Text(d.positionAdvice.reason, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+            Text(d.positionAdvice.reason, style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
             Spacer(Modifier.height(6.dp))
             if (d.cards.isEmpty()) {
-                Text("本周期无推荐决策卡", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                Text("本周期无推荐决策卡", style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
             } else {
                 d.cards.take(15).forEach { card ->
                     DecisionCardRow(card)
@@ -435,10 +489,10 @@ private fun DecisionSection(d: EngineFeed.Decision?) {
 @Composable
 private fun DecisionCardRow(c: EngineFeed.DecisionCard) {
     val actionColor = when (c.action) {
-        "buy" -> Color(0xFFF85149)
-        "sell" -> Color(0xFF3FB950)
-        "watch" -> Color(0xFF6B7280)
-        else -> Color(0xFF6B7280)
+        "buy" -> SkColors.marketUp
+        "sell" -> SkColors.marketDown
+        "watch" -> SkColors.textTertiary
+        else -> SkColors.textTertiary
     }
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(c.code, style = MaterialTheme.typography.labelMedium, modifier = Modifier.width(72.dp))
@@ -460,12 +514,12 @@ private fun MissingInfo(missing: List<String>) {
     if (missing.isEmpty()) return
     Card(
         modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = Color(0xFFFFEBEE)),
+        colors = CardDefaults.cardColors(containerColor = SkColors.errorContainer),
     ) {
         Column(Modifier.padding(12.dp)) {
-            Text("部分引擎文件未返回", style = MaterialTheme.typography.titleSmall, color = Color(0xFFF85149))
+            Text("部分引擎文件未返回", style = MaterialTheme.typography.titleSmall, color = SkColors.errorText)
             Spacer(Modifier.height(4.dp))
-            missing.forEach { f -> Text(f, style = MaterialTheme.typography.bodySmall, color = Color(0xFFF85149)) }
+            missing.forEach { f -> Text(f, style = MaterialTheme.typography.bodySmall, color = SkColors.errorText) }
         }
     }
     Spacer(Modifier.height(8.dp))

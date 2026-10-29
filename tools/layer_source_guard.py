@@ -49,7 +49,7 @@ SKAPPAPI_ALLOWED_PREFIXES = ("engine-net/",)
 # 观察名单：只报数量，不失败
 WATCH_PREFIXES = ("ui/", "app/")
 
-SKIP_PARTS = ("/build/", "/.git/")
+SKIP_PARTS = ("/build/", "/.git/", "/src/test/")
 
 
 def kt_files(*prefixes: str):

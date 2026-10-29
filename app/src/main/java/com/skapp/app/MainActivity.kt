@@ -14,20 +14,25 @@ import androidx.compose.ui.graphics.Color
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.skapp.app.ui.MainScreen
 import com.skapp.app.ui.SkappViewModel
+import com.skapp.app.ui.theme.SkColors
 
 private val SkappLightColors = lightColorScheme(
-    primary = Color(0xFF175D9C),
-    onPrimary = Color.White,
-    secondary = Color(0xFF50708D),
-    onSecondary = Color.White,
-    tertiary = Color(0xFF657B42),
-    background = Color(0xFFF4F7FA),
-    onBackground = Color(0xFF18232D),
-    surface = Color(0xFFFFFFFF),
-    onSurface = Color(0xFF18232D),
-    surfaceVariant = Color(0xFFE8EEF3),
-    onSurfaceVariant = Color(0xFF4C5D6B),
-    outline = Color(0xFFB8C5CF),
+    primary = SkColors.primary,
+    onPrimary = SkColors.onPrimary,
+    secondary = SkColors.secondary,
+    onSecondary = SkColors.onPrimary,
+    tertiary = SkColors.tertiary,
+    background = SkColors.surface0,
+    onBackground = SkColors.textPrimary,
+    surface = SkColors.surface1,
+    onSurface = SkColors.textPrimary,
+    surfaceVariant = SkColors.surface3,
+    onSurfaceVariant = SkColors.textSecondary,
+    outline = SkColors.outlineStrong,
+    error = SkColors.errorText,
+    onError = Color.White,
+    errorContainer = SkColors.errorContainer,
+    onErrorContainer = SkColors.errorText,
 )
 
 class MainActivity : ComponentActivity() {

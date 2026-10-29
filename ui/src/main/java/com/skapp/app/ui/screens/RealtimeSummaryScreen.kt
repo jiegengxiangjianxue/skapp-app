@@ -1,5 +1,7 @@
 package com.skapp.app.ui.screens
 
+import com.skapp.app.ui.theme.SkColors
+
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -10,6 +12,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import com.skapp.app.ui.components.SkCard
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -49,14 +52,14 @@ fun RealtimeSummaryScreen(vm: SkappViewModel, state: UiState) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text("实时总结", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                    Text("${state.marketPhase} · ${state.quoteTs ?: "时点暂无"}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                    Text("${state.marketPhase} · ${state.quoteTs ?: "时点暂无"}", style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
                 }
                 if (state.summaryRefreshing) CircularProgressIndicator(modifier = Modifier.padding(8.dp), strokeWidth = 2.dp)
                 else Text("刷新", Modifier.clickable { vm.refreshRealtimeSummary("all") }.padding(10.dp), color = MaterialTheme.colorScheme.primary)
             }
         }
         item {
-            state.summaryRefreshMessage?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = if (it.startsWith("刷新失败")) MaterialTheme.colorScheme.error else Color.Gray) }
+            state.summaryRefreshMessage?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = if (it.startsWith("刷新失败")) MaterialTheme.colorScheme.error else SkColors.textSecondary) }
         }
         item { SummaryTextCard(state.summary) }
         // 本地部分置顶：本地深算候选（次日视角）排在所有云端产物之前
@@ -95,13 +98,13 @@ fun RealtimeSummaryScreen(vm: SkappViewModel, state: UiState) {
 /** 明日推股：本地引擎候选（次日视角），不依赖云端尚未提供的明日产物。 */
 @Composable
 private fun TomorrowPicksCard(state: UiState, vm: SkappViewModel) {
-    Card(colors = CardDefaults.cardColors()) {
+    SkCard(contentPadding = PaddingValues(0.dp)) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
             Text("明日推股", fontWeight = FontWeight.SemiBold)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text(
                     "本地引擎计算 · ${state.screened.size} 个候选（次日观察）",
-                    style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+                    style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary,
                 )
                 Text(
                     "重算",
@@ -119,15 +122,15 @@ private fun TomorrowPicksCard(state: UiState, vm: SkappViewModel) {
             Text(
                 "计算时点 $atLabel" + (staleMinutes?.let { "（${it} 分钟前）" } ?: ""),
                 style = MaterialTheme.typography.labelSmall,
-                color = if (staleMinutes != null && staleMinutes > 30) MaterialTheme.colorScheme.error else Color.Gray,
+                color = if (staleMinutes != null && staleMinutes > 30) MaterialTheme.colorScheme.error else SkColors.textSecondary,
             )
             if (state.screening) {
-                Text(state.screenMsg ?: "正在本地全市场深算…", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                Text(state.screenMsg ?: "正在本地全市场深算…", style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
             }
             if (state.screened.isEmpty()) {
                 Text(
                     state.screenMsg ?: "暂无数据：本地深算尚未产出候选。",
-                    style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+                    style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary,
                 )
                 Text(
                     "重新筛选",
@@ -158,7 +161,7 @@ private fun TomorrowPicksCard(state: UiState, vm: SkappViewModel) {
 @Composable
 private fun PremarketDraftCard(state: UiState) {
     val draft = state.premarketDraft ?: return
-    Card(colors = CardDefaults.cardColors()) {
+    SkCard(contentPadding = PaddingValues(0.dp)) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text("早盘推股（消息修正）", fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
@@ -166,13 +169,13 @@ private fun PremarketDraftCard(state: UiState) {
                     if (draft.status == com.skapp.app.data.PremarketPicks.Status.FROZEN) "已冻结"
                     else "草稿 · 09:30 前可更新",
                     style = MaterialTheme.typography.labelSmall,
-                    color = if (draft.status == com.skapp.app.data.PremarketPicks.Status.FROZEN) Color.Gray
+                    color = if (draft.status == com.skapp.app.data.PremarketPicks.Status.FROZEN) SkColors.textSecondary
                     else MaterialTheme.colorScheme.primary,
                 )
             }
             Text(
                 "更新 ${draft.updatedAt.replace("T", " ").take(19)}",
-                style = MaterialTheme.typography.labelSmall, color = Color.Gray,
+                style = MaterialTheme.typography.labelSmall, color = SkColors.textSecondary,
             )
             if (draft.dataGap) {
                 Text(
@@ -183,7 +186,7 @@ private fun PremarketDraftCard(state: UiState) {
             if (draft.picks.isEmpty()) {
                 Text(
                     draft.note ?: "暂无达标候选（弱市不凑数，请观察或空仓）",
-                    style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+                    style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary,
                 )
             } else {
                 draft.picks.take(10).forEach { p ->
@@ -195,16 +198,16 @@ private fun PremarketDraftCard(state: UiState) {
                                     (if (p.newsDelta != 0.0) "（消息 ${if (p.newsDelta > 0) "+" else ""}%.1f".format(p.newsDelta) + "）" else ""),
                                 style = MaterialTheme.typography.bodySmall,
                             )
-                            if (p.benefit) Text("受益", style = MaterialTheme.typography.labelSmall, color = Color(0xFF2E7D32))
+                            if (p.benefit) Text("受益", style = MaterialTheme.typography.labelSmall, color = SkColors.success)
                         }
                         p.why.take(2).forEach { line ->
-                            Text("· $line", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+                            Text("· $line", style = MaterialTheme.typography.labelSmall, color = SkColors.textSecondary)
                         }
                     }
                 }
                 Text(
                     "以上为本地深算 + 消息面修正的早盘候选，不是买入建议。",
-                    style = MaterialTheme.typography.labelSmall, color = Color.Gray,
+                    style = MaterialTheme.typography.labelSmall, color = SkColors.textSecondary,
                 )
             }
         }
@@ -222,7 +225,7 @@ private fun LocalPickCard(
     vm: SkappViewModel,
     session: LocalPicks.Session,
 ) {
-    Card(colors = CardDefaults.cardColors()) {
+    SkCard(contentPadding = PaddingValues(0.dp)) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text(title, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
@@ -233,11 +236,11 @@ private fun LocalPickCard(
                     color = MaterialTheme.colorScheme.primary,
                 )
             }
-            Text(basis, style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+            Text(basis, style = MaterialTheme.typography.labelSmall, color = SkColors.textSecondary)
             Text(
                 "生成 ${artifact.generatedAt?.replace("T", " ")?.take(19) ?: "暂无数据"} · " +
                     "计算时点 ${artifact.calculationTime?.replace("T", " ")?.take(19) ?: "暂无数据"}",
-                style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+                style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary,
             )
             if (loading) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -245,7 +248,7 @@ private fun LocalPickCard(
                     Text(
                         msg ?: "正在本地深算…",
                         Modifier.padding(start = 8.dp),
-                        style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+                        style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary,
                     )
                 }
             }
@@ -259,7 +262,7 @@ private fun LocalPickCard(
             if (artifact.picks.isEmpty()) {
                 Text(
                     artifact.reason ?: msg ?: "暂无数据：本地深算尚未产出（当前非生成时段）。",
-                    style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+                    style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary,
                 )
             } else {
                 Text(
@@ -278,12 +281,12 @@ private fun LocalPickCard(
                             val score = (o["score"] as? Number)?.let { "%.1f".format(it) } ?: "暂无分"
                             "$name（$score）"
                         },
-                        style = MaterialTheme.typography.labelSmall, color = Color.Gray,
+                        style = MaterialTheme.typography.labelSmall, color = SkColors.textSecondary,
                     )
                 }
                 Text(
                     "以上为本地算法候选（12 引擎 / 29 因子），不是买入建议；交易决策需自行复核。",
-                    style = MaterialTheme.typography.labelSmall, color = Color.Gray,
+                    style = MaterialTheme.typography.labelSmall, color = SkColors.textSecondary,
                 )
             }
         }
@@ -302,13 +305,13 @@ private fun itemsPreview(items: List<PickSignal>, vm: SkappViewModel) {
                 Text("${pick.name?.takeIf { it.isNotBlank() } ?: "暂无名称"}  ${pick.code}", fontWeight = FontWeight.Medium)
                 Text(
                     "生成/计算 ${pick.calculationTime ?: "暂无数据"} · 引擎 ${pick.engine ?: "暂无数据"}",
-                    style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+                    style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary,
                 )
                 Text(
                     "评分 ${pick.score?.let { "%.1f".format(it) } ?: "暂无数据"} · 共振 ${pick.resonance?.let { "%.1f%%".format(it * 100) } ?: "暂无数据"}",
                     style = MaterialTheme.typography.bodySmall,
                 )
-                Text("理由：${pick.reason ?: pick.why.take(2).joinToString("；").ifBlank { "暂无数据" }}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                Text("理由：${pick.reason ?: pick.why.take(2).joinToString("；").ifBlank { "暂无数据" }}", style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
             }
             Text("详情 ›", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
         }
@@ -317,13 +320,13 @@ private fun itemsPreview(items: List<PickSignal>, vm: SkappViewModel) {
 
 @Composable
 private fun CloseReviewCard(review: CloseReview, today: String) {
-    Card(colors = CardDefaults.cardColors()) {
+    SkCard(contentPadding = PaddingValues(0.dp)) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
             Text("盘后总结", fontWeight = FontWeight.SemiBold)
-            Text("生成 ${review.generatedAt ?: "暂无数据"} · 状态 ${review.status}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-            if (review.status != "ok") Text(review.reason ?: "本交易日盘后总结未生成或数据不足。", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+            Text("生成 ${review.generatedAt ?: "暂无数据"} · 状态 ${review.status}", style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
+            if (review.status != "ok") Text(review.reason ?: "本交易日盘后总结未生成或数据不足。", style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
             else {
-                if (review.date != today) Text("源日期 ${review.date ?: "未知"}，不是今日数据；以下仅作历史参考。", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                if (review.date != today) Text("源日期 ${review.date ?: "未知"}，不是今日数据；以下仅作历史参考。", style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
                 review.stages.forEach { (name, data) ->
                     val summary = data["summary"] as? Map<*, *>
                     Text("$name：${summary?.get("n") ?: summary?.get("n_requested") ?: "暂无数据"} 条 · 胜率 ${summary?.get("hit_rate_pct") ?: "暂无数据"}", style = MaterialTheme.typography.bodySmall)
@@ -338,7 +341,7 @@ private fun SummaryTextCard(summary: Map<String, Any?>) {
     val source = summary["source"]?.toString()
     val isLocal = source == "local_realtime"
     val ok = summary["status"]?.toString() == "ok"
-    Card(colors = CardDefaults.cardColors()) {
+    SkCard(contentPadding = PaddingValues(0.dp)) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text("实时总结", fontWeight = FontWeight.SemiBold)
@@ -348,13 +351,13 @@ private fun SummaryTextCard(summary: Map<String, Any?>) {
                         source != null -> "云端 $source"
                         else -> "暂无来源"
                     },
-                    style = MaterialTheme.typography.labelSmall, color = Color.Gray,
+                    style = MaterialTheme.typography.labelSmall, color = SkColors.textSecondary,
                 )
             }
             if (!ok) {
                 Text(
                     summary["reason"]?.toString() ?: "暂无数据：本地行情/消息/深算均未就绪，点上方「刷新」重试。",
-                    style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+                    style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary,
                 )
             } else {
                 val text = summary["text"]?.toString()
@@ -364,7 +367,7 @@ private fun SummaryTextCard(summary: Map<String, Any?>) {
                 )
                 Text(
                     "时点 ${summary["ts"] ?: "暂无"} · 交易日 ${summary["date"] ?: "暂无"}",
-                    style = MaterialTheme.typography.labelSmall, color = Color.Gray,
+                    style = MaterialTheme.typography.labelSmall, color = SkColors.textSecondary,
                 )
             }
         }
@@ -373,14 +376,14 @@ private fun SummaryTextCard(summary: Map<String, Any?>) {
 
 @Composable
 private fun WinrateCard(state: UiState) {
-    Card(colors = CardDefaults.cardColors()) {
+    SkCard(contentPadding = PaddingValues(0.dp)) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
             Text("推股胜率", fontWeight = FontWeight.SemiBold)
-            Text("生成 ${state.winrateMatrix.ts ?: "时点暂无"} · 源数据 ${state.winrateMatrix.sourceTs ?: "暂无数据"} · 来源 ${state.winrateMatrix.source ?: "暂无数据"}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+            Text("生成 ${state.winrateMatrix.ts ?: "时点暂无"} · 源数据 ${state.winrateMatrix.sourceTs ?: "暂无数据"} · 来源 ${state.winrateMatrix.source ?: "暂无数据"}", style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
             val sourceDate = state.winrateMatrix.sourceTs?.take(10)
             val fresh = sourceDate == java.time.LocalDate.now().toString()
-            if (!fresh) Text("暂无数据：胜率源数据不是当前交易日，不能作为今日统计。", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-            if (state.winrateMatrix.horizons.isEmpty() || !fresh) Text("暂无数据：当前无可用当日胜率。", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+            if (!fresh) Text("暂无数据：胜率源数据不是当前交易日，不能作为今日统计。", style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
+            if (state.winrateMatrix.horizons.isEmpty() || !fresh) Text("暂无数据：当前无可用当日胜率。", style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
             else state.winrateMatrix.horizons.toSortedMap().forEach { (horizon, data) ->
                 Text("${horizon}日：胜率 ${formatPercent(data["overall"])} · 平均收益 ${data["avg_ret_pct"] ?: "暂无数据"}% · 样本 ${data["n"] ?: "暂无数据"}", style = MaterialTheme.typography.bodySmall)
             }
