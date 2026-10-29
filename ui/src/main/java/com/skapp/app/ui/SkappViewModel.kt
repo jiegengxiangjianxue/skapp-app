@@ -284,6 +284,9 @@ class SkappViewModel : ViewModel() {
     private var pulseJob: Job? = null
     private var warmUpJob: Job? = null
     private var boardJob: Job? = null
+    /** 上一次算名单时池是否没取到（null=没算过）。池缺失时当天要允许重算，否则加权永久为 0。 */
+    private var poolsMissingForPicks: Boolean = false
+
     private var picksJob: Job? = null
     private var localPicksJob: Job? = null
     private var detailJob: Job? = null
@@ -918,7 +921,7 @@ class SkappViewModel : ViewModel() {
         val current = if (session == com.skapp.app.data.LocalPicks.Session.PREMARKET)
             _state.value.localPremarketPicks else _state.value.localMiddayPicks
         val today = java.time.LocalDate.now().toString()
-        if (current.date == today && current.status in CACHED_PICK_STATUS) return
+        if (current.date == today && current.status in CACHED_PICK_STATUS && !poolsMissingForPicks) return
         if (session == com.skapp.app.data.LocalPicks.Session.MIDDAY &&
             com.skapp.app.data.LocalPicks.sessionFor(MarketHours.phase()) != session
         ) {
@@ -953,7 +956,9 @@ class SkappViewModel : ViewModel() {
         //   defensive  = 数据齐、但一只都没达标（弱市，设计内结果）
         //   insufficient = 数据不足（该重试）
         // 只认 ok 会让弱市每次进页都重跑一次全市场深算，所以 ok 与 defensive 都算算完。
-        if (!force && current.date == today && current.status in CACHED_PICK_STATUS) return
+        if (!force && current.date == today && current.status in CACHED_PICK_STATUS &&
+            !poolsMissingForPicks
+        ) return
 
         _state.value = _state.value.copy(
             localPicksLoading = true,
@@ -981,6 +986,7 @@ class SkappViewModel : ViewModel() {
             if (poolsNow.isNotEmpty() && _state.value.pools.isEmpty()) {
                 _state.value = _state.value.copy(pools = poolsNow, poolsLoadedAt = System.currentTimeMillis())
             }
+            poolsMissingForPicks = poolsNow.isEmpty()
             val poolHits = runCatching {
                 poolsNow.flatMap { pool -> pool.items.map { it.code } }
                     .groupingBy { it }.eachCount()
