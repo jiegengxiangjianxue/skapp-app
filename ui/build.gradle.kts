@@ -27,6 +27,9 @@ android {
         freeCompilerArgs += listOf("-opt-in=androidx.compose.material3.ExperimentalMaterial3Api")
     }
     buildFeatures { compose = true }
+    // Robolectric 渲染测试需要读 Android 资源（主题/排版/字体度量），否则 compose 里
+    // LocalContext / 资源查找在单测环境直接抛。
+    testOptions { unitTests { isIncludeAndroidResources = true } }
     packaging { resources.excludes += "/META-INF/{AL2.0,LGPL2.1}" }
 }
 
@@ -46,4 +49,14 @@ dependencies {
     implementation(libs.compose.material3)
     implementation(libs.compose.material.icons.extended)
     debugImplementation(libs.compose.ui.tooling)
+
+    // ── 屏渲染测试（JVM 上跑，不需要模拟器）──
+    // 容器/CI 里没有 emulator、也没有 root/Shizuku，真机截图做不到；Robolectric 能在 JVM 里
+    // 提供 Android 运行时 + Compose 组合，让「这一屏能不能渲染出预期文案」变成可断言的事。
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.robolectric:robolectric:4.14.1")
+    testImplementation(platform(libs.compose.bom))
+    testImplementation("androidx.compose.ui:ui-test-junit4")
+    testImplementation("androidx.compose.ui:ui-test-manifest")
+    testImplementation("androidx.test:core:1.6.1")
 }

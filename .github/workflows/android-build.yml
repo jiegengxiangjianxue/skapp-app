@@ -1,12 +1,21 @@
 name: android-build
-# skapp 构建 —— 按层分段构建，任何一层不过闸就不进入下一层：
-#   1) engine-gate        云端算法/引擎仓（Python）编译与注册校验
-#   2) analysis-gate      云端分析计算产物（市场宽度/新鲜度/清单）自检
-#   3) engine-kotlin      :engine 纯 JVM 模块（算法引擎 + 分析计算），不需要 Android SDK
-#   4) ui-render-gate     :app Kotlin 编译（后端 UI + 密集渲染层类型检查）
-#   5) build              打包 APK（arm64-v8a only）并发布到 GitHub Release
+# skapp 构建 —— 一个 job 只回答一个问题。
+#
+# 以前 5 个 job 里塞满步骤：一次红只告诉你「这层坏了」，步骤串行、前面红后面全 skip，
+# 一次运行只能问出一个问题。现在按「守卫 / 契约 / 分析 / 单测分片 / 编译 / 打包」切开：
+#
+#   1) guards            静态守卫：分层方向、健康核心、分析不读云端快照、渲染层存在、健康守卫存在
+#   2) engine-contract   云端仓 Python 编译 + 抓取器注册 + 产物 schema + 端云版本一致
+#   3) analysis-breadth  市场宽度累加器 dry-run
+#   4) analysis-artifacts 分析产物 schema（breadth / manifest / api index）
+#   5) engine-tests      JVM 单测按「引擎/链路」切 15 片，matrix 并行、fail-fast: false
+#   6) compile           :ui 与 :app Kotlin 编译（类型检查）+ org.json 方法面守卫
+#   7) build             APK（arm64-v8a only）+ 发布 GitHub Release
+#
+# 每片独立：红的那片就是问题所在，其余片照常给结论，不必重跑整条链。
+#
 # 产物仅 arm64-v8a（用户要求：不要 x86）。
-# 出包位置：GitHub Release（tag = v<versionName>），不再上传 Actions artifact。
+# 出包位置：GitHub Release（tag = v<versionName>）。
 # 注意：本仓是私有仓，Release 资产下载同样需要登录 —— 匿名访问
 #   .../releases/download/<tag>/<asset> 返回 404，手机需先登录 GitHub 才能下载安装。
 
@@ -36,10 +45,126 @@ permissions:
   contents: read
 
 jobs:
-  # ── 1. 云端算法/引擎/链路构建与自检（云端仓库 stocks-ai-view）──────────────
-  engine-gate:
+  guards:
+    # ── 1. 静态守卫：不编译、不装 SDK，秒级给出结构结论 ─────────────────
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Guard - engine layers must stay Android-free and one-way
+        run: |
+          set -euo pipefail
+          # 四层 + 聚合层都不能沾 Android，否则「引擎可独立构建」不成立
+          if grep -rn "^import android\.\|^import androidx\." engine*/src/ ; then
+            echo "::error::引擎层出现 Android 依赖，已破坏「可独立构建」的边界"
+            exit 1
+          fi
+          if grep -q 'project(":ui")' engine*/build.gradle.kts ; then
+            echo "::error::引擎层不得依赖 :ui（依赖方向必须是 :app -> :ui -> :engine）"
+            exit 1
+          fi
+          # 依赖方向单向：core ← net ← algo ← runtime ← 聚合，反向依赖直接红
+          python3 - <<'PYCODE'
+          import re, pathlib, sys
+          allowed = {
+              "engine-core": set(),
+              "engine-net": {"engine-core"},
+              "engine-algo": {"engine-core", "engine-net"},
+              "engine-runtime": {"engine-core", "engine-net", "engine-algo"},
+              "engine": {"engine-runtime"},
+          }
+          bad = []
+          for mod, ok in allowed.items():
+              f = pathlib.Path(mod) / "build.gradle.kts"
+              if not f.exists():
+                  bad.append(f"{mod}: 缺 build.gradle.kts")
+                  continue
+              for d in re.findall(r'project\(":([a-z-]+)"\)', f.read_text()):
+                  if d.startswith("engine") and d not in ok:
+                      bad.append(f"{mod} 反向依赖了 :{d}（只允许 {sorted(ok) or '无'}）")
+          if bad:
+              print("::error::" + "；".join(bad))
+              sys.exit(1)
+          print("engine layers are Android-free and depend only backwards")
+          PYCODE
+
+      # 守卫的判定逻辑（阈值/去重/内存分级）必须一直有断言覆盖——
+      # 测试文件被删掉时 :engine:test 依然会「通过」，所以要显式把它钉住。
+      - name: Guard - health core tests must stay
+        run: |
+          set -euo pipefail
+          TEST=engine-core/src/test/kotlin/com/skapp/app/data/health/ProcessHealthCoreTest.kt
+          CORE=engine-core/src/main/java/com/skapp/app/data/health/ProcessHealthCore.kt
+          test -f "$TEST"
+          test -f "$CORE"
+          for mark in "stall threshold" "stall progression records every repeat interval" \
+                      "memory levels follow warn and critical ratios" "system low memory overrides ratio"; do
+            grep -q "$mark" "$TEST" || { echo "::error::健康守卫测试丢了用例：$mark"; exit 1; }
+          done
+          grep -q "STALL_THRESHOLD_MS" "$CORE"
+          grep -q "classifyMemory" "$CORE"
+          echo "health core + tests present"
+
+      # 数据来源守卫：分析链路只吃实时数据，云端只能经 Db 层进门（用户明确约束）。
+      # 这条守卫是「不要使用快照和云端」这句话的可执行版本，放宽它等于悄悄改需求。
+      - name: Guard - analysis must not read cloud snapshots
+        run: python3 tools/layer_source_guard.py
+
+      # ── 分层构建：一层一层编译/单测，哪一层坏了当场就能看出来 ──
+      # 顺序就是依赖方向；前排的层不过，后面的层不用看（和本地开发节奏一致）。
+      - name: Render layer presence check
+        run: |
+          set -euo pipefail
+          # 密集渲染层（Canvas 图表 + 玻璃拟态）必须存在，防止被误删后「构建成功但页面没图」
+          # 2026-10-27 起界面层已独立为 :ui 模块（app/ 只剩 MainActivity + 资源）
+          # 2026-10-29 起三个图表 composable 拆到 StockDetailCharts.kt（可见性 internal）
+          CHARTS=ui/src/main/java/com/skapp/app/ui/screens/StockDetailCharts.kt
+          test -f ui/src/main/java/com/skapp/app/ui/screens/StockDetailSheet.kt
+          test -f "$CHARTS"
+          grep -q "internal fun MinuteChart" "$CHARTS"
+          grep -q "internal fun KlineChart" "$CHARTS"
+          grep -q "internal fun LinkageBar" "$CHARTS"
+          grep -q "minuteTrendRich" engine-net/src/main/java/com/skapp/app/data/MarketDataClient.kt
+          grep -q "lastKlineSource" engine-net/src/main/java/com/skapp/app/data/MarketDataClient.kt
+          echo "render + data layer markers ok"
+
+      # vc19 守卫：CrashGuard 只能抓 Java 未捕获异常，ANR / 低内存被回收 / native 崩溃它看不到。
+      # 这一层把「不依赖崩溃栈」的守卫钉住，防止以后被人当成死代码清掉（它平时确实很安静）。
+      - name: Health guard presence check (ANR / watchdog / memory)
+        run: |
+          set -euo pipefail
+          GUARD=ui/src/main/java/com/skapp/app/ui/HealthGuard.kt
+          test -f "$GUARD"
+          # 必须真的挂在启动路径上，否则文件存在也等于没装
+          grep -q "HealthGuard.install" app/src/main/java/com/skapp/app/MainActivity.kt
+          grep -q "HealthGuard.exportPending" app/src/main/java/com/skapp/app/MainActivity.kt
+          # 两条监视通道的真实抓手：主线程心跳、native 堆、系统低内存
+          grep -q "Looper.getMainLooper" "$GUARD"
+          grep -q "Debug.getNativeHeapAllocatedSize" "$GUARD"
+          grep -q "getMemoryInfo" "$GUARD"
+          # 停顿必须由 watchdog 线程写盘（主线程此时卡着），且线程得是 daemon 不拖住退出
+          grep -q "skapp-health-watchdog" "$GUARD"
+          grep -q "isDaemon = true" "$GUARD"
+          # 与崩溃记录隔离：前缀必须是 health_，绝不能按 crash_ 前缀导出/删除
+          grep -q 'PREFIX = "health_"' "$GUARD"
+          if grep -q 'PREFIX = "crash_' "$GUARD"; then
+            echo "::error::健康记录用了 crash_ 前缀，会与 CrashGuard 的导出/删除通道撞车"
+            exit 1
+          fi
+          if grep -q '"crash_last.txt"' "$GUARD"; then
+            echo "::error::健康守卫对 crash_last.txt 有字面引用（红卡那份），2026-10-27 误删事故的同类风险"
+            exit 1
+          fi
+          echo "health guard markers ok"
+
+      # 白名单模式的 org.json 守卫：拿 android.jar 的真实方法集逐项比对 bytecode。
+      # 放在这一层是因为这里 :engine / :ui / :app 三层都已编译完，能一次扫全。
+
+  engine-contract:
+    # ── 2. 云端仓契约：Python 侧全部检查 ───────────────────────────────
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
       - name: Checkout engine (stocks-ai-view)
         uses: actions/checkout@v4
@@ -104,10 +229,11 @@ jobs:
             --kotlin-manifest ../skapp-src/engine-core/src/main/java/com/skapp/app/data/EngineManifest.kt
 
   # ── 2. 分析计算层自检（纯计算脚本，不发网络请求）────────────────────────
-  analysis-gate:
-    needs: engine-gate
+
+  analysis-breadth:
+    # ── 3. 市场宽度累加器（dry-run，不联网）────────────────────────────
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 10
     steps:
       - name: Checkout engine (stocks-ai-view)
         uses: actions/checkout@v4
@@ -127,6 +253,24 @@ jobs:
           cd engine-src
           python3 -m compileall -q scripts/build_market_breadth.py
           python3 scripts/build_market_breadth.py --dry-run
+
+
+  analysis-artifacts:
+    # ── 4. 分析产物 schema ────────────────────────────────────────────
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout engine (stocks-ai-view)
+        uses: actions/checkout@v4
+        with:
+          repository: qwerzxcva/stocks-ai-view
+          path: engine-src
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
 
       - name: Analysis artifacts schema (breadth / manifest / api index)
         run: |
@@ -161,9 +305,31 @@ jobs:
           PYCODE
 
   # ── 3. :engine 纯 JVM 模块（算法引擎 + 分析计算），不需要 Android SDK ────
-  engine-kotlin:
+
+  engine-tests:
+    # ── 5. JVM 单测：按引擎/链路分 15 片，互不影响 ──────────────────────
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { module: engine-core, group: core, filters: '*Test' }
+          - { module: engine-net, group: net, filters: '*Test' }
+          - { module: engine-algo, group: canonical, filters: '*Canonical21VoteParityTest,*CanonicalEngineParityTest' }
+          - { module: engine-algo, group: engines-state, filters: '*EngineV2ParityTest,*VolTargetParityTest,*EngineSurfaceRenderContractTest' }
+          - { module: engine-algo, group: early-votes, filters: '*EarlyVoteParityTest' }
+          - { module: engine-algo, group: price-levels, filters: '*PriceLevelParityTest,*SuperTrendTest,*IndicatorWindowTest' }
+          - { module: engine-algo, group: factors, filters: '*FactorDecorrelationTest,*FactorWeightStrategyTest,*EngineWeightsTest' }
+          - { module: engine-algo, group: picking, filters: '*EngineChainSelfCheckTest,*ExitPlanTest,*PositionCapTest,*ScenarioRulesTest,*LimitHistoryTest' }
+          - { module: engine-algo, group: sectors-pulse, filters: '*LocalSectorsTest,*SectorAliasTest,*SectorLinkTest,*ResonanceAndPulseTest,*LivePulseTest,*PeadEventsTest' }
+          - { module: engine-algo, group: render-contracts, filters: '*UiRenderContractTest,*ScreenDataContractTest,*CloudArtifactIntegrationTest' }
+          - { module: engine-algo, group: perf, filters: '*PerfProbeTest' }
+          - { module: engine-runtime, group: wiring, filters: '*BoardStatsWiringTest,*ChainIntegrityTest,*CloudParamsTest,*EngineFeedLiveTest,*HeartbeatPolicyTest' }
+          - { module: engine-runtime, group: picks, filters: '*LocalPicksTest,*PickScoringChainTest,*SectorBoostTest' }
+          - { module: engine-runtime, group: snapshot, filters: '*LocalSnapshotTest,*SnapshotStatusTest,*DayArchiveTest,*LiveExtrasTest' }
+          - { module: engine-runtime, group: contracts, filters: '*ScreenDataContractRuntimeTest,*NewsCalcResolveTest' }
+    name: tests / ${{ matrix.module }} / ${{ matrix.group }}
     steps:
       - uses: actions/checkout@v4
 
@@ -176,105 +342,19 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Guard - engine layers must stay Android-free and one-way
+      - name: "Run ${{ matrix.module }} :: ${{ matrix.group }}"
         run: |
           set -euo pipefail
-          # 四层 + 聚合层都不能沾 Android，否则「引擎可独立构建」不成立
-          if grep -rn "^import android\.\|^import androidx\." engine*/src/ ; then
-            echo "::error::引擎层出现 Android 依赖，已破坏「可独立构建」的边界"
-            exit 1
-          fi
-          if grep -q 'project(":ui")' engine*/build.gradle.kts ; then
-            echo "::error::引擎层不得依赖 :ui（依赖方向必须是 :app -> :ui -> :engine）"
-            exit 1
-          fi
-          # 依赖方向单向：core ← net ← algo ← runtime ← 聚合，反向依赖直接红
-          python3 - <<'PYCODE'
-          import re, pathlib, sys
-          allowed = {
-              "engine-core": set(),
-              "engine-net": {"engine-core"},
-              "engine-algo": {"engine-core", "engine-net"},
-              "engine-runtime": {"engine-core", "engine-net", "engine-algo"},
-              "engine": {"engine-runtime"},
-          }
-          bad = []
-          for mod, ok in allowed.items():
-              f = pathlib.Path(mod) / "build.gradle.kts"
-              if not f.exists():
-                  bad.append(f"{mod}: 缺 build.gradle.kts")
-                  continue
-              for d in re.findall(r'project\(":([a-z-]+)"\)', f.read_text()):
-                  if d.startswith("engine") and d not in ok:
-                      bad.append(f"{mod} 反向依赖了 :{d}（只允许 {sorted(ok) or '无'}）")
-          if bad:
-              print("::error::" + "；".join(bad))
-              sys.exit(1)
-          print("engine layers are Android-free and depend only backwards")
-          PYCODE
+          args=""
+          IFS=',' read -ra FS <<< "${{ matrix.filters }}"
+          for f in "${FS[@]}"; do args="$args --tests $f"; done
+          echo "gradlew :${{ matrix.module }}:test$args"
+          ./gradlew :${{ matrix.module }}:test $args --no-daemon --stacktrace
 
-      # 守卫的判定逻辑（阈值/去重/内存分级）必须一直有断言覆盖——
-      # 测试文件被删掉时 :engine:test 依然会「通过」，所以要显式把它钉住。
-      - name: Guard - health core tests must stay
-        run: |
-          set -euo pipefail
-          TEST=engine-core/src/test/kotlin/com/skapp/app/data/health/ProcessHealthCoreTest.kt
-          CORE=engine-core/src/main/java/com/skapp/app/data/health/ProcessHealthCore.kt
-          test -f "$TEST"
-          test -f "$CORE"
-          for mark in "stall threshold" "stall progression records every repeat interval" \
-                      "memory levels follow warn and critical ratios" "system low memory overrides ratio"; do
-            grep -q "$mark" "$TEST" || { echo "::error::健康守卫测试丢了用例：$mark"; exit 1; }
-          done
-          grep -q "STALL_THRESHOLD_MS" "$CORE"
-          grep -q "classifyMemory" "$CORE"
-          echo "health core + tests present"
-
-      # 数据来源守卫：分析链路只吃实时数据，云端只能经 Db 层进门（用户明确约束）。
-      # 这条守卫是「不要使用快照和云端」这句话的可执行版本，放宽它等于悄悄改需求。
-      - name: Guard - analysis must not read cloud snapshots
-        run: python3 tools/layer_source_guard.py
-
-      # ── 分层构建：一层一层编译/单测，哪一层坏了当场就能看出来 ──
-      # 顺序就是依赖方向；前排的层不过，后面的层不用看（和本地开发节奏一致）。
-      - name: Layer 1 - core (models / market hours / json)
-        run: ./gradlew :engine-core:test --no-daemon --stacktrace
-
-      - name: Layer 2 - net (live market / quote / kline / news links)
-        run: ./gradlew :engine-net:test --no-daemon --stacktrace
-
-      - name: Layer 3 - algo (indicators / factors / 12 engines)
-        run: ./gradlew :engine-algo:test --no-daemon --stacktrace
-
-      - name: Layer 4 - runtime (cache / screener / picks output)
-        run: ./gradlew :engine-runtime:test --no-daemon --stacktrace
-
-      - name: Compile aggregate module
-        run: ./gradlew :engine:compileKotlin --no-daemon --stacktrace
-
-      # 引擎算法必须真跑一遍 fixture：只「编译通过」挡不住把权重解析成等权、
-      # 或把均线空头排列读成买点这类方向性错误。
-      # 其中 PerfProbeTest 是性能基线（故意只打印不断言，慢机型不误伤）：
-      # 给「要不要上 Rust/NDK」提供可复核数据，见 docs/adr/0001-cloud-python-vs-ondevice-kotlin.md
-      - name: Combine - full engine test suite
-        run: ./gradlew :engine:test --no-daemon --stacktrace
-
-      # org.json 越界调用守卫（vc19 真机闪退的根因就是它）。
-      # :engine 用 compileOnly 的 org.json:json 编译，运行期却是 Android 内置 org.json，
-      # 两者方法集不同（jar 有 toMap()，平台没有）。编译和单测都拦不住，只能看字节码。
-      - name: Guard - no org.json methods missing on Android
-        run: |
-          set -euo pipefail
-          python3 tools/org_json_api_guard.py --self-test
-          python3 tools/org_json_api_guard.py \
-            engine-core/build/classes engine-net/build/classes \
-            engine-algo/build/classes engine-runtime/build/classes
-
-  # ── 4. 后端 UI + 密集渲染层（:app Kotlin 编译，只做类型检查不打包）────────
-  ui-render-gate:
-    needs: [engine-kotlin, analysis-gate]
+  compile:
+    # ── 6. Kotlin 编译（类型检查）+ org.json 方法面守卫 ─────────────────
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -336,68 +416,119 @@ jobs:
           ./gradlew :ui:compileDebugKotlin --no-daemon --stacktrace
           ./gradlew :app:compileDebugKotlin --no-daemon --stacktrace
 
-      - name: Render layer presence check
+      - name: Guard - no org.json methods missing on Android
         run: |
           set -euo pipefail
-          # 密集渲染层（Canvas 图表 + 玻璃拟态）必须存在，防止被误删后「构建成功但页面没图」
-          # 2026-10-27 起界面层已独立为 :ui 模块（app/ 只剩 MainActivity + 资源）
-          # 2026-10-29 起三个图表 composable 拆到 StockDetailCharts.kt（可见性 internal）
-          CHARTS=ui/src/main/java/com/skapp/app/ui/screens/StockDetailCharts.kt
-          test -f ui/src/main/java/com/skapp/app/ui/screens/StockDetailSheet.kt
-          test -f "$CHARTS"
-          grep -q "internal fun MinuteChart" "$CHARTS"
-          grep -q "internal fun KlineChart" "$CHARTS"
-          grep -q "internal fun LinkageBar" "$CHARTS"
-          grep -q "minuteTrendRich" engine-net/src/main/java/com/skapp/app/data/MarketDataClient.kt
-          grep -q "lastKlineSource" engine-net/src/main/java/com/skapp/app/data/MarketDataClient.kt
-          echo "render + data layer markers ok"
+          python3 tools/org_json_api_guard.py --self-test
+          python3 tools/org_json_api_guard.py \
+            engine-core/build/classes engine-net/build/classes \
+            engine-algo/build/classes engine-runtime/build/classes
 
-      # vc19 守卫：CrashGuard 只能抓 Java 未捕获异常，ANR / 低内存被回收 / native 崩溃它看不到。
-      # 这一层把「不依赖崩溃栈」的守卫钉住，防止以后被人当成死代码清掉（它平时确实很安静）。
-      - name: Health guard presence check (ANR / watchdog / memory)
-        run: |
-          set -euo pipefail
-          GUARD=ui/src/main/java/com/skapp/app/ui/HealthGuard.kt
-          test -f "$GUARD"
-          # 必须真的挂在启动路径上，否则文件存在也等于没装
-          grep -q "HealthGuard.install" app/src/main/java/com/skapp/app/MainActivity.kt
-          grep -q "HealthGuard.exportPending" app/src/main/java/com/skapp/app/MainActivity.kt
-          # 两条监视通道的真实抓手：主线程心跳、native 堆、系统低内存
-          grep -q "Looper.getMainLooper" "$GUARD"
-          grep -q "Debug.getNativeHeapAllocatedSize" "$GUARD"
-          grep -q "getMemoryInfo" "$GUARD"
-          # 停顿必须由 watchdog 线程写盘（主线程此时卡着），且线程得是 daemon 不拖住退出
-          grep -q "skapp-health-watchdog" "$GUARD"
-          grep -q "isDaemon = true" "$GUARD"
-          # 与崩溃记录隔离：前缀必须是 health_，绝不能按 crash_ 前缀导出/删除
-          grep -q 'PREFIX = "health_"' "$GUARD"
-          if grep -q 'PREFIX = "crash_' "$GUARD"; then
-            echo "::error::健康记录用了 crash_ 前缀，会与 CrashGuard 的导出/删除通道撞车"
-            exit 1
-          fi
-          if grep -q '"crash_last.txt"' "$GUARD"; then
-            echo "::error::健康守卫对 crash_last.txt 有字面引用（红卡那份），2026-10-27 误删事故的同类风险"
-            exit 1
-          fi
-          echo "health guard markers ok"
-
-      # 白名单模式的 org.json 守卫：拿 android.jar 的真实方法集逐项比对 bytecode。
-      # 放在这一层是因为这里 :engine / :ui / :app 三层都已编译完，能一次扫全。
+  # ── 4. 后端 UI + 密集渲染层（:app Kotlin 编译，只做类型检查不打包）────────
       - name: Guard - org.json API surface vs android.jar
         run: |
           set -euo pipefail
           python3 tools/org_json_api_guard.py \
             --android-jar "$ANDROID_HOME/platforms/android-35/android.jar"
 
-  # ── 5. 打包 ───────────────────────────────────────────────────────────
-  build:
-    # Google 的 build-tools/aapt2 只发布 x86_64 二进制。
-    # 构建机架构与 APK ABI 无关；app/build.gradle.kts 已限定只生成 arm64-v8a。
-    needs: [ui-render-gate, engine-kotlin]
+
+  # ── 8. 屏渲染（Robolectric，JVM 上跑，不需要模拟器）──────────────────────
+  # 这台容器是 aarch64，conscrypt 没有 linux-aarch_64 原生库，Robolectric 在自己的
+  # setUpApplicationState 就抛 UnsatisfiedLinkError（与测试代码无关）；GitHub 的 runner 是
+  # x86_64，原生库齐全，所以这条验证放在 CI 而不是本地。
+  ui-render-robolectric:
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify x86_64 runner（Robolectric 的 conscrypt 原生库只有 x86_64）
+        run: |
+          set -euo pipefail
+          arch=$(uname -m)
+          echo "arch=$arch"
+          test "$arch" = "x86_64" || { echo "::error::Robolectric 需要 x86_64 runner（conscrypt 无 aarch64 原生库）"; exit 1; }
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Cache Android SDK
+        id: sdk-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.android/sdk
+            ~/android-sdk
+          key: android-sdk-r1-${{ runner.os }}
+
+      - name: Configure Android SDK environment
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-$HOME/.android/sdk}}"
+          echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "$SDK_ROOT/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+
+      - name: Install Android SDK
+        run: |
+          set -euo pipefail
+          SDK_ROOT="$ANDROID_SDK_ROOT"
+          if [ ! -d "$SDK_ROOT/platforms/android-35" ]; then
+            command -v sdkmanager >/dev/null || {
+              mkdir -p "$SDK_ROOT/cmdline-tools"
+              curl -sSL -o /tmp/cmdline.zip https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+              unzip -q /tmp/cmdline.zip -d /tmp/cmdline
+              mkdir -p "$SDK_ROOT/cmdline-tools/latest"
+              mv /tmp/cmdline/cmdline-tools/* "$SDK_ROOT/cmdline-tools/latest/"
+            }
+            yes | sdkmanager --licenses >/dev/null || true
+            sdkmanager "platforms;android-35" "build-tools;35.0.0" "platform-tools"
+          fi
+
+      - name: Write local.properties
+        run: |
+          set -euo pipefail
+          echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties
+          cat local.properties
+
+      - name: Robolectric 屏渲染测试
+        run: |
+          set -euo pipefail
+          ./gradlew :ui:testDebugUnitTest --tests "*ScreenRenderRobolectricTest*" --no-daemon --stacktrace
+
+      - name: 汇总每个屏的通过情况
+        if: always()
+        run: |
+          set -uo pipefail
+          python3 - <<'PYCODE'
+          import glob, re, sys
+          total = failed = 0
+          for f in sorted(glob.glob("ui/build/test-results/testDebugUnitTest/TEST-*.xml")):
+              s = open(f, encoding="utf-8").read()
+              for m in re.finditer(r'<testcase name="([^"]+)"[^>]*?(/>|>)', s):
+                  name = m.group(1)
+                  total += 1
+                  seg = s[m.end():m.end() + 400]
+                  bad = seg.lstrip().startswith("<failure") or seg.lstrip().startswith("<error")
+                  failed += 1 if bad else 0
+                  print(("FAIL " if bad else "PASS ") + name)
+          print("screen render cases: %d, failed: %d" % (total, failed))
+          sys.exit(1 if failed or total == 0 else 0)
+          PYCODE
+
+  build:
+    # ── 7. 打包与发布：所有分片都过才走到这里 ──────────────────────────
     permissions:
       contents: write   # 创建 / 更新 GitHub Release 需要
+    needs: [guards, engine-contract, analysis-breadth, analysis-artifacts, engine-tests, compile, ui-render-robolectric]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
