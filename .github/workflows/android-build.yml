@@ -6,8 +6,9 @@ name: android-build
 #   4) ui-render-gate     :app Kotlin 编译（后端 UI + 密集渲染层类型检查）
 #   5) build              打包 APK（arm64-v8a only）并发布到 GitHub Release
 # 产物仅 arm64-v8a（用户要求：不要 x86）。
-# 出包位置：GitHub Release（tag = v<versionName>），不再上传 Actions artifact ——
-#   artifact 要登录才能下载，Release 资产可直接下到手机安装。
+# 出包位置：GitHub Release（tag = v<versionName>），不再上传 Actions artifact。
+# 注意：本仓是私有仓，Release 资产下载同样需要登录 —— 匿名访问
+#   .../releases/download/<tag>/<asset> 返回 404，手机需先登录 GitHub 才能下载安装。
 
 on:
   push:
@@ -340,10 +341,13 @@ jobs:
           set -euo pipefail
           # 密集渲染层（Canvas 图表 + 玻璃拟态）必须存在，防止被误删后「构建成功但页面没图」
           # 2026-10-27 起界面层已独立为 :ui 模块（app/ 只剩 MainActivity + 资源）
+          # 2026-10-29 起三个图表 composable 拆到 StockDetailCharts.kt（可见性 internal）
+          CHARTS=ui/src/main/java/com/skapp/app/ui/screens/StockDetailCharts.kt
           test -f ui/src/main/java/com/skapp/app/ui/screens/StockDetailSheet.kt
-          grep -q "private fun MinuteChart" ui/src/main/java/com/skapp/app/ui/screens/StockDetailSheet.kt
-          grep -q "private fun KlineChart" ui/src/main/java/com/skapp/app/ui/screens/StockDetailSheet.kt
-          grep -q "private fun LinkageBar" ui/src/main/java/com/skapp/app/ui/screens/StockDetailSheet.kt
+          test -f "$CHARTS"
+          grep -q "internal fun MinuteChart" "$CHARTS"
+          grep -q "internal fun KlineChart" "$CHARTS"
+          grep -q "internal fun LinkageBar" "$CHARTS"
           grep -q "minuteTrendRich" engine-net/src/main/java/com/skapp/app/data/MarketDataClient.kt
           grep -q "lastKlineSource" engine-net/src/main/java/com/skapp/app/data/MarketDataClient.kt
           echo "render + data layer markers ok"
@@ -501,7 +505,7 @@ jobs:
             "- Commit: \`$(echo "$GITHUB_SHA" | cut -c1-7)\`" \
             "- Gates passed: engine-gate -> analysis-gate -> engine-kotlin -> ui-render-gate -> build" \
             "" \
-            "Install: tap **$NAME** below to download and install. versionCode increases with every release, so it installs straight over the previous version.")"
+            "Install: sign in to GitHub first — this repo is **private**, anonymous asset URLs return 404. Then tap **$NAME** below to download and install. versionCode increases with every release, so it installs straight over the previous version.")"
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "release $TAG exists -> refresh asset"
             gh release upload "$TAG" "/tmp/$NAME" --clobber
