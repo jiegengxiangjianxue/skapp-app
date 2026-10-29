@@ -515,6 +515,23 @@ object ExtendedIndicators {
         return vals.takeIf { it.isNotEmpty() }?.average()
     }
 
+    /**
+     * 近 n 日涨停次数（涨停基因）。口径同站点 `stocks-ai-view/scripts/factor_lib.py`：
+     * `(close/close.shift(1)-1) >= 0.095` 的窗口内根数（站点用 rolling(n).sum()）。
+     * ST（5%）/ 创业板科创板（20%）/ 北交所（30%）不区分，站点同样不区分。
+     * 需要 n+1 根（首根无涨跌幅），不足返回 null。
+     */
+    fun ztCount(bars: List<KBar>, n: Int): Double? {
+        if (bars.size <= n) return null
+        var hits = 0
+        for (i in bars.size - n until bars.size) {
+            val prev = bars[i - 1].close
+            // 前收 0 的脏数据不算涨停（否则相除得 Infinity 会被算成一次）
+            if (prev > 0 && (bars[i].close - prev) / prev >= 0.095) hits++
+        }
+        return hits.toDouble()
+    }
+
     fun volPriceCorr(bars: List<KBar>, n: Int = 20): Double? {
         if (bars.size <= n) return null
         val closes = bars.map { it.close }
@@ -533,7 +550,10 @@ object ExtendedIndicators {
         return if (dr > 0 && dv > 0) num / sqrt(dr * dv) else null
     }
 
-    /** 全部因子一次算完（29 个） */
+    /** 因子库条目数：界面文案里的「N 因子」统一取这里，加因子时只需要改 [allFactors]。 */
+    val factorCount: Int = allFactors(emptyList()).size
+
+    /** 全部因子一次算完 */
     fun allFactors(bars: List<KBar>): Map<String, Double?> = mapOf(
         "momentum_5d" to momentum(bars, 5),
         "momentum_10d" to momentum(bars, 10),
@@ -561,6 +581,8 @@ object ExtendedIndicators {
         "overnight_20d" to overnight20d(bars, 20),
         "intraday_20d" to intraday20d(bars, 20),
         "amihud_20d" to amihud(bars, 20),
+        "zt_count_20d" to ztCount(bars, 20),
+        "zt_count_60d" to ztCount(bars, 60),
         "vol_price_corr_20d" to volPriceCorr(bars, 20),
     )
 

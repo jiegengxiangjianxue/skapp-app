@@ -46,7 +46,7 @@ import kotlin.test.fail
  * | AiScreen / PicksScreen / SummaryScreen | 纯路由，无自有数据 | `AiScreen` → `UnifiedAskScreen`；`PicksScreen`/`SummaryScreen` → `RealtimeSummaryScreen` |
  * | BoardRules.kt / StockDetailCharts.kt | 非独立屏，是被上面屏引用的组成件 | 图表吃 `bars`/`quotes` 纯数据（`StockDetailCharts.kt:51`） |
  *
- * ## 覆盖的断言（本文件的 8 个用例）
+ * ## 覆盖的断言（本文件覆盖的用例）
  *
  * 1. 数据源健康聚合的计数与文案（Board/Dashboard 状态带）——真实 `testdata/cloud/` 下的云端产物
  * 2. 单条数据源状态文案（DiagScreen 每行状态）——显式输入走全部分支
@@ -54,6 +54,7 @@ import kotlin.test.fail
  * 4. 回本率与样本说明（详情页）——同一批 K 线 + 不足 80 根的降级分支
  * 5. 回本率门槛「通过/不通过」文案——显式构造 `RecoupCalc.Result` 的真值表
  * 6. 29 因子库键集与缺数据为 null（详情页因子库）——同一批 K 线 + 空输入
+ * 6b. 涨停基因计数（`zt_count_20d/60d`）——站点 9.5% 口径与窗口边界
  * 7. K 线尾部统计（涨跌幅 / 振幅 / 量比）——与夹具原始 OHLCV 独立算术对账
  * 8. 时段文案与自动刷新间隔（MarketScreen/BoardScreen 的相位带）——显式 CST 时间点
  * 9. 搜索框的归一化/去重/上限（MarketScreen）——显式 `SymbolEntry` 输入
@@ -67,19 +68,16 @@ import kotlin.test.fail
  *
  * ## 两个口径问题的处理方式（按仓库现有口径定，不在本文件里改 main 代码）
  *
- * 1. **因子库 29 vs 数据层 27（已验证成因）**：站点参考实现
+ * 1. **因子库 29 vs 数据层 27（已补齐，本文件锁 29）**：站点参考实现
  *    `stocks-ai-view/scripts/factor_lib.py` 用 `@factor` 登记 **29 个因子**，端上
- *    `ExtendedIndicators.allFactors` 少了 `zt_count_20d` / `zt_count_60d`（涨停基因，
+ *    `ExtendedIndicators.allFactors` 已补 `zt_count_20d` / `zt_count_60d`（涨停基因，
  *    站点口径：`(close/close.shift(1)-1) >= 0.095` 的根数，rolling 20/60 求和）。
- *    口径取「29」（站点 + 本仓 6 处文案一致，ADR 0006 也写 29），缺口在数据层。
- *    本文件先锁住现有 27 个键的集合（防现有因子静默增减），并在此标出缺的两个；
- *    补齐需改 `engine-algo/.../ExtendedIndicators.kt`（已另附补丁，本会话无写权限）。
- * 2. **十关键位的百点台阶对低价个股给出负价（口径：不可能的价格不上屏）**：
- *    `KeyLevels.kt:47` 的台阶是「顶部取整到百点再每 100 点一档」（指数口径，个股沿用），
+ *    口径取「29」（站点 + 本仓 6 处文案一致，ADR 0006 也写 29）。
+ * 2. **十关键位的百点台阶对低价个股给出负价（口径：不可能的价格不上屏，已修）**：
+ *    `KeyLevels.kt` 的台阶是「顶部取整到百点再每 100 点一档」（指数口径，个股沿用），
  *    个股价格远低于 100 元时下方几档变负数——实测 `sh600017`（现价 2.75）的 `dipBuy` 为
  *    `-100.0`。站点无对应实现（该引擎是端上原创），所以只有「价格不能为负」这一条硬口径。
- *    处理：台阶只保留 >0 的档位，止损位算出负价时退回「跌破支撑止损」。同样需改 main，
- *    本文件目前只断言有限值，不把负价当成正确口径。
+ *    处理：台阶只保留 >0 的档位，止损位算出负价时退回「跌破支撑止损」。
  */
 class ScreenDataContractTest {
 
@@ -182,12 +180,18 @@ class ScreenDataContractTest {
                 "抄底位" to levels.dipBuy,
             )
             for ((label, v) in tens) {
-                // 只断言「能渲染」：这里不对正负拿下判断——低价个股的台阶位会算出负价（见类 KDoc 的已知缺陷）
-                assertTrue(v.isFinite(), "$code $label 非有限值：$v")
+                // 价格位必须是正数：低价个股的台阶位丢掉负价后不会落到这里，出现非正价说明算错了
+                assertTrue(v.isFinite() && v > 0.0, "$code $label 非正价格：$v")
                 assertRenderable("$code $label 文案", String.format(Locale.US, "%.2f", v))
             }
-            levels.ladderBelow.forEach { assertTrue(it < levels.cur, "$code 下方台阶 $it 不在现价 ${levels.cur} 之下") }
-            levels.ladderAbove.forEach { assertTrue(it > levels.cur, "$code 上方台阶 $it 不在现价 ${levels.cur} 之上") }
+            levels.ladderBelow.forEach {
+                assertTrue(it > 0.0, "$code 下方台阶 $it 不是正价")
+                assertTrue(it < levels.cur, "$code 下方台阶 $it 不在现价 ${levels.cur} 之下")
+            }
+            levels.ladderAbove.forEach {
+                assertTrue(it > 0.0, "$code 上方台阶 $it 不是正价")
+                assertTrue(it > levels.cur, "$code 上方台阶 $it 不在现价 ${levels.cur} 之上")
+            }
             assertRenderable("$code 买卖位建议", levels.trade)
         }
         // K 线不足 80 根时详情页不显示这张卡（返回 null），不许硬算一组假位
@@ -250,8 +254,8 @@ class ScreenDataContractTest {
     fun `因子库键集固定且缺数据必须是空值`() {
         val bars = cases().first().second
         val factors = ExtendedIndicators.allFactors(bars)
-        assertEquals(27, factors.size,
-            "因子库键数漂移（现为 27；站点 factor_lib.py 有 29，缺 zt_count_20d / zt_count_60d，见类 KDoc）：${factors.keys}")
+        assertEquals(29, factors.size,
+            "因子库键数漂移（现为 29，对齐站点 factor_lib.py）：${factors.keys}")
         for (k in listOf("ret_1d", "amplitude", "vol_ratio_5d", "vol_20d", "position_240d", "close_position")) {
             assertTrue(factors.containsKey(k), "因子库缺 $k，详情页会少一行")
         }
@@ -262,14 +266,36 @@ class ScreenDataContractTest {
 
         // 空 K 线：所有因子为 null（界面走「K 线不足 30 根」分支，数据层也不许造数）
         val empty = ExtendedIndicators.allFactors(emptyList())
-        assertEquals(27, empty.size)
+        assertEquals(29, empty.size)
         empty.forEach { (k, v) -> assertNull(v, "没有 K 线时因子 $k 却是 $v，界面会显示一个凭空算出的数") }
+
+        // 界面文案里的「N 因子」取 ExtendedIndicators.factorCount，必须与键集同源
+        assertEquals(empty.size, ExtendedIndicators.factorCount,
+            "factorCount 与因子键集不同源，界面文案会与实际行数不符")
 
         // 5 根：短周期出值、长周期为 null——同一张表里两种语义必须分得开
         val tiny = ExtendedIndicators.allFactors(bars.take(5))
         assertTrue(tiny["ret_1d"] != null, "5 根 K 线足够算单日涨跌幅")
         assertNull(tiny["momentum_20d"], "5 根 K 线算不出 20 日动量")
         assertNull(tiny["vol_20d"], "5 根 K 线算不出 20 日波动率")
+    }
+
+    // ── 6b. 涨停基因（站点 factor_lib.py 口径：涨跌幅 >= 0.095 的根数）──
+    @Test
+    fun `涨停基因按站点口径计数`() {
+        fun bar(c: Double) = KBar("2026-01-01", open = c, close = c, high = c, low = c, vol = 1.0)
+        // 21 根：只有一根 +9.5%（边界值，站点写的是 >=）
+        val bars = (0..20).map { if (it <= 2) bar(100.0) else bar(109.5) }
+        val f = ExtendedIndicators.allFactors(bars)
+        assertEquals(1.0, f["zt_count_20d"], "20 日窗口内恰好一根 +9.5%，边界含等号必须计 1 次")
+        assertNull(f["zt_count_60d"], "21 根凑不满 60 日窗口，必须是 null，不许拿 1 充 60 日")
+        // 20 根整：首根无涨跌幅，站点 rolling(20).sum() 为 NaN → 端上也必须是 null
+        assertNull(ExtendedIndicators.allFactors(bars.take(20))["zt_count_20d"],
+            "20 根只凑出 19 个涨跌幅，20 日涨停次数应为 null")
+        // 前收 0 的脏数据：相除得 Infinity，不许被当成一次涨停
+        val dirty = (0..20).map { if (it == 10) bar(0.0) else bar(100.0) }
+        assertEquals(0.0, ExtendedIndicators.allFactors(dirty)["zt_count_20d"],
+            "前收为 0 时涨跌幅不可算，不能计入涨停次数")
     }
 
     // ── 7. K 线尾部统计（涨跌幅 / 振幅 / 量比）─────────────────────

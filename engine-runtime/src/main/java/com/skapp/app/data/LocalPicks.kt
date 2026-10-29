@@ -5,7 +5,7 @@ package com.skapp.app.data
  *
  * 背景：实时总结里的「盘前推股」「午盘推股」原先只吃云端 CI 产物（数据停在上一轮产出，
  * 盘中打开经常是过期/别人的时间口径）。这里改成设备本地生成，只依赖两条真实链路：
- *   快照（东财 clist） + 日 K（腾讯→东财） → 本地 12 引擎 / 29 因子打分
+ *   快照（东财 clist） + 日 K（腾讯→东财） → 本地 12 引擎 / 因子库全量因子打分
  *
  * 口径红线（两条必须守住，否则就是拿未来数据编结论）：
  *   1) 盘前口径：日 K 必须剔除最后一根（dropLastBar=true），只能看截至上一交易日收盘的指标；
@@ -84,7 +84,7 @@ object LocalPicks {
         score = s.centralScore,
         buyable = s.buyable,
         snapshotStatus = s.snapshotStatus,
-        engine = "本地中枢引擎 · 12 引擎 / 29 因子",
+        engine = "本地中枢引擎 · 12 引擎 / ${ExtendedIndicators.factorCount} 因子",
         resonance = s.resonanceRatio,
         reason = s.centralSummary ?: s.reason,
         calculationTime = calcTime,
@@ -278,7 +278,7 @@ object LocalPicks {
                 calculationTime = calcTime,
                 date = calcTime.take(10),
                 session = session.key,
-                engine = "本地中枢引擎 · 12 引擎 / 29 因子",
+                engine = "本地中枢引擎 · 12 引擎 / ${ExtendedIndicators.factorCount} 因子",
                 status = status,
                 reason = reason,
                 picks = emptyList(),
@@ -291,7 +291,7 @@ object LocalPicks {
             calculationTime = calcTime,
             date = calcTime.take(10),
             session = session.key,
-            engine = "本地中枢引擎 · 12 引擎 / 29 因子",
+            engine = "本地中枢引擎 · 12 引擎 / ${ExtendedIndicators.factorCount} 因子",
             status = "ok",
             reason = "本地深算 ${usable.size} 只，达标 ${qualified.size} 只，展示前 ${picks.size} 只。",
             picks = picks,

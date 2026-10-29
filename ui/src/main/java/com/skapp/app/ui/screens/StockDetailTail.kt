@@ -88,9 +88,13 @@ internal fun ColumnScope.DetailTailSections(
                             }
                         }
                         if (kl.ladderBelow.isNotEmpty() || kl.ladderAbove.isNotEmpty()) {
+                            val below = kl.ladderBelow.take(3).joinToString(" / ") { String.format("%.0f", it) }
+                            val above = kl.ladderAbove.take(3).joinToString(" / ") { String.format("%.0f", it) }
                             Text(
-                                "台阶下方：" + kl.ladderBelow.take(3).joinToString(" / ") { String.format("%.0f", it) } +
-                                    " · 上方：" + kl.ladderAbove.take(3).joinToString(" / ") { String.format("%.0f", it) },
+                                listOfNotNull(
+                                    below.takeIf { it.isNotEmpty() }?.let { "台阶下方：$it" },
+                                    above.takeIf { it.isNotEmpty() }?.let { "台阶上方：$it" },
+                                ).joinToString(" · "),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = SkColors.textSecondary,
                             )
@@ -258,7 +262,7 @@ internal fun ColumnScope.DetailTailSections(
         // ── 29 因子库 ──
         SkCard(contentPadding = PaddingValues(0.dp)) {
             Column(Modifier.padding(12.dp)) {
-                Text("因子库（29 因子，本机计算）", fontWeight = FontWeight.SemiBold)
+                Text("因子库（${ExtendedIndicators.factorCount} 因子，本机计算）", fontWeight = FontWeight.SemiBold)
                 Text(
                     "对应站点 factor_lib.py",
                     style = MaterialTheme.typography.bodySmall,
@@ -271,7 +275,7 @@ internal fun ColumnScope.DetailTailSections(
                 } else {
                     ExtendedIndicators.allFactors(state.kline).entries.forEach { (k, v) ->
                         Text(
-                            "${factorLabel(k)}：${v?.let { String.format("%.4f", it) } ?: "暂无"}",
+                            "${factorLabel(k)}：${factorText(k, v)}",
                             style = MaterialTheme.typography.bodySmall,
                         )
                     }
@@ -460,7 +464,20 @@ internal fun factorLabel(k: String): String = when (k) {
     "max_ret_20d" -> "20日最大涨幅"; "up_days_20d" -> "20日上涨天数"
     "overnight_20d" -> "隔夜收益"; "intraday_20d" -> "日内收益20日"
     "amihud_20d" -> "Amihud非流动性"; "vol_price_corr_20d" -> "量价相关"
+    "zt_count_20d" -> "涨停基因20日"; "zt_count_60d" -> "涨停基因60日"
     else -> k
+}
+
+/**
+ * 因子值渲染：`zt_count_*` 是「根数」，渲染成整数（`%.4f` 会变成「2.0000」）；
+ * 其余因子保留 4 位小数。缺数据显示「暂无」，不落成 0。
+ */
+internal fun factorText(k: String, v: Double?): String {
+    if (v == null) return "暂无"
+    return when (k) {
+        "zt_count_20d", "zt_count_60d" -> String.format("%.0f", v)
+        else -> String.format("%.4f", v)
+    }
 }
 
 internal fun scoreColor(s: Double): Color = when {

@@ -44,7 +44,8 @@ object KeyLevels {
         // 100 点台阶 (指数用 4141.65 顶, 个股用区间大顶)
         val top = ladderTop ?: tops.maxOfOrNull { it.second } ?: return null
         val topRound = kotlin.math.round(top / 100) * 100
-        val ladder = (1..8).map { topRound - 100 * it }
+        // 低价个股 topRound 小时台阶会算成负价，负价不是有效价位，直接丢掉
+        val ladder = (1..8).map { topRound - 100 * it }.filter { it > 0.0 }
         val below = ladder.filter { it < c }.sortedDescending()
         val above = ladder.filter { it > c }
 
@@ -68,7 +69,11 @@ object KeyLevels {
 
         val trade = when {
             c > pressure -> "突破压力, 突破位${"%.0f".format(pressure)}之上加仓"
-            c <= support * 1.01 -> "贴近支撑${"%.0f".format(support)}, 分批抄底区; 破${"%.0f".format((below.firstOrNull() ?: support) - 50)}止损"
+            c <= support * 1.01 -> {
+                val stop = (below.firstOrNull() ?: support) - 50
+                val stopText = if (stop > 0) "破${"%.0f".format(stop)}止损" else "跌破支撑止损"
+                "贴近支撑${"%.0f".format(support)}, 分批抄底区; $stopText"
+            }
             else -> "区间${"%.0f".format(support)}-${"%.0f".format(pressure)} 观望; 抄底参考${below.firstOrNull() ?: support}"
         }
 

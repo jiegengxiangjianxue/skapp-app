@@ -35,6 +35,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.skapp.app.data.ExtendedDataClient
+import com.skapp.app.data.ExtendedIndicators
 import com.skapp.app.ui.SkappViewModel
 import com.skapp.app.ui.UiState
 import com.skapp.app.ui.Watchlist
@@ -151,7 +152,7 @@ fun MarketScreen(vm: SkappViewModel, state: UiState) {
                             }
                             // 搜索即触发本地引擎分析（点开详情时算，这里给提示）
                             Text(
-                                "点击查看：实时行情 + 12 引擎 + 29 因子 + 日/周/月K + 资金流 + 板块",
+                                "点击查看：实时行情 + 12 引擎 + ${ExtendedIndicators.factorCount} 因子 + 日/周/月K + 资金流 + 板块",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = SkColors.textSecondary,
                             )

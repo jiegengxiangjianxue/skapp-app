@@ -28,6 +28,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.skapp.app.data.ExtendedIndicators
 import com.skapp.app.ui.SkappViewModel
 import com.skapp.app.ui.UiState
 
@@ -119,7 +120,7 @@ fun UnifiedAskScreen(vm: SkappViewModel, state: UiState) {
             Column(Modifier.padding(12.dp)) {
                 Text("个股复盘", fontWeight = FontWeight.SemiBold)
                 Text(
-                    "使用当前详情页的实时行情、12 引擎、29 因子、技术面、财务、新闻和板块数据。",
+                    "使用当前详情页的实时行情、12 引擎、${ExtendedIndicators.factorCount} 因子、技术面、财务、新闻和板块数据。",
                     style = MaterialTheme.typography.bodySmall,
                     color = SkColors.textSecondary,
                 )

@@ -26,6 +26,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.skapp.app.data.CloseReview
+import com.skapp.app.data.ExtendedIndicators
 import com.skapp.app.data.LocalPicks
 import com.skapp.app.data.PickSignal
 import com.skapp.app.data.StructuredPickArtifact
@@ -285,7 +286,7 @@ private fun LocalPickCard(
                     )
                 }
                 Text(
-                    "以上为本地算法候选（12 引擎 / 29 因子），不是买入建议；交易决策需自行复核。",
+                    "以上为本地算法候选（12 引擎 / ${ExtendedIndicators.factorCount} 因子），不是买入建议；交易决策需自行复核。",
                     style = MaterialTheme.typography.labelSmall, color = SkColors.textSecondary,
                 )
             }
