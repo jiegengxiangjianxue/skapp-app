@@ -104,7 +104,9 @@ object MarketDataClient {
         }?.let { return@withContext it }
         // 2) 东财
         getJsonEm("https://push2.eastmoney.com/api/qt/stock/get?secid=${secid(code)}&fields=f43,f44,f45,f46,f57,f58,f169,f170,f86")
-            ?.takeIf { it.optLong("rc") != null }
+            // optLong 有默认值、永不返回 null，「!= null」等于恒真——任何响应都会被当成成功，
+            // 包括东财的错误体（rc 非 0 时 data 为 null）。按 rc == 0 判成功。
+            ?.takeIf { it.optInt("rc", -1) == 0 }
             ?.let { d ->
                 val data = d.optJSONObject("data") ?: return@let null
                 val price = data.opt("f43")?.toString()?.toDoubleOrNull()?.let { it / 100 }

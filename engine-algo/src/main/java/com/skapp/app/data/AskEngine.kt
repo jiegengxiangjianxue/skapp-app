@@ -134,7 +134,7 @@ class AskEngine(
                 } else {
                     val keys = listOf("roe", "roa", "revenue", "net_profit", "eps", "pe", "pb", "report_date")
                     val parts = keys.mapNotNull { k ->
-                        fin[k]?.takeIf { v -> v != null && v.toString() != "null" }
+                        fin[k]?.takeIf { v -> v.toString() != "null" }
                             ?.let { v -> "${labelOf(k)} ${formatAny(v)}" }
                     }
                     lines += if (parts.isEmpty()) "财务数据：暂无数据" else "财务摘要：" + parts.joinToString("，")

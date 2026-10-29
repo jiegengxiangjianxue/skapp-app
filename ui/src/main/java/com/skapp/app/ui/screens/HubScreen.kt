@@ -12,16 +12,16 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ShowChart
 import androidx.compose.material.icons.filled.AutoGraph
 import androidx.compose.material.icons.filled.Bolt
-import androidx.compose.material.icons.filled.PlaylistAddCheck
+import androidx.compose.material.icons.automirrored.filled.PlaylistAddCheck
 import androidx.compose.material.icons.filled.Dashboard
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.MonitorHeart
 import androidx.compose.material.icons.filled.Newspaper
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.QueryStats
-import androidx.compose.material.icons.filled.ShowChart
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -54,7 +54,7 @@ fun HubScreen(vm: SkappViewModel, state: UiState, onNavigate: (Int) -> Unit) {
             subtitle = "今天市场是什么状态：指数、板块、题材",
             modules = listOf(
                 ModuleSpec("行情看板", "指数与市场总览", "看板", 0, Icons.Filled.Dashboard),
-                ModuleSpec("全球与自选", "A 股指数与自选行情", "行情", 5, Icons.Filled.ShowChart),
+                ModuleSpec("全球与自选", "A 股指数与自选行情", "行情", 5, Icons.AutoMirrored.Filled.ShowChart),
                 ModuleSpec("消息与题材", "按题材展开消息，未匹配内容归入未知", "消息与题材", 3, Icons.Filled.Newspaper),
             ),
         ),
@@ -62,7 +62,7 @@ fun HubScreen(vm: SkappViewModel, state: UiState, onNavigate: (Int) -> Unit) {
             title = "② 选股",
             subtitle = "从哪几只里选：两份名单、中枢结论（多池证据已并入名单）",
             modules = listOf(
-                ModuleSpec("盘前推股名单", "上一交易日收盘口径，当日冻结", "盘前推股", 8, Icons.Filled.PlaylistAddCheck),
+                ModuleSpec("盘前推股名单", "上一交易日收盘口径，当日冻结", "盘前推股", 8, Icons.AutoMirrored.Filled.PlaylistAddCheck),
                 ModuleSpec("实时推股名单", "当日实时行情口径，随行情刷新", "实时推股", 9, Icons.Filled.Bolt),
                 ModuleSpec("实时总结", "刷新反馈、中枢引擎说明与 AI 二次总结", "实时总结", 1, Icons.Filled.AutoGraph),
                 ModuleSpec("决策台", "中枢结论与执行纪律", "决策", 6, Icons.Filled.QueryStats),
