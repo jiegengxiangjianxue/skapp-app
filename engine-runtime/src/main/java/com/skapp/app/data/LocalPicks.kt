@@ -45,6 +45,25 @@ object LocalPicks {
     /** 未达标观察位最多保留几条 */
     const val MAX_OBSERVED = 3
 
+    /**
+     * 同一板块最多进几只。
+     *
+     * 之前名单只按分数取前 10：一个板块普涨时 10 只里能有 7 只同板块，
+     * 用户看到的是「一份名单」，实际是「一个板块的复读」——组合意义上等于满仓单押。
+     * 板块未映射（sector == null）的票不受此限，否则会因为数据缺失把它们整体排掉。
+     */
+    const val MAX_PER_SECTOR = 2
+
+    /**
+     * 每命中一个池，排序分加多少。
+     *
+     * 池是「另一套口径也选了它」的独立证据（推荐池 / 风险池 / 周期池 …），
+     * 比再拧一次同一套引擎的权重更有增量信息，因此按命中数给小幅加分，
+     * 最多计 [POOL_HIT_CAP] 个池，避免单一池刷屏。
+     */
+    const val POOL_BONUS_PER_HIT = 4.0
+    const val POOL_HIT_CAP = 3
+
     private fun buildWhy(s: LocalScreener.Screened): List<String> = buildList {
         // 排序就按板块强度加过权，理由里不写出来，用户会以为顺序还是纯个股分。
         // 放在 engine 判空之前：K 线不足的观察位同样要能看到板块归属。
@@ -117,6 +136,8 @@ object LocalPicks {
         droppedLastBar: Boolean = session == Session.PREMARKET,
         totalSnapshot: Int? = null,
         indexCode: String = IndexDaily.DEFAULT_INDEX,
+        poolHits: Map<String, Int> = emptyMap(),
+        maxPerSector: Int = MAX_PER_SECTOR,
     ): StructuredPickArtifact {
         val regime = runCatching {
             val closes = IndexDaily.closes(indexCode)
@@ -140,6 +161,8 @@ object LocalPicks {
             gate = gate,
             gateLabel = label,
             cloud = cloud,
+            poolHits = poolHits,
+            maxPerSector = maxPerSector,
         )
     }
 
@@ -156,6 +179,10 @@ object LocalPicks {
         gateLabel: String? = null,
         /** 云端参数板（[CloudParams.fromCloud]）；null = 全 cold_start。 */
         cloud: CloudParams.Board? = null,
+        /** code → 命中池数（多池交叉证据）；空 = 不参与加权，行为与旧版逐位一致。 */
+        poolHits: Map<String, Int> = emptyMap(),
+        /** 同一板块最多几只；[MAX_PER_SECTOR] 为默认。 */
+        maxPerSector: Int = MAX_PER_SECTOR,
     ): StructuredPickArtifact {
         val usable = screened.filter { it.detailStatus == "ok" && it.centralScore != null }
         // 跨引擎权重：云端 17 项里只有 8 项能在端上 12 引擎找到对应实现，其余不参与集成
@@ -185,16 +212,40 @@ object LocalPicks {
         val scoredByCode = scored.associateBy { it.code }
         // 达标用 gated（gate 折价后的终审分），排序用 rankScore（effective 也折价）。
         // gate=1.0 且无权重时两者分别等于 centralScore / effectiveScore，与旧行为逐位一致。
+        fun rankOf(code: String): Double {
+            val base = scoredByCode[code]?.rankScore ?: 0.0
+            val hits = (poolHits[code] ?: 0).coerceAtMost(POOL_HIT_CAP)
+            return base + POOL_BONUS_PER_HIT * hits
+        }
+
         val qualified = scored
             .filter { it.qualified }
             .mapNotNull { byCode[it.code] }
-            .sortedByDescending { scoredByCode[it.code]?.rankScore ?: 0.0 }
+            .sortedByDescending { rankOf(it.code) }
         val observed = usable
             .filter { it.code !in qualified.map { q -> q.code }.toSet() }
-            .sortedByDescending { scoredByCode[it.code]?.rankScore ?: 0.0 }
+            .sortedByDescending { rankOf(it.code) }
             .take(MAX_OBSERVED)
 
-        val picks = qualified.take(MAX_PICKS).map { toSignal(it, calcTime) }
+        // 板块集中度约束：按排序分往下取，某个板块已满就跳过并记下来，
+        // 让「为什么这只没进名单」可追溯，而不是悄悄丢掉。
+        val sectorUsed = mutableMapOf<String, Int>()
+        val sectorSkipped = mutableListOf<String>()
+        val selected = mutableListOf<LocalScreener.Screened>()
+        for (q in qualified) {
+            if (selected.size >= MAX_PICKS) break
+            val sector = q.sector?.takeIf { it.isNotBlank() }
+            if (sector != null) {
+                val used = sectorUsed[sector] ?: 0
+                if (used >= maxPerSector) {
+                    sectorSkipped.add("${q.code}（${sector} 已满 $maxPerSector 只）")
+                    continue
+                }
+                sectorUsed[sector] = used + 1
+            }
+            selected.add(q)
+        }
+        val picks = selected.map { toSignal(it, calcTime) }
 
         // 横截面分位（口径同云端 rank_score.quantile_score）：只在**本轮深算池**内算，
         // 不是全市场。池子口径必须写进 metadata，否则 0.9 会被读成「全市场前 10%」——
@@ -210,6 +261,10 @@ object LocalPicks {
             put("usable", usable.size)
             put("qualified", qualified.size)
             put("minScore", MIN_SCORE)
+            put("maxPerSector", maxPerSector)
+            put("poolBonusPerHit", POOL_BONUS_PER_HIT)
+            put("poolHits", poolHits.filterValues { it > 0 })
+            put("sectorSkipped", sectorSkipped)
             put("source", "local")
             put("gate", gate)
             put("gateLabel", gateLabel ?: "gate 1.0（无指数数据，不折价）")

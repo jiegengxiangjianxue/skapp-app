@@ -936,6 +936,12 @@ class SkappViewModel : ViewModel() {
                 mode = "all",
                 dropLastBar = dropLast,
             )
+            // 多池证据传给算法层参与排序：同一个池是另一套口径的独立判断，
+            // 放在 UI 里二次排序等于让「显示顺序」和「算出来的名单」各说一套。
+            val poolHits = runCatching {
+                _state.value.pools.flatMap { pool -> pool.items.map { it.code } }
+                    .groupingBy { it }.eachCount()
+            }.getOrDefault(emptyMap())
             val artifact = com.skapp.app.data.LocalPicks.buildWithMarket(
                 screened = screened,
                 session = session,
@@ -943,6 +949,7 @@ class SkappViewModel : ViewModel() {
                 scanMode = "all",
                 droppedLastBar = dropLast,
                 totalSnapshot = snapshotSize,
+                poolHits = poolHits,
             )
             _state.value = _state.value.copy(
                 // 本地深算完成即回填首屏推股卡（TodayPicks 由本地产物映射，不经云端）

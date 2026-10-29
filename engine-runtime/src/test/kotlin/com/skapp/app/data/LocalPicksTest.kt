@@ -21,6 +21,7 @@ class LocalPicksTest {
         pct: Double = 2.0,
         buyable: Boolean = true,
         status: String = "ok",
+        sector: String? = null,
     ) = LocalScreener.Screened(
         code = code,
         name = "票$code",
@@ -37,6 +38,7 @@ class LocalPicksTest {
         detailStatus = status,
         reason = if (status == "ok") null else "K线不足，无法本地计算",
         buyable = buyable,
+        sector = sector,
     )
 
     @Test
@@ -161,5 +163,66 @@ class LocalPicksTest {
         )
         val why = artifact.picks.single().why
         assertTrue(why.any { it.contains("白酒") && it.contains("72") }, "理由里要给出板块与强度：$why")
+    }
+
+    @Test
+    fun `同一板块最多进两只，超出的记进 metadata 而不是静默丢弃`() {
+        val artifact = LocalPicks.build(
+            screened = listOf(
+                row("600001", 88.0, sector = "半导体"),
+                row("600002", 86.0, sector = "半导体"),
+                row("600003", 84.0, sector = "半导体"),
+                row("000004", 70.0, sector = "银行"),
+            ),
+            session = LocalPicks.Session.MIDDAY,
+            calcTime = "2026-10-29T10:30:00+08:00",
+        )
+        val codes = artifact.picks.map { it.code }
+        assertEquals(2, codes.count { it in setOf("600001", "600002", "600003") })
+        assertTrue(artifact.picks.any { it.code == "000004" })
+        val skipped = artifact.metadata["sectorSkipped"] as List<*>
+        assertTrue(skipped.any { it.toString().contains("600003") })
+        assertEquals(2, artifact.metadata["maxPerSector"])
+    }
+
+    @Test
+    fun `板块未映射的票不受板块上限限制`() {
+        val artifact = LocalPicks.build(
+            screened = listOf(
+                row("600001", 80.0),
+                row("600002", 78.0),
+                row("600003", 76.0),
+            ),
+            session = LocalPicks.Session.MIDDAY,
+            calcTime = "2026-10-29T10:30:00+08:00",
+        )
+        assertEquals(3, artifact.picks.size)
+    }
+
+    @Test
+    fun `多个池同时命中能把分低的票排到前面`() {
+        val artifact = LocalPicks.build(
+            screened = listOf(
+                row("600001", 72.0),
+                row("600002", 68.0),
+            ),
+            session = LocalPicks.Session.MIDDAY,
+            calcTime = "2026-10-29T10:30:00+08:00",
+            poolHits = mapOf("600002" to 2),
+        )
+        // 68 分 + 2 池 × 4 分 = 76 > 72 分无池，验证池证据真的参与排序
+        assertEquals("600002", artifact.picks.first().code)
+        assertEquals(mapOf("600002" to 2), artifact.metadata["poolHits"])
+    }
+
+    @Test
+    fun `不给池命中时排序与旧版一致`() {
+        val artifact = LocalPicks.build(
+            screened = listOf(row("600001", 72.0), row("600002", 68.0)),
+            session = LocalPicks.Session.MIDDAY,
+            calcTime = "2026-10-29T10:30:00+08:00",
+        )
+        assertEquals(listOf("600001", "600002"), artifact.picks.map { it.code })
+        assertEquals(emptyMap<String, Int>(), artifact.metadata["poolHits"])
     }
 }

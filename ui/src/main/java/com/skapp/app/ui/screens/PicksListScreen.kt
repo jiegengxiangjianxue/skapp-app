@@ -126,13 +126,9 @@ fun PicksListScreen(vm: SkappViewModel, state: UiState, mode: PickListSession) {
             }
         }
 
-        // 排序口径：能买的优先 → 多池交叉命中多的优先 → 评分高优先。
-        // 原来的名单只是按引擎内部顺序平铺，用户看不出「为什么这只排在前面」。
-        val picks = artifact.picks.sortedWith(
-            compareByDescending<PickSignal> { it.buyable != false }
-                .thenByDescending { poolHits[it.code]?.size ?: 0 }
-                .thenByDescending { it.score ?: 0.0 }
-        )
+        // 顺序以算法产物为准（LocalPicks 已按可买/池命中/评分做过排序与板块上限），
+        // 界面不再二次排序，否则「显示的名单」和「算出来的名单」会各说一套。
+        val picks = artifact.picks
         if (picks.isEmpty()) {
             item(key = "empty") { EmptyPickList(artifact, mode) }
         } else {
