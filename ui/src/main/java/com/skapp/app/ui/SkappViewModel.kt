@@ -945,7 +945,11 @@ class SkappViewModel : ViewModel() {
         val current = if (session == com.skapp.app.data.LocalPicks.Session.PREMARKET)
             _state.value.localPremarketPicks else _state.value.localMiddayPicks
         val today = java.time.LocalDate.now().toString()
-        if (!force && current.date == today && current.picks.isNotEmpty()) return
+        // 当天算过且算成功（status=ok）就不再重算——**空名单也要缓存**：
+        // 弱市「0 只达标」是设计内结果，用 picks.isNotEmpty() 当缓存条件会让每次进页面
+        // 都重跑一次全市场深算（快照 + 40 只票的引擎链）。status 不是 ok 说明是数据问题，
+        // 那种情况反而应该重试，所以只认 ok。
+        if (!force && current.date == today && current.status == "ok") return
 
         _state.value = _state.value.copy(
             localPicksLoading = true,
@@ -963,8 +967,18 @@ class SkappViewModel : ViewModel() {
             )
             // 多池证据传给算法层参与排序：同一个池是另一套口径的独立判断，
             // 放在 UI 里二次排序等于让「显示顺序」和「算出来的名单」各说一套。
+            // 必须在这里**同步现取**池，不能读 state.pools：那取决于名单页自己的
+            // LaunchedEffect 有没有先跑完，两个协程赛跑的结果是「命中池却没加权」，
+            // 而名单当天又不会重算，等于永久偏差。
+            val poolsNow = runCatching {
+                if (_state.value.pools.isNotEmpty()) _state.value.pools
+                else DbTables.repricePools(DbTables.pools())
+            }.getOrDefault(emptyList())
+            if (poolsNow.isNotEmpty() && _state.value.pools.isEmpty()) {
+                _state.value = _state.value.copy(pools = poolsNow, poolsLoadedAt = System.currentTimeMillis())
+            }
             val poolHits = runCatching {
-                _state.value.pools.flatMap { pool -> pool.items.map { it.code } }
+                poolsNow.flatMap { pool -> pool.items.map { it.code } }
                     .groupingBy { it }.eachCount()
             }.getOrDefault(emptyMap())
             val artifact = com.skapp.app.data.LocalPicks.buildWithMarket(
