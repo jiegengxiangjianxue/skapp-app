@@ -297,7 +297,7 @@ class EngineV2ParityTest {
     }
 
     @Test
-    fun `tape 五个场景逐字段一致`() {
+    fun `tape 各场景逐字段一致`() {
         val root = golden()
         val cases = root.getJSONObject("tape").getJSONArray("cases")
         for (i in 0 until cases.length()) {
