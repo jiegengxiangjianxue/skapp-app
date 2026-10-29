@@ -27,7 +27,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.skapp.app.ui.screens.DashboardScreen
 import com.skapp.app.ui.screens.DecisionScreen
 import com.skapp.app.ui.screens.DiagScreen
-import com.skapp.app.ui.screens.EnginesScreen
+import com.skapp.app.ui.screens.PremarketPicksScreen
+import com.skapp.app.ui.screens.RealtimePicksScreen
 import com.skapp.app.ui.screens.HubScreen
 import com.skapp.app.ui.screens.MarketScreen
 import com.skapp.app.ui.screens.NewsScreen
@@ -122,10 +123,9 @@ fun MainScreen(vm: SkappViewModel) {
                     5 -> MarketScreen(vm, state)
                     6 -> DecisionScreen(vm, state)
                     7 -> PoolsScreen(vm, state)
+                    8 -> PremarketPicksScreen(vm, state)
+                    9 -> RealtimePicksScreen(vm, state)
                     11 -> UnifiedAskScreen(vm, state)
-                    // 引擎页此前没有任何入口（写了但到不了）：三段式「复盘」段把它接上，
-                    // 否则 specs 链路健康只有开发者能看见。
-                    13 -> EnginesScreen(vm, state)
                     12 -> DiagScreen(vm, state)
                 }
             }

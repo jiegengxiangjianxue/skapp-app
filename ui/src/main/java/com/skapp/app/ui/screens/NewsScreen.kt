@@ -165,10 +165,29 @@ private fun NewsCalcInline(n: NewsCalc, vm: SkappViewModel) {
         listOfNotNull(n.source, n.ts, n.verdict.takeIf { it.isNotBlank() }).joinToString(" · ").ifBlank { "实时分析 · 时点暂无" },
         style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary,
     )
-    Text("方向：${n.direction.ifBlank { "insufficient" }} · 判定：${n.verdict.ifBlank { "insufficient" }}",
-        style = MaterialTheme.typography.bodySmall, color = if (n.direction == "neg" || n.verdict == "利空") DOWN else if (n.direction == "pos" || n.verdict.contains("利好")) UP else SkColors.textSecondary)
-    if (n.positiveReason?.isNotBlank() == true && n.positiveReason != "insufficient") Text("利好理由：${n.positiveReason}", style = MaterialTheme.typography.bodySmall, color = UP)
-    if (n.negativeReason?.isNotBlank() == true && n.negativeReason != "insufficient") Text("利空理由：${n.negativeReason}", style = MaterialTheme.typography.bodySmall, color = DOWN)
+    // 消息面只保留「异动」一个口径：利好/利空只是方向的两种叫法，与异动重复，
+    // 真正有信息量的是「因为什么、朝哪个方向、动了多少」，因此合并成一行结论 + 一行依据。
+    val moveTag = when (n.direction) {
+        "pos" -> "异动偏强"
+        "neg" -> "异动偏弱"
+        else -> "无明确异动"
+    }
+    Text(
+        "$moveTag · ${n.verdict.takeIf { it.isNotBlank() && it != "insufficient" } ?: "方向待确认"}",
+        style = MaterialTheme.typography.bodySmall,
+        color = when (n.direction) {
+            "neg" -> DOWN
+            "pos" -> UP
+            else -> SkColors.textSecondary
+        },
+    )
+    val moveBasis = listOfNotNull(
+        n.positiveReason?.takeIf { it.isNotBlank() && it != "insufficient" },
+        n.negativeReason?.takeIf { it.isNotBlank() && it != "insufficient" },
+    ).distinct().joinToString("；")
+    if (moveBasis.isNotBlank()) {
+        Text("异动依据：$moveBasis", style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
+    }
     if (n.sentimentHits.isNotEmpty()) Text("命中依据：${n.sentimentHits.joinToString("、")}", style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
     if (n.impactCodes.isNotEmpty() && n.stocks.isEmpty()) Text("影响个股：${n.impactCodes.joinToString("、")}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
     if (n.boards.isNotEmpty()) {
@@ -180,7 +199,7 @@ private fun NewsCalcInline(n: NewsCalc, vm: SkappViewModel) {
         n.boardMomentum?.let { m ->
             val tag = when {
                 m >= 1.5 -> "板块共振走强（均涨 ${"%+.2f".format(m)}%）"
-                m <= -1.5 -> "板块整体走弱（均跌 ${"%+.2f".format(m)}%），利好需防高开低走"
+                m <= -1.5 -> "板块整体走弱（均跌 ${"%+.2f".format(m)}%），反弹需等确认"
                 else -> "板块分化（均涨 ${"%+.2f".format(m)}%）"
             }
             Text("板块研判：$tag", style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)

@@ -13,6 +13,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoGraph
+import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.filled.PlaylistAddCheck
 import androidx.compose.material.icons.filled.Dashboard
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.MonitorHeart
@@ -60,6 +62,8 @@ fun HubScreen(vm: SkappViewModel, state: UiState, onNavigate: (Int) -> Unit) {
             title = "② 选股",
             subtitle = "从哪几只里选：候选池、中枢刷新与结论",
             modules = listOf(
+                ModuleSpec("盘前推股名单", "上一交易日收盘口径，当日冻结", "盘前推股", 8, Icons.Filled.PlaylistAddCheck),
+                ModuleSpec("实时推股名单", "当日实时行情口径，随行情刷新", "实时推股", 9, Icons.Filled.Bolt),
                 ModuleSpec("多池选股", "推荐、风险、周期及策略池", "多池", 7, Icons.Filled.Layers),
                 ModuleSpec("实时总结", "刷新反馈、中枢引擎说明与 AI 二次总结", "实时总结", 1, Icons.Filled.AutoGraph),
                 ModuleSpec("决策台", "中枢结论与执行纪律", "决策", 6, Icons.Filled.QueryStats),
@@ -67,9 +71,8 @@ fun HubScreen(vm: SkappViewModel, state: UiState, onNavigate: (Int) -> Unit) {
         ),
         ModuleGroup(
             title = "③ 复盘",
-            subtitle = "选出来之后怎么样：引擎一致性、数据健康、AI 复盘",
+            subtitle = "选出来之后怎么样：AI 复盘与数据健康",
             modules = listOf(
-                ModuleSpec("引擎输出", "规格链路：族方向、外部票、云端榜", "引擎", 13, Icons.Filled.AutoGraph),
                 ModuleSpec("AI 总结", "GitCode/GitHub 双源、个股复盘与市场总结", "AI", 11, Icons.Filled.Psychology),
                 ModuleSpec("数据源自检", "HTTP 状态与解析数量", "系统", 12, Icons.Filled.MonitorHeart),
             ),

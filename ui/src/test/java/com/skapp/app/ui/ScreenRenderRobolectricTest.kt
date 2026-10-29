@@ -10,11 +10,11 @@ import com.skapp.app.ui.screens.BoardScreen
 import com.skapp.app.ui.screens.DashboardScreen
 import com.skapp.app.ui.screens.DecisionScreen
 import com.skapp.app.ui.screens.DiagScreen
-import com.skapp.app.ui.screens.EnginesScreen
 import com.skapp.app.ui.screens.HubScreen
 import com.skapp.app.ui.screens.MarketScreen
 import com.skapp.app.ui.screens.NewsScreen
-import com.skapp.app.ui.screens.PicksScreen
+import com.skapp.app.ui.screens.PremarketPicksScreen
+import com.skapp.app.ui.screens.RealtimePicksScreen
 import com.skapp.app.ui.screens.PoolsScreen
 import com.skapp.app.ui.screens.RealtimeSummaryScreen
 import com.skapp.app.ui.screens.SectorsScreen
@@ -96,9 +96,14 @@ class ScreenRenderRobolectricTest {
     ) { DecisionScreen(vm(), UiState()) }
 
     @Test(timeout = 120_000)
-    fun `引擎页 空数据下渲染标题`() = assertShowsAny(
-        "EnginesScreen", "引擎输出", "本地实时选股",
-    ) { EnginesScreen(vm(), UiState()) }
+    fun `盘前推股名单 空数据下渲染标题与空态`() = assertShowsAny(
+        "PremarketPicksScreen", "盘前推股名单", "名单为空",
+    ) { PremarketPicksScreen(vm(), UiState()) }
+
+    @Test(timeout = 120_000)
+    fun `实时推股名单 空数据下渲染标题与空态`() = assertShowsAny(
+        "RealtimePicksScreen", "实时推股名单", "名单为空",
+    ) { RealtimePicksScreen(vm(), UiState()) }
 
     @Test(timeout = 120_000)
     fun `多池选股页 空数据下渲染标题`() = assertShowsAny(
@@ -154,9 +159,6 @@ class ScreenRenderRobolectricTest {
 
     @Test(timeout = 120_000)
     fun `AI 页 空数据下可渲染`() = assertRenders("AiScreen") { AiScreen(vm(), UiState()) }
-
-    @Test(timeout = 120_000)
-    fun `选股页 空数据下可渲染`() = assertRenders("PicksScreen") { PicksScreen(vm(), UiState()) }
 
     @Test(timeout = 120_000)
     fun `总结页 空数据下可渲染`() = assertRenders("SummaryScreen") { SummaryScreen(vm(), UiState()) }
