@@ -218,8 +218,12 @@ object LocalPicks {
             return base + POOL_BONUS_PER_HIT * hits
         }
 
+        // 风控否决（资金与盘口双弱等）在深算的 all 分支里不拦，只能在这里拦：
+        // 否决票即使分数很高也不进推荐，理由写进 metadata，避免「引擎说别买、名单却说买」。
+        val riskVetoed = usable.filter { it.riskFlag != null }.map { "${it.code}（${it.riskFlag}）" }
+        val vetoedCodes = usable.filter { it.riskFlag != null }.map { it.code }.toSet()
         val qualified = scored
-            .filter { it.qualified }
+            .filter { it.qualified && it.code !in vetoedCodes }
             .mapNotNull { byCode[it.code] }
             .sortedByDescending { rankOf(it.code) }
         val observed = usable
@@ -265,6 +269,7 @@ object LocalPicks {
             put("poolBonusPerHit", POOL_BONUS_PER_HIT)
             put("poolHits", poolHits.filterValues { it > 0 })
             put("sectorSkipped", sectorSkipped)
+            put("riskVetoed", riskVetoed)
             put("source", "local")
             put("gate", gate)
             put("gateLabel", gateLabel ?: "gate 1.0（无指数数据，不折价）")

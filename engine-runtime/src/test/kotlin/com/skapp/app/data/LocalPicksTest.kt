@@ -22,6 +22,7 @@ class LocalPicksTest {
         buyable: Boolean = true,
         status: String = "ok",
         sector: String? = null,
+        riskFlag: String? = null,
     ) = LocalScreener.Screened(
         code = code,
         name = "票$code",
@@ -39,6 +40,7 @@ class LocalPicksTest {
         reason = if (status == "ok") null else "K线不足，无法本地计算",
         buyable = buyable,
         sector = sector,
+        riskFlag = riskFlag,
     )
 
     @Test
@@ -224,5 +226,20 @@ class LocalPicksTest {
         )
         assertEquals(listOf("600001", "600002"), artifact.picks.map { it.code })
         assertEquals(emptyMap<String, Int>(), artifact.metadata["poolHits"])
+    }
+
+    @Test
+    fun `引擎风控否决的票再高分也不进推荐`() {
+        val artifact = LocalPicks.build(
+            screened = listOf(
+                row("600001", 90.0, riskFlag = "资金与盘口双弱"),
+                row("600002", 66.0),
+            ),
+            session = LocalPicks.Session.MIDDAY,
+            calcTime = "2026-10-29T10:30:00+08:00",
+        )
+        assertEquals(listOf("600002"), artifact.picks.map { it.code })
+        val vetoed = artifact.metadata["riskVetoed"] as List<*>
+        assertTrue(vetoed.any { it.toString().contains("600001") })
     }
 }
