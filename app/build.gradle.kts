@@ -12,12 +12,30 @@ android {
         applicationId = "com.skapp.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 26
-        versionName = "2.2.2"
+        versionCode = 27
+        versionName = "2.2.3"
+    }
+
+    // ── 固定签名 ──────────────────────────────────────────────────────
+    // 之前没有 signingConfigs：CI 每次用 runner 新生成的 ~/.android/debug.keystore 签名，
+    // 于是每个 release 的签名都不一样，手机上装新包必然报「签名冲突」（已实测）。
+    // 这里把一把固定的 key 提交进私有仓，debug / release 都用它，签名从此稳定。
+    // 口令随仓保存：本仓私有、产物仅自用；如需更严，改读环境变量 SKAPP_STORE_PASS。
+    signingConfigs {
+        create("stable") {
+            storeFile = rootProject.file("keystore/skapp.jks")
+            storePassword = System.getenv("SKAPP_STORE_PASS") ?: "skapp-stable-2026"
+            keyAlias = "skapp"
+            keyPassword = System.getenv("SKAPP_KEY_PASS") ?: "skapp-stable-2026"
+        }
     }
 
     buildTypes {
+        debug {
+            signingConfig = signingConfigs.getByName("stable")
+        }
         release {
+            signingConfig = signingConfigs.getByName("stable")
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
