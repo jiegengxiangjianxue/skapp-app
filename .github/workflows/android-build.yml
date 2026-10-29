@@ -10,7 +10,13 @@ name: android-build
 #   4) analysis-artifacts 分析产物 schema（breadth / manifest / api index）
 #   5) engine-tests      JVM 单测按「引擎/链路」切 15 片，matrix 并行、fail-fast: false
 #   6) compile           :ui 与 :app Kotlin 编译（类型检查）+ org.json 方法面守卫
-#   7) build             APK（arm64-v8a only）+ 发布 GitHub Release
+#   7) package           APK（arm64-v8a only）—— 不 needs 任何人，和编译/单测并行
+#   8) release           全部闸门 + package 产物就绪后才发布 GitHub Release
+#
+# 墙钟时间由最长的那条串行边决定，不是 job 数量。2026-10-29 步骤级实测（run 40824622806）：
+#   compile 184s（其中 gradle 编译 116s）、ui-render 157s、单测最长片 132s（wiring）、
+#   package 141s。原先 package 的债主 build 排在 compile 后面 → 总墙钟 325s。
+#   现在 package 并行、release 只做发布 → 预计 ≈ max(184,157,132,141) + release ≈ 215s。
 #
 # 每片独立：红的那片就是问题所在，其余片照常给结论，不必重跑整条链。
 #
@@ -349,7 +355,7 @@ jobs:
           IFS=',' read -ra FS <<< "${{ matrix.filters }}"
           for f in "${FS[@]}"; do args="$args --tests $f"; done
           echo "gradlew :${{ matrix.module }}:test$args"
-          ./gradlew :${{ matrix.module }}:test $args --no-daemon --stacktrace
+          ./gradlew :${{ matrix.module }}:test $args --stacktrace
 
   compile:
     # ── 6. Kotlin 编译（类型检查）+ org.json 方法面守卫 ─────────────────
@@ -413,8 +419,10 @@ jobs:
         run: |
           set -euo pipefail
           # 分层编译：:ui 先单独过一遍，界面层报错不会再被包成「APK 构建失败」
-          ./gradlew :ui:compileDebugKotlin --no-daemon --stacktrace
-          ./gradlew :app:compileDebugKotlin --no-daemon --stacktrace
+          # 不关 daemon：两次 gradlew 调用复用同一个 daemon，第二次省掉整轮配置与
+          # 依赖解析（原先 --no-daemon 让 116s 里的第二段再付一遍）。
+          ./gradlew :ui:compileDebugKotlin --stacktrace
+          ./gradlew :app:compileDebugKotlin --stacktrace
 
       - name: Guard - no org.json methods missing on Android
         run: |
@@ -500,7 +508,7 @@ jobs:
       - name: Robolectric 屏渲染测试
         run: |
           set -euo pipefail
-          ./gradlew :ui:testDebugUnitTest --tests "*ScreenRenderRobolectricTest*" --no-daemon --stacktrace
+          ./gradlew :ui:testDebugUnitTest --tests "*ScreenRenderRobolectricTest*" --stacktrace
 
       - name: 汇总每个屏的通过情况
         if: always()
@@ -522,11 +530,13 @@ jobs:
           sys.exit(1 if failed or total == 0 else 0)
           PYCODE
 
-  build:
-    # ── 7. 打包与发布：所有分片都过才走到这里 ──────────────────────────
-    permissions:
-      contents: write   # 创建 / 更新 GitHub Release 需要
-    needs: [guards, engine-contract, analysis-breadth, analysis-artifacts, engine-tests, compile, ui-render-robolectric]
+  package:
+    # ── 7. 打包：只产 APK，不碰 Release ────────────────────────────────
+    # 这个 job 故意不 needs 任何前置 —— 它和单测/编译完全并行。
+    # 依据（run 40824622806 步骤级实测）：原 build job 141s = Setup Gradle 24s +
+    # assembleDebug 67s + Post Setup Gradle 29s + 其余 ~21s，而它排在 compile(184s)
+    # 之后，把总墙钟推到 325s。撞车点不在 job 内部，在「打包等编译」这条串行边上。
+    # 发布是不可逆副作用（写 Release），也已经从本 job 拆出去独立成 release。
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -605,6 +615,32 @@ jobs:
           "$ANDROID_HOME/build-tools/35.0.0/aapt2" dump badging "$APK" > /tmp/apk-badging.txt
           grep -E "^(package|application-label|native-code)" /tmp/apk-badging.txt | head -5
 
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: skapp-apk
+          path: app/build/outputs/apk/debug/app-arm64-v8a-debug.apk
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    # ── 8. 发布：闸门全过 + APK 产物就绪才跑，只做不可逆那一步 ─────────
+    # needs 覆盖全部构建/测试 job（含新的 package）：漏一个就等于「测试没跑也能发版」。
+    permissions:
+      contents: write   # 创建 / 更新 GitHub Release 需要
+    needs: [guards, engine-contract, analysis-breadth, analysis-artifacts, engine-tests, compile, ui-render-robolectric, package]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download APK from package job
+        uses: actions/download-artifact@v4
+        with:
+          name: skapp-apk
+          path: dist
+
       - name: Read version from gradle
         id: ver
         run: |
@@ -617,14 +653,14 @@ jobs:
           echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
           echo "asset=skapp-$VERSION-vc$CODE-arm64.apk" >> "$GITHUB_OUTPUT"
 
-      - name: Publish GitHub Release (package lives here, not in artifacts)
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      - name: Publish GitHub Release (从 package 产物发布，不重新编译)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           TAG="${{ steps.ver.outputs.tag }}"
-          SRC="app/build/outputs/apk/debug/app-arm64-v8a-debug.apk"
+          SRC="dist/app-arm64-v8a-debug.apk"
+          test -f "$SRC"
           NAME="${{ steps.ver.outputs.asset }}"
           SIZE="$(stat -c%s "$SRC")"
           cp "$SRC" "/tmp/$NAME"
@@ -634,7 +670,7 @@ jobs:
             "- ABI: arm64-v8a only (minSdk 26)" \
             "- Built by ${{ github.workflow }} run [${{ github.run_id }}](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})" \
             "- Commit: \`$(echo "$GITHUB_SHA" | cut -c1-7)\`" \
-            "- Gates passed: engine-gate -> analysis-gate -> engine-kotlin -> ui-render-gate -> build" \
+            "- Gates passed: guards -> engine-contract -> analysis -> engine-tests -> compile -> ui-render -> package" \
             "" \
             "Install: sign in to GitHub first — this repo is **private**, anonymous asset URLs return 404. Then tap **$NAME** below to download and install. versionCode increases with every release, so it installs straight over the previous version.")"
           if gh release view "$TAG" >/dev/null 2>&1; then
