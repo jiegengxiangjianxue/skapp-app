@@ -134,10 +134,14 @@ private fun RawNewsCard(row: Map<String, Any?>, calc: NewsCalc?, vm: SkappViewMo
                 row["source"] ?: row["source_name"],
                 row["time"] ?: row["updated"] ?: row["ts"],
                 row["verdict"] ?: row["direction"],
-            ).map { it.toString() }.filter { it.isNotBlank() }.joinToString(" · ")
+            ).map { it.toString() }
+                // "insufficient" 是数据层「算不出来」的占位符，不是给人看的文案
+                .filter { it.isNotBlank() && it != "insufficient" }
+                .joinToString(" · ")
             if (meta.isNotBlank()) Text(meta, style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
             val reason = row["reason"] ?: row["analysis"] ?: row["note"]
-            reason?.toString()?.takeIf { it.isNotBlank() }?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+            reason?.toString()?.takeIf { it.isNotBlank() && it != "insufficient" }
+                ?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
             extractCodes(row).forEach { code ->
                 Text("影响个股：$code", style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.primary,

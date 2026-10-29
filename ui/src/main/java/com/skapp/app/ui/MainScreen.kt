@@ -40,7 +40,7 @@ import com.skapp.app.ui.screens.UnifiedAskScreen
 /** 模块编号与 HubScreen 一致；保留旧编号，避免业务页面路由变化。 */
 private val MODULE_NAMES = mapOf(
     0 to "看板", 1 to "实时总结", 2 to "消息与题材", 3 to "消息与题材", 4 to "全部",
-    5 to "行情", 6 to "决策", 7 to "多池", 11 to "AI 总结", 12 to "自检", 13 to "引擎",
+    5 to "行情", 6 to "决策", 8 to "盘前推股", 9 to "实时推股", 11 to "AI 总结", 12 to "自检",
 )
 
 @OptIn(ExperimentalMaterial3Api::class)

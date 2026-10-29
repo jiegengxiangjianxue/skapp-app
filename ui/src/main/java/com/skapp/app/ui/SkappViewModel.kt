@@ -902,6 +902,31 @@ class SkappViewModel : ViewModel() {
         localPicksJob = viewModelScope.launch { requestResult { rebuildLocalPicks(session, force = false) } }
     }
 
+    /**
+     * 按**指定时段**保证名单可用（推股名单页专用）。
+     *
+     * 与 [ensureLocalPicks] 的区别：后者按当前交易时段挑一个会话，于是当天下午打开
+     * 「盘前推股名单」时只会算午盘口径，盘前名单永远空着——而盘前口径用的是
+     * 上一交易日收盘数据，任何时段都算得出来，没理由等到明天早上。
+     * 实时口径则相反：非交易时段没有盘中数据，算了也是旧的，因此明确跳过并给出说明。
+     */
+    fun ensurePicksFor(session: com.skapp.app.data.LocalPicks.Session) {
+        if (_state.value.localPicksLoading || localPicksJob?.isActive == true) return
+        val current = if (session == com.skapp.app.data.LocalPicks.Session.PREMARKET)
+            _state.value.localPremarketPicks else _state.value.localMiddayPicks
+        val today = java.time.LocalDate.now().toString()
+        if (current.date == today && current.picks.isNotEmpty()) return
+        if (session == com.skapp.app.data.LocalPicks.Session.MIDDAY &&
+            com.skapp.app.data.LocalPicks.sessionFor(MarketHours.phase()) != session
+        ) {
+            _state.value = _state.value.copy(
+                localPicksMsg = "当前非交易时段，实时名单不在此刻生成；显示的仍是最近一次存档。",
+            )
+            return
+        }
+        localPicksJob = viewModelScope.launch { requestResult { rebuildLocalPicks(session, force = false) } }
+    }
+
     /** 卡片上的「重算」：用户显式要求重跑指定时段（盘前卡重算仍是盘前口径）。 */
     fun refreshLocalPicks(session: com.skapp.app.data.LocalPicks.Session) {
         if (_state.value.localPicksLoading || localPicksJob?.isActive == true) return

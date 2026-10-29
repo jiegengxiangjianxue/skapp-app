@@ -143,7 +143,10 @@ private fun WinrateCard(state: UiState) {
 }
 
 private fun formatPercent(value: Any?): String = when (value) {
+    // 胜率矩阵的 overall 由 ViewModel 预格式化成字符串（如 "62.5"），
+    // 只认 Number 会让命中率恒显示「暂无数据」——数据在、界面说没有。
     is Number -> "%.1f%%".format(value.toDouble() * 100)
+    is String -> value.takeIf { it.isNotBlank() && it != "insufficient" }?.let { "$it%" } ?: "暂无数据"
     else -> "暂无数据"
 }
 

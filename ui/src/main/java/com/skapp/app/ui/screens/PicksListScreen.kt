@@ -73,7 +73,7 @@ fun PicksListScreen(vm: SkappViewModel, state: UiState, mode: PickListSession) {
         PickListSession.REALTIME -> state.localMiddayPicks
     }
     // 已有当日存档就直接复用，不重复拉行情；没有才首次计算
-    LaunchedEffect(mode) { vm.ensureLocalPicks() }
+    LaunchedEffect(mode) { vm.ensurePicksFor(mode.session) }
     // 多池数据以前有独立页面，现在并进名单：池是「哪几只被多个来源同时选中」的证据，
     // 单独成页既不好看也不好用，放在每只票下面才决定「这只该不该看」。
     LaunchedEffect(Unit) { if (state.pools.isEmpty()) vm.loadPools(force = false) }
