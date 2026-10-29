@@ -138,7 +138,7 @@ data class LocalEngineResult(
 
 /**
  * 中枢多引擎：把站点 engine_v5（指标共振）+ multidim（多维评分）+
- * factor_lib（29 因子）的核心逻辑在设备上复现。
+ * factor_lib（因子库全量因子，条目数见 `ExtendedIndicators.factorCount`）的核心逻辑在设备上复现。
  *
  * 引擎清单（12 个，与站点算法同构）：
  *   trend 趋势 / momentum 动量 / volume 量能 / boll 布林 / macd MACD /

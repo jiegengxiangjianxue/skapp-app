@@ -259,7 +259,7 @@ internal fun ColumnScope.DetailTailSections(
             }
         }
 
-        // ── 29 因子库 ──
+        // ── 因子库 ──
         SkCard(contentPadding = PaddingValues(0.dp)) {
             Column(Modifier.padding(12.dp)) {
                 Text("因子库（${ExtendedIndicators.factorCount} 因子，本机计算）", fontWeight = FontWeight.SemiBold)
