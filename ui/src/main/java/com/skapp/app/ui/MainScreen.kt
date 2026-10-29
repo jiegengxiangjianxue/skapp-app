@@ -33,7 +33,6 @@ import com.skapp.app.ui.screens.HubScreen
 import com.skapp.app.ui.screens.MarketScreen
 import com.skapp.app.ui.screens.NewsScreen
 import com.skapp.app.ui.screens.RealtimeSummaryScreen
-import com.skapp.app.ui.screens.PoolsScreen
 import com.skapp.app.ui.screens.StockDetailSheet
 import com.skapp.app.ui.screens.ThemeScreen
 import com.skapp.app.ui.screens.UnifiedAskScreen
@@ -122,7 +121,6 @@ fun MainScreen(vm: SkappViewModel) {
                     4 -> HubScreen(vm, state) { module = it }
                     5 -> MarketScreen(vm, state)
                     6 -> DecisionScreen(vm, state)
-                    7 -> PoolsScreen(vm, state)
                     8 -> PremarketPicksScreen(vm, state)
                     9 -> RealtimePicksScreen(vm, state)
                     11 -> UnifiedAskScreen(vm, state)

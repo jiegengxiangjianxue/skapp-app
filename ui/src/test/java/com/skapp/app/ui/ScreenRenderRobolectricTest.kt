@@ -15,7 +15,6 @@ import com.skapp.app.ui.screens.MarketScreen
 import com.skapp.app.ui.screens.NewsScreen
 import com.skapp.app.ui.screens.PremarketPicksScreen
 import com.skapp.app.ui.screens.RealtimePicksScreen
-import com.skapp.app.ui.screens.PoolsScreen
 import com.skapp.app.ui.screens.RealtimeSummaryScreen
 import com.skapp.app.ui.screens.SectorsScreen
 import com.skapp.app.ui.screens.SummaryScreen
@@ -104,11 +103,6 @@ class ScreenRenderRobolectricTest {
     fun `实时推股名单 空数据下渲染标题与空态`() = assertShowsAny(
         "RealtimePicksScreen", "实时推股名单", "名单为空",
     ) { RealtimePicksScreen(vm(), UiState()) }
-
-    @Test(timeout = 120_000)
-    fun `多池选股页 空数据下渲染标题`() = assertShowsAny(
-        "PoolsScreen", "多池选股",
-    ) { PoolsScreen(vm(), UiState()) }
 
     @Test(timeout = 120_000)
     fun `看板页 空数据下渲染标题`() = assertShowsAny(

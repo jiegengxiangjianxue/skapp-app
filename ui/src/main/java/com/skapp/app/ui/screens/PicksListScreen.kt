@@ -16,6 +16,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -73,6 +74,18 @@ fun PicksListScreen(vm: SkappViewModel, state: UiState, mode: PickListSession) {
     }
     // 已有当日存档就直接复用，不重复拉行情；没有才首次计算
     LaunchedEffect(mode) { vm.ensureLocalPicks() }
+    // 多池数据以前有独立页面，现在并进名单：池是「哪几只被多个来源同时选中」的证据，
+    // 单独成页既不好看也不好用，放在每只票下面才决定「这只该不该看」。
+    LaunchedEffect(Unit) { if (state.pools.isEmpty()) vm.loadPools(force = false) }
+    val poolHits = remember(state.pools) {
+        val idx = mutableMapOf<String, MutableList<String>>()
+        state.pools.forEach { pool ->
+            pool.items.forEach { item ->
+                idx.getOrPut(item.code) { mutableListOf() }.add(pool.name)
+            }
+        }
+        idx
+    }
 
     LazyColumn(
         modifier = Modifier.fillMaxWidth(),
@@ -113,7 +126,13 @@ fun PicksListScreen(vm: SkappViewModel, state: UiState, mode: PickListSession) {
             }
         }
 
-        val picks = artifact.picks
+        // 排序口径：能买的优先 → 多池交叉命中多的优先 → 评分高优先。
+        // 原来的名单只是按引擎内部顺序平铺，用户看不出「为什么这只排在前面」。
+        val picks = artifact.picks.sortedWith(
+            compareByDescending<PickSignal> { it.buyable != false }
+                .thenByDescending { poolHits[it.code]?.size ?: 0 }
+                .thenByDescending { it.score ?: 0.0 }
+        )
         if (picks.isEmpty()) {
             item(key = "empty") { EmptyPickList(artifact, mode) }
         } else {
@@ -125,7 +144,9 @@ fun PicksListScreen(vm: SkappViewModel, state: UiState, mode: PickListSession) {
                     color = SkColors.textSecondary,
                 )
             }
-            items(picks, key = { it.code }) { pick -> PickRow(pick, vm) }
+            items(picks, key = { it.code }) { pick ->
+                PickRow(pick, poolHits[pick.code].orEmpty(), vm)
+            }
         }
     }
 }
@@ -165,7 +186,7 @@ private fun EmptyPickList(artifact: StructuredPickArtifact, mode: PickListSessio
 
 /** 一行一只票：名称/代码 → 分数与共振 → 现价涨跌 → 理由。点开看详情。 */
 @Composable
-private fun PickRow(pick: PickSignal, vm: SkappViewModel) {
+private fun PickRow(pick: PickSignal, pools: List<String>, vm: SkappViewModel) {
     Column(
         Modifier
             .fillMaxWidth()
@@ -211,8 +232,18 @@ private fun PickRow(pick: PickSignal, vm: SkappViewModel) {
                 Text("不可买", style = MaterialTheme.typography.labelSmall, color = SkColors.errorText)
             }
         }
+        if (pools.isNotEmpty()) {
+            Text(
+                "命中 ${pools.size} 个池：${pools.joinToString("、")}",
+                style = MaterialTheme.typography.bodySmall,
+                color = if (pools.size >= 2) MaterialTheme.colorScheme.primary else SkColors.textSecondary,
+            )
+        }
+        pick.engine?.takeIf { it.isNotBlank() }?.let {
+            Text("引擎：$it", style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
+        }
         val why = pick.reason?.takeIf { it.isNotBlank() }
-            ?: pick.why.take(2).joinToString("；").takeIf { it.isNotBlank() }
+            ?: pick.why.take(3).joinToString("；").takeIf { it.isNotBlank() }
         if (why != null) {
             Text(why, style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
         }

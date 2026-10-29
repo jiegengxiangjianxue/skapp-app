@@ -60,11 +60,10 @@ fun HubScreen(vm: SkappViewModel, state: UiState, onNavigate: (Int) -> Unit) {
         ),
         ModuleGroup(
             title = "② 选股",
-            subtitle = "从哪几只里选：候选池、中枢刷新与结论",
+            subtitle = "从哪几只里选：两份名单、中枢结论（多池证据已并入名单）",
             modules = listOf(
                 ModuleSpec("盘前推股名单", "上一交易日收盘口径，当日冻结", "盘前推股", 8, Icons.Filled.PlaylistAddCheck),
                 ModuleSpec("实时推股名单", "当日实时行情口径，随行情刷新", "实时推股", 9, Icons.Filled.Bolt),
-                ModuleSpec("多池选股", "推荐、风险、周期及策略池", "多池", 7, Icons.Filled.Layers),
                 ModuleSpec("实时总结", "刷新反馈、中枢引擎说明与 AI 二次总结", "实时总结", 1, Icons.Filled.AutoGraph),
                 ModuleSpec("决策台", "中枢结论与执行纪律", "决策", 6, Icons.Filled.QueryStats),
             ),
