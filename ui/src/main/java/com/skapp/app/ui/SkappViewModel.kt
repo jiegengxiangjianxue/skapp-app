@@ -265,6 +265,9 @@ data class UiState(
     val registryStats: Map<String, Any?> = emptyMap(),
 )
 
+/** 视为「当天已算完」的产物状态：ok=有票进名单，defensive=数据齐但无票（弱市，设计内结果）。 */
+private val CACHED_PICK_STATUS = setOf("ok", "defensive")
+
 class SkappViewModel : ViewModel() {
 
     companion object {
@@ -915,7 +918,7 @@ class SkappViewModel : ViewModel() {
         val current = if (session == com.skapp.app.data.LocalPicks.Session.PREMARKET)
             _state.value.localPremarketPicks else _state.value.localMiddayPicks
         val today = java.time.LocalDate.now().toString()
-        if (current.date == today && current.picks.isNotEmpty()) return
+        if (current.date == today && current.status in CACHED_PICK_STATUS) return
         if (session == com.skapp.app.data.LocalPicks.Session.MIDDAY &&
             com.skapp.app.data.LocalPicks.sessionFor(MarketHours.phase()) != session
         ) {
@@ -945,11 +948,12 @@ class SkappViewModel : ViewModel() {
         val current = if (session == com.skapp.app.data.LocalPicks.Session.PREMARKET)
             _state.value.localPremarketPicks else _state.value.localMiddayPicks
         val today = java.time.LocalDate.now().toString()
-        // 当天算过且算成功（status=ok）就不再重算——**空名单也要缓存**：
-        // 弱市「0 只达标」是设计内结果，用 picks.isNotEmpty() 当缓存条件会让每次进页面
-        // 都重跑一次全市场深算（快照 + 40 只票的引擎链）。status 不是 ok 说明是数据问题，
-        // 那种情况反而应该重试，所以只认 ok。
-        if (!force && current.date == today && current.status == "ok") return
+        // 当天算过且**算完**就不再重算。注意空名单的 status 不是 ok：
+        //   ok         = 有票进名单
+        //   defensive  = 数据齐、但一只都没达标（弱市，设计内结果）
+        //   insufficient = 数据不足（该重试）
+        // 只认 ok 会让弱市每次进页都重跑一次全市场深算，所以 ok 与 defensive 都算算完。
+        if (!force && current.date == today && current.status in CACHED_PICK_STATUS) return
 
         _state.value = _state.value.copy(
             localPicksLoading = true,
@@ -1752,7 +1756,9 @@ class SkappViewModel : ViewModel() {
             val enriched = runCatching { DbTables.repricePools(ps) }.getOrDefault(ps)
             _state.value = _state.value.copy(
                 poolsLoading = false,
-                pools = enriched,
+                // 抓失败（enriched 为空）时不要用空表覆盖已算过的池：
+                // 名单的池加权已经生效，界面标签却会因此集体消失，看起来像「算法没加权」。
+                pools = enriched.ifEmpty { _state.value.pools },
                 poolsLoadedAt = System.currentTimeMillis(),
             )
         }

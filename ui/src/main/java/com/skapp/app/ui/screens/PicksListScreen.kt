@@ -74,9 +74,8 @@ fun PicksListScreen(vm: SkappViewModel, state: UiState, mode: PickListSession) {
     }
     // 已有当日存档就直接复用，不重复拉行情；没有才首次计算
     LaunchedEffect(mode) { vm.ensurePicksFor(mode.session) }
-    // 多池数据以前有独立页面，现在并进名单：池是「哪几只被多个来源同时选中」的证据，
-    // 单独成页既不好看也不好用，放在每只票下面才决定「这只该不该看」。
-    LaunchedEffect(Unit) { if (state.pools.isEmpty()) vm.loadPools(force = false) }
+    // 池由 rebuildLocalPicks 在算名单时同步取过（算法层要用它加权），这里不再另抓一遍：
+    // 两条协程各拉 18 个池文件既是重复请求，也可能让后到的空结果覆盖掉已有池。
     val poolHits = remember(state.pools) {
         val idx = mutableMapOf<String, MutableList<String>>()
         state.pools.forEach { pool ->
