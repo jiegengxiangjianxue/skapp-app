@@ -9,6 +9,7 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
 import org.json.JSONObject
 
 /**
@@ -172,6 +173,18 @@ object LiveMarket {
     // 实测 total=5926，100/页 需 60 页。
     private const val MAX_PAGES = 60
 
+    // 东财正常 5500~5900 只。低于这个数说明分页被限流截断——最坏情况只剩涨幅前 100 只，
+    // 此时推荐池就是残缺样本，名单等于只在前 100 名里挑。命中即用新浪补全市场。
+    private const val FULL_SNAPSHOT = 4000
+
+    // 新浪 hs_a 分页：东财被风控时的兜底源。实测 56 页 x 100（末页 76）= 5576 只、
+    // 8 并发 2.8s、无缺页。字段比东财少（无量比 f10、主力净额 f62、f24/f25 区间涨幅、涨速 f22），
+    // 缺的保持 null——LiveExtras 的 RPS 遇 null 会跳过该行，不会当成 0 参与排名。
+    private const val SINA_PAGE_SIZE = 100
+    private const val SINA_MAX_PAGES = 58
+    private const val SINA_BASE =
+        "https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/Market_Center.getHQNodeData"
+
     /**
      * clist 的备用域名。实测 push2 会被风控直接返回空，而 push2delay 同一时刻有数据；
      * 反过来 push2delay 连续请求也会被限流。两个都不是稳定源，所以两个都试。
@@ -270,7 +283,19 @@ object LiveMarket {
         }
     }
 
-    private suspend fun fetchAll(): List<Row> = coroutineScope {
+    private suspend fun fetchAll(): List<Row> {
+        val east = fetchEastAll()
+        if (east.size >= FULL_SNAPSHOT) return east
+        val sina = fetchSinaAll()
+        if (sina.isEmpty()) return east
+        // 东财行优先：它多量比/主力净额/60日涨幅，RPS 与资金面策略要靠这些字段。
+        val merged = LinkedHashMap<String, Row>()
+        east.forEach { merged[it.code] = it }
+        sina.forEach { merged.putIfAbsent(it.code, it) }
+        return merged.values.filter { it.code.length == 6 && it.code.all(Char::isDigit) }
+    }
+
+    private suspend fun fetchEastAll(): List<Row> = coroutineScope {
         // 并发 8 是实测最优点（2026-10-30）：42/60 页、2.75s；串行无节流第 28 页就断连（2700 只），
         // 串行+退避重试 37 页/63.8s，并发 16 反而因限流加剧掉到 36 页。
         val sem = Semaphore(8)
@@ -298,11 +323,62 @@ object LiveMarket {
         return v.toString().toDoubleOrNull()
     }
 
-    private fun httpGet(url: String): String? = Http.getText(
+    private fun fetchSinaPage(page: Int): List<Row> {
+        val url = SINA_BASE + "?page=$page&num=$SINA_PAGE_SIZE&sort=symbol&asc=1&node=hs_a"
+        val txt = httpGet(url, referer = "https://finance.sina.com.cn/") ?: return emptyList()
+        val arr = runCatching { JSONArray(txt) }.getOrNull() ?: return emptyList()
+        val ts = System.currentTimeMillis()
+        return (0 until arr.length()).mapNotNull { i ->
+            val o = arr.optJSONObject(i) ?: return@mapNotNull null
+            val code = o.optString("code").takeIf { it.length == 6 } ?: return@mapNotNull null
+            val high = o.num("high")
+            val low = o.num("low")
+            val prev = o.num("settlement")
+            Row(
+                code = code,
+                name = o.optString("name").takeIf { it.isNotEmpty() },
+                price = o.num("trade"),
+                pctChg = o.num("changepercent"),
+                // 新浪 volume 单位是股，东财 f5 是手。
+                volumeLots = o.num("volume")?.div(100.0),
+                amount = o.num("amount"),
+                // 无 f7，按 (高-低)/前收 自算，与东财振幅同口径。
+                amplitude = if (high != null && low != null && (prev ?: 0.0) > 0.0) {
+                    (high - low) / prev!! * 100
+                } else null,
+                turnoverRate = o.num("turnoverratio"),
+                pe = o.num("per"),
+                volRatio = null,
+                // 新浪 mktcap 单位万元，东财 f20 是元。
+                mv = o.num("mktcap")?.times(10_000.0),
+                mainNet = null,
+                ts = ts,
+                high = high,
+                low = low,
+                open = o.num("open"),
+                prevClose = prev,
+                chg60d = null,
+                chgYtd = null,
+                speed = null,
+            )
+        }
+    }
+
+    private suspend fun fetchSinaAll(): List<Row> = coroutineScope {
+        val sem = Semaphore(8)
+        val batches = (1..SINA_MAX_PAGES)
+            .map { p -> async(Dispatchers.IO) { sem.withPermit { fetchSinaPage(p) } } }
+            .awaitAll()
+        val out = LinkedHashMap<String, Row>()
+        batches.forEach { b -> b.forEach { out.putIfAbsent(it.code, it) } }
+        out.values.toList()
+    }
+
+    private fun httpGet(url: String, referer: String = "https://wap.eastmoney.com/"): String? = Http.getText(
         url = url,
         charset = Charsets.UTF_8,
         timeoutMs = 8_000,
-        referer = "https://wap.eastmoney.com/",
+        referer = referer,
         accept = "application/json",
     )
 }
