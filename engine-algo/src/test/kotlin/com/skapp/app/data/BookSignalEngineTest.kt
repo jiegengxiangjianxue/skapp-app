@@ -198,7 +198,7 @@ class BookSignalEngineTest {
         assertTrue(votes.all { it.indicator == "book" }, "票名应为 book")
 
         assertTrue(
-            EngineChain.externalVotes(null, null, strong, base).isEmpty(),
+            EngineChain.externalVotes(null, null, strong, base.copy(weights = base.weights - "book")).isEmpty(),
             "规格未登记 book 权重时必须停用（否则权重不可云端控制）",
         )
 
@@ -212,8 +212,10 @@ class BookSignalEngineTest {
 
     @Test
     fun `规格未登记权重时书籍层不抬分且不静默`() {
+        // 不能用「自带规格里有没有 book」当前提：云端登记/摘除 book 会改内置规格（合法操作），
+        // 这里显式构造「未登记」的规格，测的才是降级分支本身。
         val base = EngineSpecLoader.loadBundled().spec
-        assertFalse(base.weights.containsKey("book"), "自带规格不应硬带 book 权重，否则本条失去意义")
+        val noBook = base.copy(weights = base.weights - "book")
         val row = LiveMarket.Row(
             code = "600000", name = null, price = null, pctChg = 1.2, volumeLots = 5.0e4,
             amount = 5.0e7, amplitude = 2.0, turnoverRate = 1.0, pe = null, volRatio = 1.1,
@@ -221,18 +223,19 @@ class BookSignalEngineTest {
         )
         val r = EngineChain.analyze(
             EngineChain.Inputs(bars = bars(up = true), row = row, nowMs = 1_760_000_000_000L),
+            specOverride = noBook,
         )
-        // 不要求一定有证据（随机上涨样本可能三层全不过），但只要有证据就必须留降级痕迹
+        assertTrue(
+            r.votes.none { it.indicator == "book" },
+            "缺权重时不得有 book 票进中枢：${r.votes}",
+        )
+        // 无证据的样本不会走到降级分支，所以只看「有证据时必须有痕迹」
         if (r.book?.hasEvidence == true) {
             assertTrue(
                 r.degraded.any { it.contains("规格未登记") },
                 "停用书籍层必须写进 degraded，否则用户看到的分数变化无声无息：${r.degraded}",
             )
         }
-        assertTrue(
-            r.votes.none { it.indicator == "book" },
-            "缺权重时不得有 book 票进中枢：${r.votes}",
-        )
     }
 
     @Test

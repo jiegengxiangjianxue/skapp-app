@@ -82,7 +82,7 @@ object EngineChain {
         val book: BookSignalEngine.Result? = null,
     )
 
-    fun analyze(inputs: Inputs): ChainResult {
+    fun analyze(inputs: Inputs, specOverride: EngineSpec? = null): ChainResult {
         val degraded = ArrayList<String>()
 
         val loaded = runCatching { EngineSpecLoader.loadBundled() }
@@ -90,7 +90,7 @@ object EngineChain {
                 degraded += "规格不可用：${it.message}"
                 return ChainResult(null, null, null, null, null, emptyList(), null, true, degraded, null, "insufficient")
             }
-        val spec = loaded.spec
+        val spec = specOverride ?: loaded.spec
         if (loaded.drift) degraded += loaded.reason
         if (inputs.bars.size < spec.runtime.minBars) {
             degraded += "K 线 ${inputs.bars.size} < ${spec.runtime.minBars}"

@@ -474,3 +474,42 @@ flow/tape 的分数仍通过 `blend`（0.07 / 0.05）参与总分，但**没有�
 - 本轮处理：三层书籍信号**不照抄这个门**（照抄会变成第二个死代码），改用显式权重常量并写明理由。
 - 待办：云端 `engine_spec.py` 生成 `device_engines` 时补 `flow`/`tape`/`book`，并先评估开启后对
   现有分数分布的影响（会让 flow/tape 首次真正进共振，分数会变），评估完再双端同步。
+
+### 2026-10-30 第二轮：书籍权重从常量改为规格驱动（缺键即停用）
+
+上一轮的 `W_BOOK = 0.6` 有两个问题，其中一个当场就定型了事故面：
+
+1. **不受云端控制**：调权重、回滚权重都得发版，等于把「书籍票抬多少分」交给 APK。
+2. **「只投 +1 ⇒ 只抬分」是错的直觉**：中枢是 `(Σ w·vote·strength)/(Σ w)`，新票贡献
+   `w·(s − base)/(den + w)`，`s < base` 时**加票会压分**。所以权重一旦不可调，就没有任何
+   手段在不发版的情况下纠正方向。
+
+改法（**最终口径 = 保守口径 + 完整口径叠加**）：
+
+> 同一时间窗口内，另一个执行体把「完整口径」也落了地：云端 `data/engine_spec.json` 升到 **3.1.1**，
+> `device_engines` 19 项（含 `book`），`weights.book = 0.6`；端上资源与 `BUNDLED_VERSION` 已同步。
+> 所以现在两条一起生效：**规格里真的有 book 权重了，且它由云端控制**。
+
+- 删除 `W_BOOK`，改 `bookWeightOf(spec) = spec.weights["book"] ?: 0.0`；
+- `externalVotes` 准入口径从「写死生效」改为「规格登记了 `weights.book` 且 > 0」；
+- 缺键时**不计票**（不是靠 0 权重稀释），并在 `degraded` 写「书籍层：规格未登记 book 权重，已停用不计票」；
+- 传给 `CanonicalEngine` 的 `weights["book"]` 显式写 0.0 —— 不能靠省键，省键会 fallback 到 **1.0**
+  （`CanonicalEngine.score` 的 `w[v.indicator] ?: 1.0`），那是把权重放大而不是关掉。
+- 自检新增两条不变量：「书籍权重缺键即停用」「书籍权重登记即生效」，替换原来的「W_BOOK ∈ (0,1]」。
+
+验收（可复现）：
+
+```bash
+./gradlew :engine-algo:test --tests "*BookSignalEngineTest*" --console=plain
+./gradlew :engine-algo:test --tests "*BookTurnOnDiffTest*" --console=plain
+# 逐只对照报告落地：engine-algo/build/reports/book_weight_diff.md
+```
+
+实测（6 只真实日线夹具，2022-12-22~2026-10-16）：有 book 票 2/6，抬分 2 只（sz000701 +1.50、
+sz000678 +0.20），压分 0 只。**样本只 6 只，不足以断言全市场不出现压分**；把更多票导出进
+`testdata/kline_e2e_20261030.json` 后重跑同一条命令，报告会逐只列出（测试遍历夹具全量，不用改代码）。
+
+下一步（已由并发执行体完成，留档以免被重做）：`engine_spec.py` 已输出
+`"device_engines": [..., "book"]` 与 `weights.book = 0.6`；`spec_version` 3.1.0 → 3.1.1；
+端上 `engine_spec.json` / `BUNDLED_VERSION` / `testdata/cloud/*` / `testdata/parity/golden_v5.json`
+已同批同步（golden 由云端 `data/parity/golden_v5.json`（3.1.1）拷入，否则 `CanonicalEngineParityTest` 必红）。

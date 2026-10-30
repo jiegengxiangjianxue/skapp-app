@@ -39,7 +39,15 @@ class CloudArtifactIntegrationTest {
         assertTrue(!bundled.drift, "内置规格漂移：${bundled.reason}")
         val spec = bundled.spec
         assertEquals(21, spec.engines.size, "21 票引擎清单不完整")
-        assertEquals(18, spec.deviceEngines.size, "端上可实现引擎数应为 18")
+        assertTrue(
+            spec.deviceEngines.contains("book"),
+            "book 必须在 device_engines 里，否则书籍票无准入依据（历史坑：externalVotes 恒空）",
+        )
+        assertTrue(
+            (spec.weights["book"] ?: 0.0) > 0.0,
+            "规格必须登记 book 权重：未登记时端上按缺键停用（EngineChain.bookWeightOf），等于白接",
+        )
+        assertEquals(19, spec.deviceEngines.size, "端上可实现引擎数应为 19（18 个技术指标 + 1 个三层书籍信号票 book）")
 
         val cloudSpec = cloud("engine_spec.json").readText()
         val cloud = EngineSpecLoader.parse(cloudSpec)
