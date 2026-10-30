@@ -42,8 +42,10 @@ jobs:
           GH_TOKEN: ${{ secrets.GH_PAT }}
         run: |
           python3 - <<'PYEOF'
-          import base64, json, os, urllib.request
-          TOK = os.environ["GH_TOKEN"]
+          import base64, json, os, urllib.request, sys
+          TOK = os.environ.get("GH_TOKEN") or ""
+          if not TOK:
+              sys.exit("GH_PAT secret 缺失：无法写入 skapp-data，本次不产出 app 数据（不是静默成功）")
           API = "https://api.github.com"
           import glob as _glob
           FILES = ["data/search/symbols.json","data/engine/picks_latest.json",
@@ -61,6 +63,7 @@ jobs:
                   json.dump(compact, open("data/search/symbols.json","w"), ensure_ascii=False, separators=(",",":"))
           except Exception as e:
               print("search index refresh skipped:", e)
+          ok = 0; failed = []
           for f in FILES:
               if not os.path.exists(f): continue
               raw = open(f,"rb").read()
@@ -78,7 +81,13 @@ jobs:
               body = {"message": "auto sync " + f, "content": base64.b64encode(raw).decode()}
               if sha: body["sha"] = sha
               try:
-                  api("PUT", url, body); print("synced", f)
+                  api("PUT", url, body); print("synced", f); ok += 1
               except Exception as e:
-                  print("sync failed", f, e)
+                  print("sync failed", f, e); failed.append(f)
+          # 一个文件都没同步 = 硬失败（凭据/权限/接口不通）；部分失败只报 warning，不掩耳盗铃
+          if not ok:
+              sys.exit("sync 全部失败（%d 个文件）：凭据或权限不可用" % len(failed))
+          if failed:
+              print("::warning::%d 个文件同步失败: %s" % (len(failed), ", ".join(failed)))
+          print("sync done: %d ok, %d failed" % (ok, len(failed)))
           PYEOF
