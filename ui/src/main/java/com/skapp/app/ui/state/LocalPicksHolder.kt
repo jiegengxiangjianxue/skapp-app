@@ -55,6 +55,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.delay
@@ -228,29 +229,56 @@ internal class LocalPicksHolder(
             // 之前只算前 5 只，第 6 只起恒显示「未计算」，被读成「名单只出了前 5 只」——
             // 而 MAX_PICKS 本是 10：性能取舍换来的是对名单规模的误判，不划算。
             val trendTargets = artifact.picks
-            var klineCalls = 0
-            var klineMs = 0L
-            val trendFails = mutableListOf<String>()
-            val trends = trendTargets.mapNotNull { p ->
-                val k0 = System.currentTimeMillis()
-                val fetched = runCatching {
-                    com.skapp.app.data.DataCache.kline(p.code, "qfq", 250)
-                }
-                klineMs += System.currentTimeMillis() - k0
-                klineCalls++
-                val bars = fetched.getOrElse { e ->
-                    trendFails += "${p.code} 抛 ${e.javaClass.simpleName}"
-                    emptyList()
-                }
-                if (bars.size < 60) {
-                    if (bars.isNotEmpty()) trendFails += "${p.code} 仅 ${bars.size} 根"
-                    null
-                } else {
-                    runCatching { p.code to com.skapp.app.data.TrendForecast.compute(bars) }
-                        .onFailure { trendFails += "${p.code} compute ${it.javaClass.simpleName}" }
-                        .getOrNull()
-                }
-            }.toMap()
+            // 逐票串行拉日 K 时首屏耗时随名单条数线性增长（10 只 × 单票 0.5~2s）。
+            // 并发度压到 4 而不是全开：日 K 三源按单 IP 限流，并发全开换来的是整批失败，
+            // 比慢更糟；分片间隔由每个 async 的内部串行门关保。
+            class TrendRun(
+                val code: String,
+                val ms: Long,
+                val result: com.skapp.app.data.TrendForecast.Result?,
+                val fail: String?,
+            )
+            val trendRuns = coroutineScope {
+                trendTargets
+                    .chunked(4)
+                    .map { chunk ->
+                        async(Dispatchers.IO) {
+                            chunk.map { p ->
+                                val k0 = System.currentTimeMillis()
+                                val fetched = runCatching {
+                                    com.skapp.app.data.DataCache.kline(p.code, "qfq", 250)
+                                }
+                                val ms = System.currentTimeMillis() - k0
+                                val bars = fetched.getOrNull()
+                                val err = fetched.exceptionOrNull()
+                                when {
+                                    bars == null -> TrendRun(
+                                        p.code, ms, null,
+                                        "${p.code} 抛 ${err?.javaClass?.simpleName ?: "未知"}",
+                                    )
+                                    bars.size < 60 -> TrendRun(
+                                        p.code, ms, null,
+                                        if (bars.isNotEmpty()) "${p.code} 仅 ${bars.size} 根" else null,
+                                    )
+                                    else -> runCatching {
+                                        com.skapp.app.data.TrendForecast.compute(bars)
+                                    }.fold(
+                                        onSuccess = { r -> TrendRun(p.code, ms, r, null) },
+                                        onFailure = { e ->
+                                            TrendRun(p.code, ms, null, "${p.code} compute ${e.javaClass.simpleName}")
+                                        },
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    .awaitAll()
+                    .flatten()
+            }
+            val klineCalls = trendRuns.size
+            val klineMs = trendRuns.sumOf { it.ms }
+            val trendFails = trendRuns.mapNotNull { it.fail }
+            val trends = trendRuns.mapNotNull { r -> r.result?.let { r.code to it } }.toMap()
             val tTrend = System.currentTimeMillis()
             val timing = buildString {
                 append("首屏 ${tTrend - t0}ms（快照 ${tSnapshot - t0} / 筛选 ${tScreen - tSnapshot} / 引擎 ${tEngine - tScreen}）")

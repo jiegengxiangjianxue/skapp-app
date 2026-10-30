@@ -399,6 +399,16 @@ private fun TrendSection(state: UiState) {
                         " · 20 日斜率 ${tf.slope20Pct?.let { "%+.2f%%".format(it) } ?: "不可得"}",
                     style = MaterialTheme.typography.bodySmall,
                 )
+                Text(
+                    "RSI(14) ${tf.rsi14?.let { "%.1f".format(it) } ?: "不可得"}" +
+                        " · KDJ ${tf.kdj?.let { "K %.1f / D %.1f / J %.1f".format(it.k, it.d, it.j) } ?: "不可得"}",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Text(
+                    "BOLL(20,2) ${tf.boll?.let { "上 %.2f / 中 %.2f / 下 %.2f".format(it.upper, it.mid, it.lower) } ?: "不可得"}" +
+                        " · 量比(5/20) ${tf.volRatio?.let { "%.2f".format(it) } ?: "不可得"}",
+                    style = MaterialTheme.typography.bodySmall,
+                )
                 Spacer(Modifier.height(6.dp))
                 if (tf.horizons.isEmpty()) {
                     Text(

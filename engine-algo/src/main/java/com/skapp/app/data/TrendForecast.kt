@@ -25,6 +25,10 @@ object TrendForecast {
         val basis: List<String>,
     )
 
+    data class Kdj(val k: Double, val d: Double, val j: Double)
+
+    data class Boll(val upper: Double, val mid: Double, val lower: Double)
+
     data class Result(
         val ma5: Double?,
         val ma10: Double?,
@@ -35,6 +39,11 @@ object TrendForecast {
         val slope20Pct: Double?,
         val horizons: List<Horizon>,
         val notes: List<String>,
+        val rsi14: Double? = null,
+        val kdj: Kdj? = null,
+        val boll: Boll? = null,
+        /** 近 5 日均量 ÷ 近 20 日均量；不用「当日量÷5日均量」，避免被未完成 bar 拉偏。 */
+        val volRatio: Double? = null,
     )
 
     private val HORIZONS = listOf(1, 3, 5, 10)
@@ -49,12 +58,19 @@ object TrendForecast {
         val atr = runCatching { ExtendedIndicators.atr(bars) }.getOrNull()
         val atrPct = if (atr != null && closes.isNotEmpty() && closes.last() > 0) atr / closes.last() * 100 else null
         val slope20 = slopePct(closes, 20)
+        val rsi14 = runCatching {
+            CanonicalIndicators.rsi(closes, 14).filterNotNull().lastOrNull()
+        }.getOrNull()
+        val kdjVal = kdj(bars)
+        val bollVal = boll(closes)
+        val volRatioVal = volRatio(bars)
 
         if (closes.size < 60 || ma20 == null || macdVal == null) {
             return Result(
                 ma5 = ma5, ma10 = ma10, ma20 = ma20, macd = macdVal, mfi = mfi,
                 atrPct = atrPct, slope20Pct = slope20, horizons = emptyList(),
                 notes = listOf("日 K 仅 ${closes.size} 根（需 ≥60），均线与 MACD 不足以给出多日方向"),
+                rsi14 = rsi14, kdj = kdjVal, boll = bollVal, volRatio = volRatioVal,
             )
         }
 
@@ -97,6 +113,7 @@ object TrendForecast {
         return Result(
             ma5 = ma5, ma10 = ma10, ma20 = ma20, macd = macdVal, mfi = mfi,
             atrPct = atrPct, slope20Pct = slope20, horizons = horizons,
+            rsi14 = rsi14, kdj = kdjVal, boll = bollVal, volRatio = volRatioVal,
             notes = listOf(
                 "依据命中 ${votes.count { it == "多" }} 多 / ${votes.count { it == "空" }} 空（MA 结构、MACD 柱、20 日斜率、MFI）",
                 "区间 = ATR%×√期数（ATR ${atrPct?.let { fmt(it) } ?: "不可得"}%），假设日收益近独立，波动聚集时低估",
@@ -152,6 +169,39 @@ object TrendForecast {
         }
         if (den == 0.0) return null
         return num / den / meanY * 100
+    }
+
+    /** KDJ(9,3,3)：RSV=(C−L9)/(H9−L9)×100，K、D 用 1/3 平滑、初值 50（A 股通达信口径）。 */
+    private fun kdj(bars: List<KBar>, n: Int = 9): Kdj? {
+        if (bars.size < n) return null
+        var k = 50.0
+        var d = 50.0
+        for (i in n - 1 until bars.size) {
+            val win = bars.subList(i - n + 1, i + 1)
+            val hh = win.maxOf { it.high }
+            val ll = win.minOf { it.low }
+            val rsv = if (hh > ll) (bars[i].close - ll) / (hh - ll) * 100 else 50.0
+            k = (2 * k + rsv) / 3
+            d = (2 * d + k) / 3
+        }
+        return Kdj(k = k, d = d, j = 3 * k - 2 * d)
+    }
+
+    /** BOLL(20,2)：中轨 MA20，上下轨 = 中轨 ± 2×总体标准差。 */
+    private fun boll(closes: List<Double>, n: Int = 20, mult: Double = 2.0): Boll? {
+        if (closes.size < n) return null
+        val win = closes.takeLast(n)
+        val mid = win.average()
+        val sd = sqrt(win.sumOf { (it - mid) * (it - mid) } / n)
+        return Boll(upper = mid + mult * sd, mid = mid, lower = mid - mult * sd)
+    }
+
+    private fun volRatio(bars: List<KBar>, short: Int = 5, long: Int = 20): Double? {
+        if (bars.size < long) return null
+        val vols = bars.map { it.vol }
+        val v20 = vols.takeLast(long).average()
+        if (v20 <= 0) return null
+        return vols.takeLast(short).average() / v20
     }
 
     private fun fmt(v: Double): String = String.format(java.util.Locale.US, "%.2f", v)
