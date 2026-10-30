@@ -9,10 +9,15 @@ package com.skapp.app.data
  *
  * ## 校准表是实测快照，不是书本先验
  *
- * 下面的 [CALIB] 来自 2026-10-30 云端实测：200 只 × 400 根日 K，5 日持有，cut_step=2。
- * 每条含前向收益 [Calib.fwd5]、t 值 [Calib.t]、样本数 [Calib.n]。
- * **权重与方向全部来自这张表**：书本说什么不算数，A 股短周期由均值回归主导，
- * 多处叙事实测会反向（例如「顶部确认」之后 5 日反而 +0.42%）。
+ * 下面的 [CALIB] 来自云端实测：200 只 × 400 根日 K，5 日持有，cut_step=2。
+ * 每条含毛收益 [Calib.fwd5]、t 值 [Calib.t]、样本数 [Calib.n]，以及扣 15bp 往返
+ * 成本后的净收益 [Calib.netFwd5] 与 [Calib.netT]。
+ *
+ * **打分用净收益，不是毛收益**：A 股 5 日尺度的边缘优势普遍只有 0.2~1.8%，
+ * 15bp 成本占比不小，毛正不等能赚。门槛（|netT| >= MIN_T）、权重（min(|netT|,4)/4）、
+ * 层分（netFwd5）三处全走净口径，与云端 `signal_hub.layer_expectancy` 一致。
+ * 表里保留毛收益与毛 t 只供对比诊断；毛过检、扣费后不显著的标签（如
+ * `mtr:top_confirmed` 1.86→1.20）会留在表里备查，但**不参与打分**。
  *
  * ## 三条纪律（写进代码，别只写注释）
  *
@@ -38,34 +43,48 @@ object BookSignalEngine {
      * 校准快照。`label` 必须与云端校准表键名逐字一致，否则两端理由对不上。
      *
      * 维护方式：云端跑 `python3 scripts/reversal_engine.py --calibrate`（涨停层、订单流层同理）重跑后，把新表里的
-     * 过检标签同步到这里（只同步 n ≥ 100 且 |t| ≥ 1.5 的，与 [scoreOf] 的门槛一致）。
+     * 过检标签同步到这里。**同步门槛按净 t**（n ≥ 100 且 |netT| ≥ 1.5，与 [scoreOf] 一致），
+     * 毛收益/毛 t 也一并抄过来留作对比；云端表里字段名为 `net_avg_fwd_15bp` / `net_t_15bp`
+     * （反转/涨停/订单流三张），结构层那张是 `net_avg_fwd_5d_15bp` / `net_t_5d_15bp`。
      *
      * 注意：注释里不要写「斜杠+星号」开头的通配路径（Kotlin 支持嵌套块注释），
      * 否则注释会提前吃掉，报出莫名其妙的「Unclosed comment」与「Missing }」。
      */
-    data class Calib(val label: String, val fwd5: Double, val t: Double, val n: Int)
+    data class Calib(
+        val label: String,
+        /** 毛收益（未扣成本），保留供对比与诊断。 */
+        val fwd5: Double,
+        val t: Double,
+        val n: Int,
+        /** 净收益：扣 15bp 往返成本后。**打分用这个**，不是 fwd5。 */
+        val netFwd5: Double = fwd5,
+        /** 净收益的 t 值。**门槛与权重都用这个**：扣费后不显著的标签不得计分。 */
+        val netT: Double = t,
+    )
 
     private val CALIB: Map<String, Calib> = listOf(
         // ── 反转层：底部链顺向有效，顶部链反向 ──
-        Calib("mtr:second_higher_low", 0.68, 3.85, 1229),
-        Calib("mtr:bottom_confirmed", 0.67, 2.20, 438),
-        Calib("mtr:extreme_bottom", 0.55, 6.10, 6075),
-        Calib("mtr:pullback_down", 0.51, 6.60, 5320),
-        Calib("mtr:break_up", 0.56, 6.61, 5555),
-        Calib("mtr:top_confirmed", 0.42, 1.86, 725),
-        Calib("mtr:break_down", 0.41, 4.60, 6795),
-        Calib("mtr:pullback_up", 0.40, 4.41, 6591),
-        Calib("mtr:extreme_top", 0.35, 4.07, 7137),
-        Calib("mtr:second_lower_high", 0.28, 1.86, 1944),
+        Calib("mtr:second_higher_low", 0.68, 3.85, 1229, 0.53, 3.00),
+        Calib("mtr:bottom_confirmed", 0.67, 2.20, 438, 0.52, 1.71),
+        Calib("mtr:extreme_bottom", 0.55, 6.10, 6075, 0.40, 4.42),
+        Calib("mtr:pullback_down", 0.51, 6.60, 5320, 0.36, 4.65),
+        Calib("mtr:break_up", 0.56, 6.61, 5555, 0.41, 4.85),
+        // 毛 t=1.86 过检，但扣费后净 t 只剩 1.20 → 不达 MIN_T，留着备查、不计分
+        Calib("mtr:top_confirmed", 0.42, 1.86, 725, 0.27, 1.20),
+        Calib("mtr:break_down", 0.41, 4.60, 6795, 0.26, 2.90),
+        Calib("mtr:pullback_up", 0.40, 4.41, 6591, 0.24, 2.74),
+        Calib("mtr:extreme_top", 0.35, 4.07, 7137, 0.20, 2.33),
+        // 同上：毛 t=1.86 → 净 t=0.86，扣费后不显著
+        Calib("mtr:second_lower_high", 0.28, 1.86, 1944, 0.13, 0.86),
         // ── 涨停层：首板顺向，连板转负（后者过不了检验，不入表） ──
-        Calib("limit:first_board & limit:active_5d", 1.77, 2.33, 333),
-        Calib("limit:strong_seal & limit:active_5d", 1.55, 2.08, 387),
-        Calib("limit:first_board", 1.40, 1.96, 366),
-        Calib("limit:first_board & limit:strong_seal", 1.42, 1.96, 352),
+        Calib("limit:first_board & limit:active_5d", 1.77, 2.33, 333, 1.62, 2.13),
+        Calib("limit:strong_seal & limit:active_5d", 1.55, 2.08, 387, 1.40, 1.88),
+        Calib("limit:first_board", 1.40, 1.96, 366, 1.25, 1.75),
+        Calib("limit:first_board & limit:strong_seal", 1.42, 1.96, 352, 1.27, 1.75),
         // ── 订单流近似：卖压与低位收盘是买入信号，买压无延续性 ──
-        Calib("flow:imbalance_down", 1.97, 4.76, 374),
-        Calib("flow:delta_down & flow:imbalance_down", 1.70, 3.75, 272),
-        Calib("flow:delta_down", 0.68, 7.21, 4263),
+        Calib("flow:imbalance_down", 1.97, 4.76, 374, 1.82, 4.40),
+        Calib("flow:delta_down & flow:imbalance_down", 1.70, 3.75, 272, 1.55, 3.42),
+        Calib("flow:delta_down", 0.68, 7.21, 4263, 0.53, 5.62),
     ).associateBy { it.label }
 
     /** 合成分映射常数：`exp5 = ±3%` 时到达 0/100，对应 spec 的 65/35 信号阈值。 */
@@ -129,7 +148,7 @@ object BookSignalEngine {
             else -> buildString {
                 append("三层信号 ")
                 append("%.2f%%/5日".format(scored.second))
-                scored.third?.let { append("（${it.label} t=${"%.2f".format(it.t)} n=${it.n}）") }
+                scored.third?.let { append("（${it.label} t_net=${"%.2f".format(it.netT)} n=${it.n}）") }
             }
         }
 
@@ -139,7 +158,7 @@ object BookSignalEngine {
             tags = tags,
             layers = layers,
             basis = scored.third?.label,
-            basisT = scored.third?.t,
+            basisT = scored.third?.netT,
             basisN = scored.third?.n,
             degraded = degraded,
             reason = reason,
@@ -161,19 +180,19 @@ object BookSignalEngine {
             }
         }
         for (t in tags) CALIB[t]?.let { hits += it }
-        val valid = hits.filter { it.n >= MIN_N && kotlin.math.abs(it.t) >= MIN_T }
+        val valid = hits.filter { it.n >= MIN_N && kotlin.math.abs(it.netT) >= MIN_T }
         if (valid.isEmpty()) return Triple(null, null, null)
 
         var num = 0.0
         var den = 0.0
         for (c in valid) {
-            val w = kotlin.math.min(kotlin.math.abs(c.t), 4.0) / 4.0
-            num += c.fwd5 * w
+            val w = kotlin.math.min(kotlin.math.abs(c.netT), 4.0) / 4.0
+            num += c.netFwd5 * w
             den += w
         }
         val exp5 = if (den > 0) num / den else 0.0
         val score = 50.0 + 50.0 * (exp5 / CLAMP_PCT).coerceIn(-1.0, 1.0)
-        val best = valid.maxByOrNull { kotlin.math.abs(it.t) }
+        val best = valid.maxByOrNull { kotlin.math.abs(it.netT) }
         return Triple(score, exp5, best)
     }
 
@@ -529,7 +548,7 @@ object BookSignalEngine {
         expect("缺 K 线降级可见", compute(List(10) { barCon(10.0, 10.0, 10.1, 9.9) }).degraded.isNotEmpty(), "数据不足必须写进 degraded")
 
         expect("不可用项已声明", knownLimits().containsKey("seal_amount"), "封单必须声明不可用")
-        expect("只出多头证据", CALIB.values.none { it.fwd5 < 0 }, "校准表不应含负向标签（三层无看空判据）")
+        expect("只出多头证据", CALIB.values.none { it.netFwd5 < 0 }, "校准表扣费后不应含负向标签（三层无看空判据）")
 
         return SelfCheck(count, bad.isEmpty(), bad)
     }
