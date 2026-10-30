@@ -110,7 +110,7 @@ class BookTurnOnDiffTest {
             appendLine("# 书籍票 关/开 中枢分逐只对照（端上真实日线）")
             appendLine()
             appendLine("- 数据：`testdata/kline_e2e_20261030.json`（6 只 × 120 根，raw 不复权）")
-            appendLine("- 关 = 规格未登记 `weights.book`（当前默认）；开 = 登记 0.6")
+            appendLine("- 关 = 显式摘除 `weights.book`（模拟云端把这一票关掉）；开 = 登记 0.6")
             appendLine("- 结论口径：`s < base` 时加票会**压分**，所以「只投 +1 ⇒ 只抬分」不成立")
             appendLine()
             appendLine("| 代码 | book 关 | book 开 | 变化 | 书籍层分 | 命中标签 |")
