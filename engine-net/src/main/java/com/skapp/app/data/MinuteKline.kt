@@ -14,13 +14,15 @@ import java.net.URL
  *   - 东财 kline 的 klt=5/15/30/60 一律 `{"rc":102,"data":null}`，不可用；
  *   - 新浪 CN_MarketDataService.getKLineData 返回 `day` 带完整时间，无外层包装，解析最干净，作主源；
  *   - 腾讯 ifzq mkline 返回 code=0 + 数组，作兜底（同一家日 K 已用过，字段约定一致）。
+ *   - 1 分钟：新浪 scale=1 实测返回带 amount 的完整分钟序列（2026-10-30 容器内验证），
+ *     腾讯 m1 虽返回 code=0，但 data.<code> 下挂了行情快照，分钟数组需另取，故仍以新浪为主源。
  *
  * 盘中最后一根是**未完成 bar**：调用方要拿它做统计必须自己剔除，否则量能与指标都被半根柱子拉低。
  */
 object MinuteKline {
 
     enum class Period(val scale: Int, val tx: String) {
-        M5(5, "m5"), M15(15, "m15"), M30(30, "m30"), M60(60, "m60")
+        M1(1, "m1"), M5(5, "m5"), M15(15, "m15"), M30(30, "m30"), M60(60, "m60")
     }
 
     suspend fun fetch(code: String, period: Period = Period.M5, count: Int = 240): List<KBar> =

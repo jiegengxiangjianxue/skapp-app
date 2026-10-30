@@ -28,6 +28,21 @@ class MinuteKlineTest {
         near(11230.0, bars[0].vol)
     }
 
+    /** 2026-10-30 容器内实测的新浪 scale=1 响应：带 amount 字段，解析器按既有字段取值。 */
+    @Test
+    fun minutePeriodWiredToSinaScaleOne() {
+        assertEquals(1, MinuteKline.Period.M1.scale)
+        assertEquals("m1", MinuteKline.Period.M1.tx)
+        val txt = "var _=([{\"day\":\"2026-10-30 14:57:00\",\"open\":\"1391.400\",\"high\":\"1392.000\"," +
+            "\"low\":\"1388.000\",\"close\":\"1389.150\",\"volume\":\"42900\"," +
+            "\"amount\":\"59668531.6563\"}]);"
+        val bars = MinuteKline.parseSina(txt)
+        assertEquals(1, bars.size)
+        assertEquals("2026-10-30 14:57:00", bars[0].date)
+        near(1389.15, bars[0].close)
+        near(42900.0, bars[0].vol)
+    }
+
     @Test
     fun parseTencentMkline() {
         val txt = "{\"code\":0,\"data\":{\"sh600519\":{\"m5\":[" +
