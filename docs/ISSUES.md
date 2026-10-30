@@ -452,3 +452,25 @@ Pivot/MA/SuperTrend/ElderForce/Vortex/RSI + 本地补的 MACD/RSV），缺的是
 decile 10（SUE 最低）+1.32%、胜率 54.90%（1977 个样本、窗口 2026-08~10）。
 样本期太短，不能据此定长期方向；即使云端将来补齐全量，也必须按实测分位映射，不能默认「高 SUE = 好」。
 下次要接，先让云端把 `events` 扩到全量且只保留近 20 个交易日的公告。
+
+## 2026-10-30 三层书籍信号接入端上（反转/涨停/订单流）
+
+### 已做
+
+- 新增 `engine-algo/src/main/java/com/skapp/app/data/BookSignalEngine.kt`：与云端
+  `reversal_engine.py` / `limit_structure.py` / `orderflow_proxy.py` 同源同判据，端上用 120 根日 K **重算**，
+  不读云端产物——否则云端当天没更新就没有信号。校准表以 2026-10-30 实测快照内嵌（含 t 值与样本数）。
+- `EngineChain` 接入：书籍信号作为中枢外部票（`W_BOOK = 0.6`），**只投 +1 或不投**，不进 `blend`
+  （blend 三路是不同数据源，book 与中枢同源于日 K，混进去等于把日 K 信息算两遍）。
+- 测试：`BookSignalEngineTest`（14 条）+ `EngineChainSelfCheckTest` 追加 3 条不变量。
+
+### 发现并记录的缺陷：`externalVotes` 对 flow/tape 恒不生效
+
+`engine_spec.json` 的 `device_engines` 只有 18 个指标 id（supertrend…below_ma60），**不含 `flow`/`tape`**，
+而 `EngineChain.externalVotes` 用 `spec.deviceCanVote("flow")` 做准入 → 恒 `false`，该函数一直返回空列表。
+flow/tape 的分数仍通过 `blend`（0.07 / 0.05）参与总分，但**没有进中枢共振比**。
+
+- 影响：中枢的「多空票数」偏少，资金流与盘口的强弱没有反映到 resonance 上。
+- 本轮处理：三层书籍信号**不照抄这个门**（照抄会变成第二个死代码），改用显式权重常量并写明理由。
+- 待办：云端 `engine_spec.py` 生成 `device_engines` 时补 `flow`/`tape`/`book`，并先评估开启后对
+  现有分数分布的影响（会让 flow/tape 首次真正进共振，分数会变），评估完再双端同步。

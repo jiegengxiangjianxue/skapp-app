@@ -23,6 +23,15 @@ object EngineChain {
     private const val W_FLOW = 0.07
     private const val W_TAPE = 0.05
 
+    /**
+     * 三层书籍信号（反转/涨停/订单流）在中枢内的权重。
+     *
+     * 取 0.6（规格里指标权重区间 0.6~1.0 的下界）：它是衍生层，信息不如原始指标直接，
+     * 首次接入不应压过任何一个主指标。不进 [blend]：blend 的三路是「不同数据源」，
+     * 而 book 与中枢同源于日 K，混进去会把日 K 信息算两遍。
+     */
+    private const val W_BOOK = 0.6
+
     /** 资金流/盘口低于此分视为「弱」，两者同时弱才置 riskFlag（一票否决）。
      *  规格没有给 flow/tape 单独的弱分界，取 aggregation.signalBearish（看空阈值）作为唯一可用口径。 */
     private const val RISK_WEAK_SCORE = 35.0
@@ -61,6 +70,12 @@ object EngineChain {
         /** 一句话风控提示，没有则为 null */
         val riskFlag: String?,
         val status: String,
+        /**
+         * 三层书籍信号（反转/涨停/订单流）。
+         *
+         * 放在末尾并给默认值：现有调用点全用位置参数构造，插在中间会静默错位。
+         */
+        val book: BookSignalEngine.Result? = null,
     )
 
     fun analyze(inputs: Inputs): ChainResult {
@@ -99,10 +114,18 @@ object EngineChain {
         }.getOrNull()
         if (tape?.score == null) degraded += "盘口：${tape?.status ?: "计算失败"}"
 
+        // ── 三层书籍信号（反转 MTR / 涨停结构 / 订单流近似）──
+        // 只影响中枢外部票，不进 blend：blend 三路是不同数据源，book 与中枢同源于日 K。
+        val book = runCatching { BookSignalEngine.compute(inputs.bars, code) }.getOrNull()
+        if (book == null) degraded += "书籍信号：计算失败"
+        else if (!book.hasEvidence) degraded += "书籍信号：三层无过检标签"
+
         // ── 外部票注入后重算中枢 ──
-        val externals = externalVotes(flow, tape, spec)
+        val externals = externalVotes(flow, tape, book, spec)
+        val weights = HashMap(spec.weights)
+        weights["book"] = W_BOOK
         val canonical = runCatching {
-            CanonicalEngine.score(code, inputs.bars, spec, externalVotes = externals)
+            CanonicalEngine.score(code, inputs.bars, spec, weights = weights, externalVotes = externals)
         }.getOrNull()
         if (canonical == null) degraded += "中枢：K 线不足或规格引擎全缺"
 
@@ -140,6 +163,7 @@ object EngineChain {
             degraded = degraded,
             riskFlag = riskFlag,
             status = status,
+            book = book,
         )
     }
 
@@ -196,9 +220,10 @@ object EngineChain {
     fun externalVotes(
         flow: FlowEngine.Result?,
         tape: TapeEngine.Result?,
+        book: BookSignalEngine.Result?,
         spec: EngineSpec,
     ): List<CanonicalEngine.Vote> {
-        val out = ArrayList<CanonicalEngine.Vote>(2)
+        val out = ArrayList<CanonicalEngine.Vote>(3)
         val agg = spec.aggregation
 
         fun voteOf(indicator: String, score: Double?, why: String): CanonicalEngine.Vote? {
@@ -218,6 +243,19 @@ object EngineChain {
         if (spec.deviceCanVote("tape")) {
             voteOf("tape", tape?.score, "盘口 ${"%.1f".format(tape?.score ?: 0.0)}（${tape?.signal ?: "?"}）")?.let { out += it }
         }
+
+        // 书籍信号：只投 +1 或不投，从不投 -1 也不投 0。
+        // -1 不可投：三层判据（折底反转/涨停动能/卖压反转）实测无一条显著为负，
+        //   拿「没证据」当「看空」会让每只票都被压分。
+        // 0 不可投：0 票会进 den 权重却不贡献分子，等于稀释其它票（与 missing_vote_policy=drop 同理）。
+        // 准入不看 deviceCanVote：device_engines 里没有 "book"（也没有 flow/tape），
+        //   照抄会让这票成为永不生效的死代码。另见 docs/ISSUES.md 的「externalVotes 恒空」条目。
+        val bScore = book?.score
+        if (bScore != null && bScore >= agg.signalBullish) {
+            val strength = ((bScore - agg.scoreCenter) / agg.scoreScale).coerceIn(0.0, 1.0)
+            out += CanonicalEngine.Vote("book", 1, strength, "三层信号 ${"%.1f".format(bScore)}")
+        }
+
         return out
     }
 
@@ -258,7 +296,28 @@ object EngineChain {
         )
 
         val spec = EngineSpecLoader.loadBundled().spec
-        expect("缺分不产票", externalVotes(null, null, spec).isEmpty(), "缺分必须 drop")
+        expect("缺分不产票", externalVotes(null, null, null, spec).isEmpty(), "缺分必须 drop")
+
+        // 书籍信号：无证据不产票；看空证据永不产 -1 票（三层只出多头证据）
+        expect(
+            "书籍票不产 0 也不产 -1",
+            externalVotes(null, null, BookSignalEngine.Result(
+                score = 80.0, expected5d = 1.8, tags = listOf("limit:first_board"),
+                layers = emptyMap(), basis = null, basisT = null, basisN = null,
+                degraded = emptyList(), reason = "test",
+            ), spec).all { it.vote == 1 },
+            "书籍票只能是 +1",
+        )
+        expect(
+            "书籍弱分不产票",
+            externalVotes(null, null, BookSignalEngine.Result(
+                score = 50.0, expected5d = 0.0, tags = emptyList(),
+                layers = emptyMap(), basis = null, basisT = null, basisN = null,
+                degraded = emptyList(), reason = "test",
+            ), spec).isEmpty(),
+            "低于看多阈值不得产票（0 票会稀释其它票）",
+        )
+        expect("书籍权重不越界", W_BOOK <= 1.0 && W_BOOK > 0.0, "W_BOOK 必须落在 (0,1]")
 
         val agg = spec.aggregation
         expect("闸门单调", RegimeGate.applyGate(80.0, 0.5)?.let { it <= 80.0 } == true, "空头闸门不得放大分数")

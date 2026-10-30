@@ -61,10 +61,10 @@ class EngineChainSelfCheckTest {
 
     @Test
     fun `缺分引擎不产票且强势票转正票`() {
-        val empty = EngineChain.externalVotes(null, null, spec)
+        val empty = EngineChain.externalVotes(null, null, null, spec)
         assertTrue(empty.isEmpty(), "缺分必须 drop，实际 $empty")
         val flow = flowResult(88.0)
-        val votes = EngineChain.externalVotes(flow, null, spec.copy(deviceEngines = spec.deviceEngines + "flow"))
+        val votes = EngineChain.externalVotes(flow, null, null, spec.copy(deviceEngines = spec.deviceEngines + "flow"))
         assertEquals(1, votes.size)
         assertEquals("flow", votes[0].indicator)
         assertEquals(1, votes[0].vote)
