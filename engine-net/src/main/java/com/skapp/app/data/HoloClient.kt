@@ -36,6 +36,7 @@ object HoloClient {
     // 详情页要连读 technical/finance/moneyflow/news 多个文件，raw 不通时每个都白等一个满超时，
     // 所以 raw 只给 3s；失败一次就把通道粘到 contents API，冷却期内不再试 raw。
     private const val RAW_TIMEOUT_MS = 3_000
+    private const val RAW_KLINE_TIMEOUT_MS = 10_000
     private const val RAW_COOLDOWN_MS = 10 * 60 * 1000L
     @Volatile private var rawDownUntil = 0L
 
@@ -65,30 +66,42 @@ object HoloClient {
             else -> null
         }
         val stickyApi = apiUrl?.takeIf { System.currentTimeMillis() < rawDownUntil }
-        val targets = if (stickyApi != null) listOf(stickyApi) else listOfNotNull(rawUrl, apiUrl)
+        // 粘性期仍保留 raw 兜底：contents API 也会 404/限流，单通道独木会让冷却期内一直空
+        val targets = if (stickyApi != null) listOfNotNull(stickyApi, rawUrl) else listOfNotNull(rawUrl, apiUrl)
         for (target in targets) {
             val isRaw = !target.startsWith("$API")
-            val r = fetch(target, charset, !isRaw, if (isRaw) RAW_TIMEOUT_MS else RAW_TIMEOUT_MS * 5)
-            if (r != null) return r
-            if (isRaw) rawDownUntil = System.currentTimeMillis() + RAW_COOLDOWN_MS
+            val p = fetchProbe(target, charset, !isRaw, rawTimeout(isRaw, target))
+            if (p.body != null) return p.body
+            // 只有网络层失败才判 raw 死（-1 连接/超时、5xx 网关）；404/403 是文件级问题，
+            // 换通道同样没有，连坐整条 raw 会让冷却期内所有文件都白等一个满超时
+            if (isRaw && (p.code == -1 || p.code >= 500)) {
+                rawDownUntil = System.currentTimeMillis() + RAW_COOLDOWN_MS
+            }
         }
         return null
     }
 
-    private fun fetch(url: String, charset: String, withAuth: Boolean, timeout: Int = RAW_TIMEOUT_MS * 5): String? {
+    private fun fetchProbe(url: String, charset: String, withAuth: Boolean, timeout: Int): Http.Probe {
         val headers = buildMap {
             if (withAuth) {
                 token?.let { put("Authorization", "Bearer $it") }
                 put("Accept", "application/vnd.github.raw")
             }
         }
-        return Http.getText(
+        return Http.probe(
             url = url,
             charset = Http.charset(charset),
             timeoutMs = timeout,
             ua = "skapp-android",
             headers = headers,
         )
+    }
+
+    /** kline.json 比 technical/finance 大一个量级，3s 常常只够建连，单独给 10s */
+    private fun rawTimeout(isRaw: Boolean, url: String): Int = when {
+        !isRaw -> RAW_TIMEOUT_MS * 5
+        url.endsWith("/kline.json") -> RAW_KLINE_TIMEOUT_MS
+        else -> RAW_TIMEOUT_MS
     }
 
     private fun getJson(url: String): JSONObject? =
