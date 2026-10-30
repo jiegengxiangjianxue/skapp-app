@@ -1,8 +1,13 @@
 package com.skapp.app.data
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 
@@ -219,10 +224,9 @@ object LiveMarket {
             // f15/f18/f24/f25 一并取：RPS（60日/年初至今涨幅）与封板率（最高价 vs 涨停价）
             // 都要它们，放在同一次批量里不增加请求数。
             "&fields=f2,f3,f5,f6,f7,f8,f9,f10,f12,f14,f15,f16,f17,f18,f20,f22,f24,f25,f62"
-        // 单页失败不只换 host：限流是成片断连（实测第 28 页起成组 RemoteDisconnected），
-        // 只换 host 一次仍会空页，fetchAll 随即 break 把快照截在一半。这里按 host 轮换 ×2 轮重试。
-        for (attempt in 0 until HOSTS.size * 2) {
-            if (attempt > 0) Thread.sleep(400L * attempt)
+        // 单页失败即返回空，重试交给 fetchAll 的补拉轮：在这里 sleep 退避会在并发下
+        // 把 8 条 IO 线程全按在睡眠里（实测串行节流 63.8s/37 页，并发 8 只要 2.75s/42 页）。
+        for (attempt in HOSTS.indices) {
             val idx = (hostIdx + attempt) % HOSTS.size
             val rows = parsePage(httpGet(HOSTS[idx] + query))
             if (rows.isNotEmpty()) {
@@ -266,19 +270,26 @@ object LiveMarket {
         }
     }
 
-    private fun fetchAll(): List<Row> {
+    private suspend fun fetchAll(): List<Row> = coroutineScope {
+        // 并发 8 是实测最优点（2026-10-30）：42/60 页、2.75s；串行无节流第 28 页就断连（2700 只），
+        // 串行+退避重试 37 页/63.8s，并发 16 反而因限流加剧掉到 36 页。
+        val sem = Semaphore(8)
+        val first = (1..MAX_PAGES)
+            .map { p -> async(Dispatchers.IO) { sem.withPermit { fetchPage(p) } } }
+            .awaitAll()
+
+        // 第一轮空的页补一次，并发降到 4：限流是成片断连，二次冲击用同样的并发只会继续被拒。
+        val sem2 = Semaphore(4)
+        val retried = first.indices
+            .filter { first[it].isEmpty() }
+            .map { i -> async(Dispatchers.IO) { sem2.withPermit { fetchPage(i + 1) } } }
+            .awaitAll()
+
         val out = LinkedHashMap<String, Row>()
-        var page = 1
-        while (page <= MAX_PAGES) {
-            val batch = fetchPage(page)
-            if (batch.isEmpty()) break
-            batch.forEach { out.putIfAbsent(it.code, it) }
-            if (batch.size < PAGE_SIZE) break
-            page++
-        }
-        if (out.isEmpty()) return emptyList()
+        (first + retried).forEach { batch -> batch.forEach { out.putIfAbsent(it.code, it) } }
+        if (out.isEmpty()) return@coroutineScope emptyList()
         // 北交所/港股通等混在里面，按 6 位纯数字代码归一（保留原始码，纯位数判断由 mainBoard 做）。
-        return out.values.filter { it.code.length == 6 && it.code.all(Char::isDigit) }
+        out.values.filter { it.code.length == 6 && it.code.all(Char::isDigit) }
     }
 
     private fun JSONObject.num(key: String): Double? {
