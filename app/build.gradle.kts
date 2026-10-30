@@ -12,8 +12,8 @@ android {
         applicationId = "com.skapp.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 33
-        versionName = "2.2.8"
+        versionCode = 34
+        versionName = "2.2.9"
     }
 
     // ── 固定签名 ──────────────────────────────────────────────────────

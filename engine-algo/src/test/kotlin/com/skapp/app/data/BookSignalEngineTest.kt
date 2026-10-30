@@ -3,6 +3,7 @@ package com.skapp.app.data
 import kotlin.math.abs
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -183,7 +184,9 @@ class BookSignalEngineTest {
 
     @Test
     fun `书籍票只投正票不投负票`() {
-        val spec = EngineSpecLoader.loadBundled().spec
+        // 权重只认规格（2026-10-30 起不再硬编码 0.6）：先登记再验行为
+        val base = EngineSpecLoader.loadBundled().spec
+        val spec = base.copy(weights = base.weights + ("book" to 0.6))
         val strong = BookSignalEngine.Result(
             score = 80.0, expected5d = 1.8, tags = listOf("limit:first_board"),
             layers = emptyMap(), basis = "limit:first_board", basisT = 1.96, basisN = 366,
@@ -194,12 +197,42 @@ class BookSignalEngineTest {
         assertTrue(votes.all { it.vote == 1 }, "三层只能投 +1：$votes")
         assertTrue(votes.all { it.indicator == "book" }, "票名应为 book")
 
+        assertTrue(
+            EngineChain.externalVotes(null, null, strong, base).isEmpty(),
+            "规格未登记 book 权重时必须停用（否则权重不可云端控制）",
+        )
+
         val weak = strong.copy(score = 50.0)
         assertTrue(
             EngineChain.externalVotes(null, null, weak, spec).isEmpty(),
             "弱分不产票（0 票会进权重分母却不出分子，等于稀释其它票）",
         )
         assertTrue(EngineChain.externalVotes(null, null, null, spec).isEmpty(), "无证据不产票")
+    }
+
+    @Test
+    fun `规格未登记权重时书籍层不抬分且不静默`() {
+        val base = EngineSpecLoader.loadBundled().spec
+        assertFalse(base.weights.containsKey("book"), "自带规格不应硬带 book 权重，否则本条失去意义")
+        val row = LiveMarket.Row(
+            code = "600000", name = null, price = null, pctChg = 1.2, volumeLots = 5.0e4,
+            amount = 5.0e7, amplitude = 2.0, turnoverRate = 1.0, pe = null, volRatio = 1.1,
+            mv = null, mainNet = null, ts = 0L,
+        )
+        val r = EngineChain.analyze(
+            EngineChain.Inputs(bars = bars(up = true), row = row, nowMs = 1_760_000_000_000L),
+        )
+        // 不要求一定有证据（随机上涨样本可能三层全不过），但只要有证据就必须留降级痕迹
+        if (r.book?.hasEvidence == true) {
+            assertTrue(
+                r.degraded.any { it.contains("规格未登记") },
+                "停用书籍层必须写进 degraded，否则用户看到的分数变化无声无息：${r.degraded}",
+            )
+        }
+        assertTrue(
+            r.votes.none { it.indicator == "book" },
+            "缺权重时不得有 book 票进中枢：${r.votes}",
+        )
     }
 
     @Test

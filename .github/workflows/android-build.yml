@@ -678,14 +678,16 @@ jobs:
             "" \
             "Install: sign in to GitHub first — this repo is **private**, anonymous asset URLs return 404. Then tap **$NAME** below to download and install. versionCode increases with every release, so it installs straight over the previous version.")"
           if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "release $TAG exists -> refresh asset"
-            gh release upload "$TAG" "/tmp/$NAME" --clobber
-          else
-            gh release create "$TAG" "/tmp/$NAME" \
-              --title "skapp ${{ steps.ver.outputs.version }} (vc${{ steps.ver.outputs.code }})" \
-              --notes "$NOTES" \
-              --latest
+            echo "::error::release $TAG 已存在，本次发布中止。" >&2
+            echo "原因：versionCode/versionName 未 bump 时重发会覆盖既有 tag 的同名资产，" >&2
+            echo "旧字节被换掉而版本号不变，装机端与事后复盘都无法区分两套逻辑（2026-10-30 已实际踩过）。" >&2
+            echo "修法：改 app/build.gradle.kts 的 versionCode(+1) 与 versionName 后重新跑本 workflow。" >&2
+            exit 1
           fi
+          gh release create "$TAG" "/tmp/$NAME" \
+            --title "skapp ${{ steps.ver.outputs.version }} (vc${{ steps.ver.outputs.code }})" \
+            --notes "$NOTES" \
+            --latest
           gh release view "$TAG" --json tagName,assets \
             --jq '.tagName, (.assets[] | "\(.name)  \(.size) bytes  \(.url)")'
           echo "APK size: $SIZE bytes"

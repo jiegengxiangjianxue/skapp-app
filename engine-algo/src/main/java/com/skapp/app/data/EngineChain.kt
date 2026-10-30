@@ -24,13 +24,17 @@ object EngineChain {
     private const val W_TAPE = 0.05
 
     /**
-     * 三层书籍信号（反转/涨停/订单流）在中枢内的权重。
+     * 三层书籍信号（反转/涨停/订单流）在中枢内的权重来源：**只从云端规格取**。
      *
-     * 取 0.6（规格里指标权重区间 0.6~1.0 的下界）：它是衍生层，信息不如原始指标直接，
-     * 首次接入不应压过任何一个主指标。不进 [blend]：blend 的三路是「不同数据源」，
-     * 而 book 与中枢同源于日 K，混进去会把日 K 信息算两遍。
+     * 2026-10-30 改：曾经硬编码 0.6。问题不在这个数值好不好，而在它**不受云端控制**：
+     * 调权重得发版，回滚也得发版，等于把「书籍票抬多少分」交给了 APK。现在的口径：
+     *   - 规格 `weights` 里有 `book` 键 → 用它（云端改权重，端上下次拉 spec 即生效）；
+     *   - 没有该键 → **0**，即不计票、也不进权重分母（不是靠 0 权重稀释，见 [externalVotes]）。
+     *
+     * 注意不能用「把键省掉、让 [CanonicalEngine] 走默认值」的方式实现 0：
+     * `CanonicalEngine.score` 对缺失键 fallback 到 **1.0**，省键等于把权重放大到 1.0。
      */
-    private const val W_BOOK = 0.6
+    private fun bookWeightOf(spec: EngineSpec): Double = spec.weights["book"] ?: 0.0
 
     /** 资金流/盘口低于此分视为「弱」，两者同时弱才置 riskFlag（一票否决）。
      *  规格没有给 flow/tape 单独的弱分界，取 aggregation.signalBearish（看空阈值）作为唯一可用口径。 */
@@ -121,9 +125,14 @@ object EngineChain {
         else if (!book.hasEvidence) degraded += "书籍信号：三层无过检标签"
 
         // ── 外部票注入后重算中枢 ──
+        // 书籍层权重显式写入（含 0.0）：省键会让 CanonicalEngine fallback 到 1.0。
+        val bookWeight = bookWeightOf(spec)
         val externals = externalVotes(flow, tape, book, spec)
         val weights = HashMap(spec.weights)
-        weights["book"] = W_BOOK
+        weights["book"] = bookWeight
+        if (book?.hasEvidence == true && bookWeight <= 0.0) {
+            degraded += "书籍层：规格未登记 book 权重，已停用不计票"
+        }
         val canonical = runCatching {
             CanonicalEngine.score(code, inputs.bars, spec, weights = weights, externalVotes = externals)
         }.getOrNull()
@@ -248,10 +257,12 @@ object EngineChain {
         // -1 不可投：三层判据（折底反转/涨停动能/卖压反转）实测无一条显著为负，
         //   拿「没证据」当「看空」会让每只票都被压分。
         // 0 不可投：0 票会进 den 权重却不贡献分子，等于稀释其它票（与 missing_vote_policy=drop 同理）。
-        // 准入不看 deviceCanVote：device_engines 里没有 "book"（也没有 flow/tape），
-        //   照抄会让这票成为永不生效的死代码。另见 docs/ISSUES.md 的「externalVotes 恒空」条目。
+        // 准入：`device_engines` 里没有 "book"（也没有 flow/tape），照抄 deviceCanVote 会成死代码
+        //   （见 docs/ISSUES.md 的「externalVotes 恒空」条目）。准入口径改为「规格登记了权重」：
+        //   `weights.book` 存在且 > 0 才计票，缺键即停用 —— 权重可云端调、也可云端一行关掉。
         val bScore = book?.score
-        if (bScore != null && bScore >= agg.signalBullish) {
+        val bWeight = bookWeightOf(spec)
+        if (bWeight > 0.0 && bScore != null && bScore >= agg.signalBullish) {
             val strength = ((bScore - agg.scoreCenter) / agg.scoreScale).coerceIn(0.0, 1.0)
             out += CanonicalEngine.Vote("book", 1, strength, "三层信号 ${"%.1f".format(bScore)}")
         }
@@ -298,26 +309,34 @@ object EngineChain {
         val spec = EngineSpecLoader.loadBundled().spec
         expect("缺分不产票", externalVotes(null, null, null, spec).isEmpty(), "缺分必须 drop")
 
-        // 书籍信号：无证据不产票；看空证据永不产 -1 票（三层只出多头证据）
+        // 书籍权重：只认规格。缺键必须停用 —— 曾经硬编码 0.6，等于这个权重不受云端控制。
+        val strongBook = BookSignalEngine.Result(
+            score = 80.0, expected5d = 1.8, tags = listOf("limit:first_board"),
+            layers = emptyMap(), basis = null, basisT = null, basisN = null,
+            degraded = emptyList(), reason = "test",
+        )
         expect(
             "书籍票不产 0 也不产 -1",
-            externalVotes(null, null, BookSignalEngine.Result(
-                score = 80.0, expected5d = 1.8, tags = listOf("limit:first_board"),
-                layers = emptyMap(), basis = null, basisT = null, basisN = null,
-                degraded = emptyList(), reason = "test",
-            ), spec).all { it.vote == 1 },
+            externalVotes(null, null, strongBook, spec.copy(weights = spec.weights + ("book" to 0.6)))
+                .all { it.vote == 1 },
             "书籍票只能是 +1",
         )
         expect(
             "书籍弱分不产票",
-            externalVotes(null, null, BookSignalEngine.Result(
-                score = 50.0, expected5d = 0.0, tags = emptyList(),
-                layers = emptyMap(), basis = null, basisT = null, basisN = null,
-                degraded = emptyList(), reason = "test",
-            ), spec).isEmpty(),
+            externalVotes(null, null, strongBook.copy(score = 50.0), spec.copy(weights = spec.weights + ("book" to 0.6))).isEmpty(),
             "低于看多阈值不得产票（0 票会稀释其它票）",
         )
-        expect("书籍权重不越界", W_BOOK <= 1.0 && W_BOOK > 0.0, "W_BOOK 必须落在 (0,1]")
+        expect(
+            "书籍权重缺键即停用",
+            externalVotes(null, null, strongBook, spec.copy(weights = spec.weights - "book")).isEmpty(),
+            "规格未登记 book 权重时不得计票（硬编码 0.6 已移除）",
+        )
+        expect(
+            "书籍权重登记即生效",
+            externalVotes(null, null, strongBook, spec.copy(weights = spec.weights + ("book" to 0.6)))
+                .singleOrNull()?.vote == 1,
+            "规格登记 book 权重后应产 +1 票",
+        )
 
         val agg = spec.aggregation
         expect("闸门单调", RegimeGate.applyGate(80.0, 0.5)?.let { it <= 80.0 } == true, "空头闸门不得放大分数")
