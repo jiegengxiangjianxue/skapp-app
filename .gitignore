@@ -16,7 +16,8 @@ __pycache__/
 .pytest_cache/
 
 # 本地运行产生的数据副本（行情快照/引擎产物），由 CI 在 job 内生成后同步到 skapp-data，不入本仓
-data/
+# 必须锚定根目录：不加前导斜杠会连带忽略 com/skapp/app/data/ 下所有 Kotlin 源文件
+/data/
 
 # Kotlin 增量编译会话目录（Gradle 8.x + Kotlin 2.x 生成，不入库）
 .kotlin/
