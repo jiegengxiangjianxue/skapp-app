@@ -134,9 +134,10 @@ class LocalPicksTest {
     fun `会话归属按交易时段划分`() {
         assertEquals(LocalPicks.Session.PREMARKET, LocalPicks.sessionFor(MarketHours.Phase.PRE_OPEN))
         assertEquals(LocalPicks.Session.PREMARKET, LocalPicks.sessionFor(MarketHours.Phase.AUCTION_OPEN))
-        assertEquals(LocalPicks.Session.MIDDAY, LocalPicks.sessionFor(MarketHours.Phase.MORNING))
-        assertEquals(LocalPicks.Session.MIDDAY, LocalPicks.sessionFor(MarketHours.Phase.LUNCH_BREAK))
+        assertEquals(LocalPicks.Session.MORNING, LocalPicks.sessionFor(MarketHours.Phase.MORNING))
+        assertEquals(LocalPicks.Session.MORNING, LocalPicks.sessionFor(MarketHours.Phase.LUNCH_BREAK))
         assertEquals(LocalPicks.Session.MIDDAY, LocalPicks.sessionFor(MarketHours.Phase.AFTERNOON))
+        assertEquals(LocalPicks.Session.MIDDAY, LocalPicks.sessionFor(MarketHours.Phase.CLOSING))
         // 收盘后/休市不生成新卡（存档仍可看）
         assertEquals(null, LocalPicks.sessionFor(MarketHours.Phase.AFTER_HOURS))
         assertEquals(null, LocalPicks.sessionFor(MarketHours.Phase.CLOSED_DAY))
