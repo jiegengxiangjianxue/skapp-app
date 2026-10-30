@@ -209,9 +209,18 @@ internal class LocalPicksHolder(
                 totalSnapshot = snapshotSize,
                 poolHits = poolHits,
             )
+            // 名单前 5 只算多日趋势供推股卡趋势段：逐票走 DataCache 拉日 K；
+            // 拉不到或不足 60 根就不给该票方向（不编、不拿同名单其他票的结果顶替）
+            val trends = artifact.picks.take(5).mapNotNull { p ->
+                val bars = runCatching {
+                    com.skapp.app.data.DataCache.kline(p.code, "qfq", 250)
+                }.getOrDefault(emptyList())
+                if (bars.size < 60) null else p.code to com.skapp.app.data.TrendForecast.compute(bars)
+            }.toMap()
             _state.value = _state.value.copy(
                 // 本地深算完成即回填首屏推股卡（TodayPicks 由本地产物映射，不经云端）
                 picks = com.skapp.app.data.LocalSnapshot.todayPicks(artifact),
+                picksTrend = trends,
                 localPremarketPicks = if (session == com.skapp.app.data.LocalPicks.Session.PREMARKET)
                     artifact else _state.value.localPremarketPicks,
                 localMiddayPicks = if (session == com.skapp.app.data.LocalPicks.Session.MIDDAY)

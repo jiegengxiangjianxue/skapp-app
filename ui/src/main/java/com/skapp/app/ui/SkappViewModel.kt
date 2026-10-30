@@ -181,6 +181,14 @@ data class UiState(
     val recoup: com.skapp.app.data.RecoupCalc.Result? = null,
     /** 退出纪律（端侧引擎 ExitPlan）：清仓线/止盈线/今日形态/动作，随 K 线一起算 */
     val exitPlan: com.skapp.app.data.ExitPlan.Result? = null,
+    /** 多日趋势推演（端侧 TrendForecast）：方向/置信度/ATR 区间；同一批日 K 顺手算，零额外请求 */
+    val trendForecast: com.skapp.app.data.TrendForecast.Result? = null,
+    /** 分钟级实时 K（MinuteKline）。空列表时必须看 minuteBarsNote，别当成「这只票没有分钟数据」 */
+    val minuteBars: List<KBar> = emptyList(),
+    val minuteBarsPeriod: String = "5 分钟",
+    val minuteBarsNote: String? = null,
+    /** 推股名单的多日趋势（按代码索引）：只算名单前几只，取不到的票就没条目，界面要明说 */
+    val picksTrend: Map<String, com.skapp.app.data.TrendForecast.Result> = emptyMap(),
     val askQuestion: String = "",
     val askAnswer: String? = null,
     val askLoading: Boolean = false,

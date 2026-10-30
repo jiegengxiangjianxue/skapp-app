@@ -746,11 +746,23 @@ internal class MarketStateHolder(shared: SharedVm) : StateHolder(shared) {
                             val pc = q.pctChg
                             if (p != null && pc != null && pc > -100.0) p / (1.0 + pc / 100.0) else null
                         }
+                        // 分钟 K 是独立源（新浪/腾讯），与上面分时曲线不是一路：失败时明确说是「接口拿不到」，
+                        // 不能让人以为是这只票没有分钟数据
+                        val mb = gap("分钟K", { emptyList() }) {
+                            com.skapp.app.data.MinuteKline.fetch(
+                                code, com.skapp.app.data.MinuteKline.Period.M5, 240,
+                            )
+                        }
                         _state.value = _state.value.copy(
                             minuteTrend = rich?.points ?: emptyList(),
                             minuteDate = rich?.date,
                             minutePreClose = rich?.preClose ?: fallbackPre,
                             minuteSource = rich?.source?.takeIf { it != "none" },
+                            minuteBars = mb,
+                            minuteBarsPeriod = "5 分钟",
+                            minuteBarsNote = if (mb.isEmpty()) {
+                                "分钟 K 未取到：新浪/腾讯分钟接口不可达或被限流（不是「该股无分钟数据」）；上方分时曲线另有源"
+                            } else null,
                         )
                     }
                     val historyD = async {
@@ -775,6 +787,10 @@ internal class MarketStateHolder(shared: SharedVm) : StateHolder(shared) {
                             // 退出纪律：同一批 K 线顺手算，零额外请求。缺历史时引擎自己返回「数据不足」
                             exitPlan = gap("退出纪律", { null }) {
                                 withContext(Dispatchers.Default) { com.skapp.app.data.ExitPlan.compute(bars) }
+                            },
+                            // 多日趋势：与关键位同源（同一批日 K），不另拉网络；不足 60 根时引擎自述原因
+                            trendForecast = gap("多日趋势", { null }) {
+                                withContext(Dispatchers.Default) { com.skapp.app.data.TrendForecast.compute(bars) }
                             },
                         )
                         val engine = requestResult {

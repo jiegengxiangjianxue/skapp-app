@@ -140,7 +140,7 @@ fun PicksListScreen(vm: SkappViewModel, state: UiState, mode: PickListSession) {
                 )
             }
             items(picks, key = { it.code }) { pick ->
-                PickRow(pick, poolHits[pick.code].orEmpty(), vm)
+                PickRow(pick, poolHits[pick.code].orEmpty(), vm, state.picksTrend[pick.code])
             }
         }
     }
@@ -181,7 +181,12 @@ private fun EmptyPickList(artifact: StructuredPickArtifact, mode: PickListSessio
 
 /** 一行一只票：名称/代码 → 分数与共振 → 现价涨跌 → 理由。点开看详情。 */
 @Composable
-private fun PickRow(pick: PickSignal, pools: List<String>, vm: SkappViewModel) {
+private fun PickRow(
+    pick: PickSignal,
+    pools: List<String>,
+    vm: SkappViewModel,
+    trend: com.skapp.app.data.TrendForecast.Result? = null,
+) {
     Column(
         Modifier
             .fillMaxWidth()
@@ -189,6 +194,7 @@ private fun PickRow(pick: PickSignal, pools: List<String>, vm: SkappViewModel) {
             .padding(vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(3.dp),
     ) {
+        TrendLine(trend)
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text(
                 pick.name?.takeIf { it.isNotBlank() } ?: pick.code,
@@ -244,4 +250,38 @@ private fun PickRow(pick: PickSignal, pools: List<String>, vm: SkappViewModel) {
         }
         HorizontalDivider(color = SkColors.textSecondary.copy(alpha = 0.12f))
     }
+}
+
+/**
+ * 推股卡的趋势行。
+ *
+ * 空态要区分「没算出来」与「样本不足」：前者是拉取失败（可重试），后者是这只票日 K 不够 60 根。
+ * 写成统一的「暂无趋势」会让人以为是该股没有趋势，用户就不知道该不该再刷一次。
+ */
+@Composable
+private fun TrendLine(trend: com.skapp.app.data.TrendForecast.Result?) {
+    if (trend == null) {
+        Text(
+            "多日趋势：未算出（日 K 拉取失败或不足 60 根，可点详情重试）",
+            style = MaterialTheme.typography.bodySmall,
+            color = SkColors.warn,
+        )
+        return
+    }
+    if (trend.horizons.isEmpty()) {
+        Text(
+            "多日趋势：${trend.notes.firstOrNull() ?: "样本不足"}",
+            style = MaterialTheme.typography.bodySmall,
+            color = SkColors.warn,
+        )
+        return
+    }
+    Text(
+        "多日趋势：" + trend.horizons.joinToString(" · ") { h ->
+            "${h.days}日${h.direction} ${(h.confidence * 100).toInt()}% 区间" +
+                String.format(java.util.Locale.US, "%+.1f~%+.1f%%", h.lowPct, h.highPct)
+        },
+        style = MaterialTheme.typography.bodySmall,
+        color = SkColors.textSecondary,
+    )
 }

@@ -52,6 +52,8 @@ internal fun ColumnScope.DetailTailSections(
 ) {
     // 详情为空时整段不出：这里 return 掉比让每个 SectionCard 各自判空更清楚
     val dd = d ?: return
+        // ── 技术指标与多日趋势（端侧 TrendForecast：均线/MACD/MFI/ATR + 多日推演）──
+        TrendSection(state)
         // ── 十关键位 + 回本率（端侧引擎，随 K 线本地算，不依赖云端）──
         val kl = state.keyLevels
         val rc = state.recoup
@@ -343,6 +345,112 @@ internal fun ColumnScope.DetailTailSections(
             Text("云端 bundle：qwerzxcva/stocks-ai-view + 镜像；AI 总结请从唯一入口进入")
         }
 }
+
+/**
+ * 技术指标与多日趋势段。
+ *
+ * 两个空态必须分开说：指标算不出来是因为「日 K 没到手/不足 60 根」，分钟 K 空白是因为
+ * 「分钟接口不可达/限流」。混成一句「暂无数据」会把限流说成没数据，用户就无从重试。
+ */
+@Composable
+private fun TrendSection(state: UiState) {
+    val tf = state.trendForecast
+    SectionCard("技术指标与多日趋势（本机计算）") {
+        Column {
+            if (tf == null) {
+                Text(
+                    "日 K 未到手或不足 60 根，均线/MACD/MFI 与多日趋势算不出来；不是「该股无数据」，可稍后重试或换复权口径。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = SkColors.warn,
+                )
+            } else {
+                Row(
+                    Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    listOf("MA5" to tf.ma5, "MA10" to tf.ma10, "MA20" to tf.ma20).forEach { (label, v) ->
+                        Column(Modifier.weight(1f)) {
+                            Text(label, style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
+                            Text(
+                                num(v) ?: "不可得",
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.Medium,
+                            )
+                        }
+                    }
+                    Column(Modifier.weight(1f)) {
+                        Text("ATR%", style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
+                        Text(
+                            tf.atrPct?.let { "%.2f".format(it) } ?: "不可得",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.Medium,
+                        )
+                    }
+                }
+                tf.macd?.let { m ->
+                    Text(
+                        "MACD(12,26,9)：DIF ${num(m.dif)}" + " · DEA ${num(m.dea)}" +
+                            " · 柱 ${num(m.hist)}（${if (m.hist > 0) "多头" else if (m.hist < 0) "空头" else "零轴"}）",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+                Text(
+                    "MFI(14) ${tf.mfi?.let { "%.2f".format(it) } ?: "不可得"}" +
+                        " · 20 日斜率 ${tf.slope20Pct?.let { "%+.2f%%".format(it) } ?: "不可得"}",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Spacer(Modifier.height(6.dp))
+                if (tf.horizons.isEmpty()) {
+                    Text(
+                        tf.notes.firstOrNull() ?: "样本不足，不给多日方向",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = SkColors.warn,
+                    )
+                } else {
+                    tf.horizons.forEach { h ->
+                        Text(
+                            "${h.days} 日：${h.direction} · 置信 ${(h.confidence * 100).toInt()}%" +
+                                " · 区间 " + String.format(java.util.Locale.US, "%+.1f%% ~ %+.1f%%", h.lowPct, h.highPct),
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                    tf.horizons.firstOrNull()?.basis?.takeIf { it.isNotEmpty() }?.let { basis ->
+                        Text(
+                            "依据：${basis.joinToString("；")}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = SkColors.textSecondary,
+                        )
+                    }
+                }
+                tf.notes.forEach { n ->
+                    Text(n, style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
+                }
+            }
+            Spacer(Modifier.height(6.dp))
+            if (state.minuteBars.isEmpty()) {
+                Text(
+                    state.minuteBarsNote ?: "分钟 K 暂无数据",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = SkColors.warn,
+                )
+            } else {
+                val last = state.minuteBars.last()
+                Text(
+                    "分钟 K（${state.minuteBarsPeriod}）：最近 ${state.minuteBars.size} 根，" +
+                        "最新 ${last.date} 收 ${num(last.close)}（高 ${num(last.high)} / 低 ${num(last.low)}）",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Text(
+                    "末根多为未完成 bar，拿它做量能与指标统计要剔除",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = SkColors.textSecondary,
+                )
+            }
+        }
+    }
+}
+
+private fun num(v: Double?): String? = v?.let { String.format(java.util.Locale.US, "%.2f", it) }
 
 @Composable
 internal fun EngineRow(e: EngineScore) {
