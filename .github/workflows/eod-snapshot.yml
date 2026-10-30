@@ -22,15 +22,20 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install pyyaml fastapi uvicorn pydantic
-      - name: Fetch engine picks from skapp-data
-        # 本仓没有 picks 生产者（skapp_pkg/engine/picks.py 只读不产），干净 checkout 里
-        # data/engine/picks_latest.json 必然不存在 -> 快照会永远回落自选股。
-        # 取上一版引擎产物作输入；产物日期由 eod_sync 写进快照的 engine_asof/stale。
+      - name: Fetch engine picks from stocks-ai-view
+        # 生产者：qwerzxcva/stocks-ai-view 的 engine-chain.yml → scripts/build_picks_latest.py，
+        # 每天 15:30 CST 起跑产 data/engine/picks_latest.json（source / asof / 带 sh、sz、bj
+        # 前缀的 items），本仓只做消费；生产者的 asof 会如实写进快照的 engine_asof/stale。
+        # 新产物还没落地时回落 skapp-data 旧副本并告警，不静默、也不冒充当日名单。
         run: |
           mkdir -p data/engine
           curl -fsSL -A skapp-eod/1.0 \
-            "https://raw.githubusercontent.com/jiegengxiangjianxue/skapp-data/main/data/engine/picks_latest.json" \
-            -o data/engine/picks_latest.json
+            "https://raw.githubusercontent.com/qwerzxcva/stocks-ai-view/main/data/engine/picks_latest.json" \
+            -o data/engine/picks_latest.json \
+            || { echo "::warning::stocks-ai-view 未产出 picks_latest（engine-chain 尚未跑完？），回落 skapp-data 旧副本"; \
+                 curl -fsSL -A skapp-eod/1.0 \
+                   "https://raw.githubusercontent.com/jiegengxiangjianxue/skapp-data/main/data/engine/picks_latest.json" \
+                   -o data/engine/picks_latest.json; }
           python3 -c "import json;d=json.load(open('data/engine/picks_latest.json',encoding='utf-8'));print('engine picks asof',d.get('asof'),'| items',len(d.get('items') or []))"
       - name: Generate EOD snapshot
         run: python -m skapp_pkg.pipeline.eod_sync

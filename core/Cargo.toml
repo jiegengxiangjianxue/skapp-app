@@ -1,0 +1,16 @@
+[package]
+name = "skapp-core"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "skapp_core"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+pyo3 = { version = "0.22", features = ["extension-module"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+opt-level = 3

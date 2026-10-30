@@ -82,8 +82,9 @@ def _build_picks(engine: dict | None, quotes: list[dict], quote_map: dict[str, d
     if engine is not None:
         raw = [p for p in (engine.get("items") or []) if isinstance(p, dict) and p.get("symbol")]
         picks = {"source": engine.get("source") or "engine"}
-        # 引擎产物来自 skapp-data 的上一版（本仓没有生产者），必须把产物日期带进快照，
-        # 并标注 stale，避免把 10 天前的池子当今日新推
+        # 引擎产物由 stocks-ai-view 的 engine-chain 每天产（scripts/build_picks_latest.py），
+        # asof 是条目依据日期（可能早于文件生成日）；必须带进快照并标注 stale，
+        # 避免把几天前的池子当今日新推
         asof = engine.get("asof") or engine.get("date")
         if asof:
             picks["engine_asof"] = str(asof)

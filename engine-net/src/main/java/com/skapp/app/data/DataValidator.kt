@@ -1,6 +1,5 @@
 package com.skapp.app.data
 
-import android.util.Log
 import org.json.JSONObject
 
 /**
