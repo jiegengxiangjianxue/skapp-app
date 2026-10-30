@@ -12,8 +12,8 @@ android {
         applicationId = "com.skapp.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 35
-        versionName = "2.3.0"
+        versionCode = 36
+        versionName = "2.4.0"
     }
 
     // ── 固定签名 ──────────────────────────────────────────────────────
@@ -33,14 +33,12 @@ android {
     buildTypes {
         debug {
             signingConfig = signingConfigs.getByName("stable")
+            isMinifyEnabled = false
         }
         release {
             signingConfig = signingConfigs.getByName("stable")
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-        }
-        debug {
-            isMinifyEnabled = false
         }
     }
 
