@@ -168,7 +168,9 @@ object LiveMarket {
      * clist 的备用域名。实测 push2 会被风控直接返回空，而 push2delay 同一时刻有数据；
      * 反过来 push2delay 连续请求也会被限流。两个都不是稳定源，所以两个都试。
      */
-    private val HOSTS = arrayOf("https://push2.eastmoney.com", "https://push2delay.eastmoney.com")
+    // 延迟域名放首位：实测 push2 被风控/不可达时单页要 ~12–20s 才判失败，而 push2delay 0.15s
+    // 就能回同一份实时数据。主源在前会让推股首屏白等一个超时（fetchAll 串行 27 页）。
+    private val HOSTS = arrayOf("https://push2delay.eastmoney.com", "https://push2.eastmoney.com")
 
     /** 最近一次拉成功的域名下标：限流按域名算，粘住可用的那个能省一半请求。 */
     @Volatile private var hostIdx = 0
@@ -282,7 +284,7 @@ object LiveMarket {
     private fun httpGet(url: String): String? = Http.getText(
         url = url,
         charset = Charsets.UTF_8,
-        timeoutMs = 20_000,
+        timeoutMs = 8_000,
         referer = "https://wap.eastmoney.com/",
         accept = "application/json",
     )
