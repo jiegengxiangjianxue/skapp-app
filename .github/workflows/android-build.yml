@@ -21,6 +21,13 @@ name: android-build
 # 每片独立：红的那片就是问题所在，其余片照常给结论，不必重跑整条链。
 #
 # 产物仅 arm64-v8a（用户要求：不要 x86）。
+#
+# ⚠️ runner 标签一律用 ubuntu-latest，不要写死 ubuntu-24.04：
+#   2026-10-30 排查发现，之前 9 个 job 全写 ubuntu-24.04，结果每个 job 都是
+#   「0 个 step、3 秒 failure」(runner_name 为空 = 没任何 runner 接下这个 label)；
+#   同期用 ubuntu-latest 的 android-apk / py-tests / rust-core / eod-snapshot
+#   全部能正常成功。也就是说整套门禁长期空转，Release 在 v2.2.8 之后一直没再发出过。
+#   判断依据：`actions/runs/<id>/jobs` 返回 steps=[] 且 runner_name 为 null。
 # 出包位置：GitHub Release（tag = v<versionName>）。
 # 注意：本仓是私有仓，Release 资产下载同样需要登录 —— 匿名访问
 #   .../releases/download/<tag>/<asset> 返回 404，手机需先登录 GitHub 才能下载安装。
@@ -53,7 +60,7 @@ permissions:
 jobs:
   guards:
     # ── 1. 静态守卫：不编译、不装 SDK，秒级给出结构结论 ─────────────────
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
@@ -169,7 +176,7 @@ jobs:
 
   engine-contract:
     # ── 2. 云端仓契约：Python 侧全部检查 ───────────────────────────────
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - name: Checkout engine (stocks-ai-view)
@@ -238,7 +245,7 @@ jobs:
 
   analysis-breadth:
     # ── 3. 市场宽度累加器（dry-run，不联网）────────────────────────────
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - name: Checkout engine (stocks-ai-view)
@@ -263,7 +270,7 @@ jobs:
 
   analysis-artifacts:
     # ── 4. 分析产物 schema ────────────────────────────────────────────
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - name: Checkout engine (stocks-ai-view)
@@ -314,7 +321,7 @@ jobs:
 
   engine-tests:
     # ── 5. JVM 单测：按引擎/链路分 15 片，互不影响 ──────────────────────
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 25
     strategy:
       fail-fast: false
@@ -359,7 +366,7 @@ jobs:
 
   compile:
     # ── 6. Kotlin 编译（类型检查）+ org.json 方法面守卫 ─────────────────
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -445,7 +452,7 @@ jobs:
   # setUpApplicationState 就抛 UnsatisfiedLinkError（与测试代码无关）；GitHub 的 runner 是
   # x86_64，原生库齐全，所以这条验证放在 CI 而不是本地。
   ui-render-robolectric:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -541,7 +548,7 @@ jobs:
     # assembleDebug 67s + Post Setup Gradle 29s + 其余 ~21s，而它排在 compile(184s)
     # 之后，把总墙钟推到 325s。撞车点不在 job 内部，在「打包等编译」这条串行边上。
     # 发布是不可逆副作用（写 Release），也已经从本 job 拆出去独立成 release。
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -634,7 +641,7 @@ jobs:
       contents: write   # 创建 / 更新 GitHub Release 需要
     needs: [guards, engine-contract, analysis-breadth, analysis-artifacts, engine-tests, compile, ui-render-robolectric, package]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
