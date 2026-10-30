@@ -43,9 +43,11 @@ class CloudArtifactIntegrationTest {
             spec.deviceEngines.contains("book"),
             "book 必须在 device_engines 里，否则书籍票无准入依据（历史坑：externalVotes 恒空）",
         )
+        // book 权重必须显式登记（省键会让 CanonicalEngine fallback 到 1.0，等于误开）；
+        // 值允许 0.0：2026-10-30 复盘后 book 无校准依据且按不变量反算已越线，置 0 停用投票、保留展示。
         assertTrue(
-            (spec.weights["book"] ?: 0.0) > 0.0,
-            "规格必须登记 book 权重：未登记时端上按缺键停用（EngineChain.bookWeightOf），等于白接",
+            spec.weights.containsKey("book"),
+            "规格必须显式登记 book 权重（可为 0.0）：省键会让 CanonicalEngine fallback 到 1.0，等于误开",
         )
         assertEquals(19, spec.deviceEngines.size, "端上可实现引擎数应为 19（18 个技术指标 + 1 个三层书籍信号票 book）")
 

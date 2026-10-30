@@ -106,7 +106,7 @@ object EngineSpecLoader {
     const val RESOURCE = "/engine_spec.json"
 
     /** 编译进资源包的那份规格版本；与云端产物比对用。 */
-    const val BUNDLED_VERSION = "3.1.1"
+    const val BUNDLED_VERSION = "3.2.0"
 
     class Loaded(val spec: EngineSpec, val drift: Boolean, val reason: String)
 

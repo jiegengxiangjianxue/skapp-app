@@ -131,7 +131,7 @@ object EngineChain {
         val weights = HashMap(spec.weights)
         weights["book"] = bookWeight
         if (book?.hasEvidence == true && bookWeight <= 0.0) {
-            degraded += "书籍层：规格未登记 book 权重，已停用不计票"
+            degraded += "书籍层：规格将 book 权重设为 0（未校准），已停用不计票"
         }
         val canonical = runCatching {
             CanonicalEngine.score(code, inputs.bars, spec, weights = weights, externalVotes = externals)

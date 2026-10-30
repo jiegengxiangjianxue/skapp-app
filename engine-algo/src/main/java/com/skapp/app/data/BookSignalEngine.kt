@@ -71,6 +71,13 @@ object BookSignalEngine {
     /** 合成分映射常数：`exp5 = ±3%` 时到达 0/100，对应 spec 的 65/35 信号阈值。 */
     private const val CLAMP_PCT = 3.0
     private const val MIN_N = 100
+    // 2026-10-30 复盘：1.5 与多重检验门槛确实有口径差（116 条表、Bonferroni 3.52，
+    // 7/17 条不过线），但**不作就地收紧**：
+    //   ① limit:* 4 条 t=1.96~2.33、n=333~387、edge 1.40~1.77%，是边缘但有经济意义的信号；
+    //      Bonferroni 的独立性假设在这批高度互相关的 `A & B` 组合标签上不成立，硬卡 3.52
+    //      会把 n=350 的首板组合一并误杀；
+    //   ② 任何 >2.33 的取值都会让首板样本无分（其全部相关组合 t<=2.33），等于关掉首板展示。
+    // 本次只把 book 权重置 0（不计票）；MIN_T 的分级校准留作独立议题，按 FDR 重做后再动。
     private const val MIN_T = 1.5
 
     data class Result(
