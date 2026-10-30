@@ -32,6 +32,13 @@ object HoloClient {
     private const val API = "https://api.github.com/repos"
     private const val REPO = "jiegengxiangjianxue1/stocks-holo"
 
+    // raw 在部分网络下是整段不通（实测 15s 零字节），而同一份文件走 contents API 0.78s 就回。
+    // 详情页要连读 technical/finance/moneyflow/news 多个文件，raw 不通时每个都白等一个满超时，
+    // 所以 raw 只给 3s；失败一次就把通道粘到 contents API，冷却期内不再试 raw。
+    private const val RAW_TIMEOUT_MS = 3_000
+    private const val RAW_COOLDOWN_MS = 10 * 60 * 1000L
+    @Volatile private var rawDownUntil = 0L
+
     // token 由 app 设置页配置；不填时读公开仓的公开文件
     private var token: String? = null
     fun setToken(t: String?) { token = t?.takeIf { it.isNotBlank() } }
@@ -57,14 +64,18 @@ object HoloClient {
                     .replace("/master/", "/contents/")
             else -> null
         }
-        for (target in listOfNotNull(rawUrl, apiUrl)) {
-            val r = fetch(target, charset, target.startsWith("$API"))
+        val stickyApi = apiUrl?.takeIf { System.currentTimeMillis() < rawDownUntil }
+        val targets = if (stickyApi != null) listOf(stickyApi) else listOfNotNull(rawUrl, apiUrl)
+        for (target in targets) {
+            val isRaw = !target.startsWith("$API")
+            val r = fetch(target, charset, !isRaw, if (isRaw) RAW_TIMEOUT_MS else RAW_TIMEOUT_MS * 5)
             if (r != null) return r
+            if (isRaw) rawDownUntil = System.currentTimeMillis() + RAW_COOLDOWN_MS
         }
         return null
     }
 
-    private fun fetch(url: String, charset: String, withAuth: Boolean): String? {
+    private fun fetch(url: String, charset: String, withAuth: Boolean, timeout: Int = RAW_TIMEOUT_MS * 5): String? {
         val headers = buildMap {
             if (withAuth) {
                 token?.let { put("Authorization", "Bearer $it") }
@@ -74,7 +85,7 @@ object HoloClient {
         return Http.getText(
             url = url,
             charset = Http.charset(charset),
-            timeoutMs = 15000,
+            timeoutMs = timeout,
             ua = "skapp-android",
             headers = headers,
         )
