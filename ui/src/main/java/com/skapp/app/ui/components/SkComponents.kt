@@ -50,62 +50,6 @@ import com.skapp.app.ui.theme.SkSpace
 import com.skapp.app.ui.theme.SkType
 import java.util.Locale
 
-/** 语义色调：屏幕里只允许通过 Tone 取色，禁止直接写 Color(0x...)。 */
-enum class Tone { Up, Down, Flat, Warn, Success, Info, Neutral }
-
-fun toneOf(value: Double?): Tone = when {
-    value == null -> Tone.Flat
-    value > 0 -> Tone.Up
-    value < 0 -> Tone.Down
-    else -> Tone.Flat
-}
-
-fun toneColor(tone: Tone): Color = when (tone) {
-    Tone.Up -> SkColors.marketUp
-    Tone.Down -> SkColors.marketDown
-    Tone.Flat -> SkColors.marketFlat
-    Tone.Warn -> SkColors.warn
-    Tone.Success -> SkColors.success
-    Tone.Info -> SkColors.primary
-    Tone.Neutral -> SkColors.textSecondary
-}
-
-fun toneContainer(tone: Tone): Color = when (tone) {
-    Tone.Up -> SkColors.marketUpContainer
-    Tone.Down -> SkColors.marketDownContainer
-    Tone.Warn -> SkColors.warnContainer
-    Tone.Success -> SkColors.marketDownContainer
-    Tone.Info -> SkColors.surface3
-    Tone.Flat, Tone.Neutral -> SkColors.surface3
-}
-
-/** 颜色不是唯一通道：符号必须与颜色同时出现。 */
-fun toneSymbol(tone: Tone): String = when (tone) {
-    Tone.Up -> "▲"
-    Tone.Down -> "▼"
-    Tone.Warn -> "!"
-    else -> ""
-}
-
-/** 数值格式化唯一入口，替代散落的 String.format("%+.2f%%")。 */
-object SkFormat {
-    fun pct(value: Double?, digits: Int = 2, sign: Boolean = true): String {
-        if (value == null) return "—"
-        val fmt = (if (sign) "%+." else "%.") + digits + "f%%"
-        return String.format(Locale.US, fmt, value)
-    }
-
-    fun num(value: Double?, digits: Int = 2): String {
-        if (value == null) return "—"
-        return String.format(Locale.US, "%." + digits + "f", value)
-    }
-
-    fun signed(value: Double?, digits: Int = 2): String {
-        if (value == null) return "—"
-        return String.format(Locale.US, "%+." + digits + "f", value)
-    }
-}
-
 enum class SurfaceLevel { Zero, One, Two, Three }
 
 private fun surfaceColor(level: SurfaceLevel): Color = when (level) {
@@ -171,124 +115,6 @@ fun SkSectionCard(
     }
 }
 
-/** 区块标题（对齐 BoardScreen 与 DashboardScreen 两份 private 实现）。 */
-@Composable
-fun SkSectionTitle(text: String, modifier: Modifier = Modifier, action: (@Composable () -> Unit)? = null) {
-    Row(
-        modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(text, style = SkType.title, color = SkColors.textPrimary)
-        action?.invoke()
-    }
-}
-
-/** 指标块：标签 + 数值，数值走 Tone 取色。 */
-@Composable
-fun MetricCell(
-    label: String,
-    value: String?,
-    modifier: Modifier = Modifier,
-    tone: Tone = Tone.Neutral,
-    valueStyle: TextStyle = SkType.displayNumber,
-) {
-    Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(label, style = SkType.caption, color = SkColors.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        Spacer(Modifier.height(SkSpace.xxs))
-        Text(
-            value ?: "—",
-            style = valueStyle,
-            color = toneColor(tone),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-    }
-}
-
-/** 百分比文本：符号 + 数值 + 颜色三通道，null 显示「—」而不是 0。 */
-@Composable
-fun PercentText(
-    value: Double?,
-    modifier: Modifier = Modifier,
-    digits: Int = 2,
-    sign: Boolean = true,
-    style: TextStyle = SkType.number,
-) {
-    val tone = toneOf(value)
-    Text(
-        text = if (value == null) "—" else toneSymbol(tone) + SkFormat.pct(value, digits, sign),
-        style = style,
-        color = toneColor(tone),
-        maxLines = 1,
-        modifier = modifier,
-    )
-}
-
-/** 涨跌/警示 chip：文字 + 符号 + 底色，触达高度 ≥48dp。 */
-@Composable
-fun ChangeChip(
-    text: String,
-    tone: Tone,
-    modifier: Modifier = Modifier,
-    filled: Boolean = true,
-    onClick: (() -> Unit)? = null,
-) {
-    val bg = if (filled) toneContainer(tone) else Color.Transparent
-    val click = if (onClick != null) Modifier.clickable { onClick() } else Modifier
-    Box(
-        modifier
-            .defaultMinSize(minHeight = SkSize.touchMin)
-            .clip(SkRadius.chip)
-            .background(bg)
-            .then(click)
-            .padding(horizontal = SkSpace.m, vertical = SkSpace.xs),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text("${toneSymbol(tone)}$text", style = SkType.label, color = toneColor(tone), maxLines = 1)
-    }
-}
-
-/** 表格单元格：文本 + 色调 + 是否加粗（表头）。 */
-data class TableCell(
-    val text: String,
-    val tone: Tone = Tone.Neutral,
-    val bold: Boolean = false,
-)
-
-/**
- * 表格行：表头与数据行共用，权重由调用方给（现有看板/指数/选股跟踪三处写法收敛到这里）。
- */
-@Composable
-fun TableRow(
-    cells: List<TableCell>,
-    weights: List<Float>,
-    modifier: Modifier = Modifier,
-    header: Boolean = false,
-    onClick: (() -> Unit)? = null,
-) {
-    val click = if (onClick != null) Modifier.clickable { onClick() } else Modifier
-    Row(
-        modifier
-            .fillMaxWidth()
-            .defaultMinSize(minHeight = if (onClick != null) SkSize.touchMin else 0.dp)
-            .then(click)
-            .padding(vertical = if (header) SkSpace.xs else 2.dp),
-    ) {
-        cells.forEachIndexed { i, cell ->
-            Text(
-                cell.text,
-                Modifier.weight(weights.getOrElse(i) { 1f }),
-                style = if (header) SkType.caption else SkType.number,
-                fontWeight = if (cell.bold || header) FontWeight.SemiBold else FontWeight.Normal,
-                color = if (header) SkColors.textSecondary else toneColor(cell.tone),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-    }
-}
-
 enum class UiStateKind { Loading, Empty, Error }
 
 /** 空/错/加载三态唯一入口。 */
@@ -326,27 +152,6 @@ fun StateView(
     }
 }
 
-/** 骨架块：不驱动布局变化，只做透明度呼吸。 */
-@Composable
-fun SkeletonBlock(height: Dp, modifier: Modifier = Modifier, shape: Shape = SkRadius.inner) {
-    val transition = rememberInfiniteTransition()
-    val alpha by transition.animateFloat(
-        initialValue = 0.45f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(SkMotion.SHIMMER, easing = LinearEasing),
-            repeatMode = RepeatMode.Reverse,
-        ),
-    )
-    Box(
-        modifier
-            .fillMaxWidth()
-            .height(height)
-            .clip(shape)
-            .background(SkColors.skeleton.copy(alpha = alpha)),
-    )
-}
-
 /** 选择 chip（复权/区间/池子），选中态靠颜色 + 加粗 + 底座，不只靠颜色。 */
 @Composable
 fun SkChip(
@@ -372,21 +177,6 @@ fun SkChip(
             textAlign = TextAlign.Center,
             maxLines = 1,
         )
-    }
-}
-
-/** 图表容器：统一高度令牌 + 标题区，内部只放 Canvas/图例。 */
-@Composable
-fun ChartCard(
-    title: String,
-    height: Dp,
-    modifier: Modifier = Modifier,
-    subtitle: String? = null,
-    action: (@Composable () -> Unit)? = null,
-    content: @Composable () -> Unit,
-) {
-    SkSectionCard(title = title, modifier = modifier, subtitle = subtitle, action = action) {
-        Box(Modifier.fillMaxWidth().height(height)) { content() }
     }
 }
 

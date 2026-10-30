@@ -3,6 +3,6 @@
     <style name="Theme.Skapp" parent="android:Theme.Material.NoActionBar">
         <item name="android:statusBarColor">#FF0D1117</item>
         <item name="android:navigationBarColor">#FF0D1117</item>
-        <item name="android:windowBackground">#FF0D1117</item>
+        <item name="android:windowBackground">#FFF4F7FA</item>
     </style>
 </resources>

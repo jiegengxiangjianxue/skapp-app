@@ -52,25 +52,6 @@ data class ParityView(
 }
 
 /**
- * 由已算好的数值构造口径条。null 一律如实保留（不填 0、不填「中性」）。
- */
-fun parityViewOf(
-    gated: Double?,
-    regimeLabel: String?,
-    gate: Double?,
-    percentile: Double?,
-    tier: String?,
-    basis: String = "口径：云端 regime_router / rank_score，端上本地复算",
-): ParityView = ParityView(
-    regimeLabel = regimeLabel,
-    gate = gate,
-    gatedScore = gated,
-    percentile = percentile,
-    tier = tier,
-    basis = basis,
-)
-
-/**
  * 从推股产物 `metadata` 直接构造口径条（字段由 [LocalPicks.build] 写入）。
  *
  * UI 只认 metadata 的键，不 import 引擎类：模块依赖方向是 ui → engine，反着引会把

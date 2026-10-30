@@ -61,6 +61,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
@@ -99,9 +100,9 @@ internal class MarketStateHolder(shared: SharedVm) : StateHolder(shared) {
     /** 聪明钱信号（ETF 份额）单独刷新：决策页右上「刷新」与下拉都走这里 */
     fun loadSmartMoney() {
         viewModelScope.launch {
-            _state.value = _state.value.copy(smartMoneyLoading = true)
+            _state.update { it.copy(smartMoneyLoading = true) }
             val s = gap("聪明钱信号", { null }) { DbTables.smartMoney() }
-            _state.value = _state.value.copy(smartMoney = s ?: _state.value.smartMoney, smartMoneyLoading = false)
+            _state.update { it.copy(smartMoney = s ?: _state.value.smartMoney, smartMoneyLoading = false) }
         }
     }
 
@@ -116,7 +117,7 @@ internal class MarketStateHolder(shared: SharedVm) : StateHolder(shared) {
             val cur = _state.value
             if (cur.factorBoardLoading) return@launch
             if (!force && !cur.factorBoard?.rows.isNullOrEmpty()) return@launch
-            _state.value = cur.copy(factorBoardLoading = true)
+            _state.update { it.copy(factorBoardLoading = true) }
 
             // 候选 = 关注列表 + 云端决策卡，去重后最多 8 只（每只要拉日 K，不能全市场扫）
             val targets = (codes.toList() + cur.decision.cards.map { it.code })
@@ -168,7 +169,7 @@ internal class MarketStateHolder(shared: SharedVm) : StateHolder(shared) {
                     }
                 }
 
-                _state.value = _state.value.copy(
+                _state.update { it.copy(
                     sectorBoard = sectors ?: _state.value.sectorBoard,
                     factorBoard = com.skapp.app.data.FactorBoard(
                         calib = calib,
@@ -177,12 +178,12 @@ internal class MarketStateHolder(shared: SharedVm) : StateHolder(shared) {
                         dataNote = com.skapp.app.data.Db.healthText(listOfNotNull(calibDoc)),
                     ),
                     factorBoardLoading = false,
-                )
+                ) }
             } catch (e: Exception) {
-                _state.value = _state.value.copy(
+                _state.update { it.copy(
                     factorBoardLoading = false,
                     factorBoard = _state.value.factorBoard?.copy(lastError = e.message ?: "加载失败"),
-                )
+                ) }
             }
         }
     }
@@ -190,13 +191,13 @@ internal class MarketStateHolder(shared: SharedVm) : StateHolder(shared) {
     /** 市场状态计算 */
     fun loadMarketState() {
         viewModelScope.launch {
-            _state.value = _state.value.copy(marketStateLoading = true)
+            _state.update { it.copy(marketStateLoading = true) }
             try {
                 // 走实时路径：盘中打开就是当下的市场状态，不是云端收盘快照
                 val ms = MarketStateEngine.computeLive()
-                _state.value = _state.value.copy(marketState = ms, marketStateLoading = false)
+                _state.update { it.copy(marketState = ms, marketStateLoading = false) }
             } catch (e: Exception) {
-                _state.value = _state.value.copy(marketStateLoading = false)
+                _state.update { it.copy(marketStateLoading = false) }
             }
         }
     }
@@ -204,12 +205,12 @@ internal class MarketStateHolder(shared: SharedVm) : StateHolder(shared) {
     /** 加载 ban_prob 涨停次日表现概率 */
     fun loadBanProb() {
         viewModelScope.launch {
-            _state.value = _state.value.copy(banProbLoading = true)
+            _state.update { it.copy(banProbLoading = true) }
             try {
                 val bp = BanProbClient.load()
-                _state.value = _state.value.copy(banProb = bp, banProbLoading = false)
+                _state.update { it.copy(banProb = bp, banProbLoading = false) }
             } catch (e: Exception) {
-                _state.value = _state.value.copy(banProbLoading = false)
+                _state.update { it.copy(banProbLoading = false) }
             }
         }
     }
@@ -231,16 +232,16 @@ internal class MarketStateHolder(shared: SharedVm) : StateHolder(shared) {
         viewModelScope.launch {
             try {
                 val j = shared.allSources.fetch() ?: run {
-                    _state.value = _state.value.copy(registryStats = mapOf("status" to "unknown"))
+                    _state.update { it.copy(registryStats = mapOf("status" to "unknown")) }
                     return@launch
                 }
-                _state.value = _state.value.copy(
+                _state.update { it.copy(
                     allSourcesSummary = shared.allSources.summaryLine(j),
                     allSourcesQuotes = shared.allSources.parseQuotes(j),
                     registryStats = registryStats(j),
-                )
+                ) }
             } catch (_: Exception) {
-                _state.value = _state.value.copy(registryStats = mapOf("status" to "unknown"))
+                _state.update { it.copy(registryStats = mapOf("status" to "unknown")) }
             }
         }
     }
@@ -287,11 +288,11 @@ internal class MarketStateHolder(shared: SharedVm) : StateHolder(shared) {
                 // 只在真正变化时更新 state，避免无谓重组（休市时每次醒来都触发全屏重绘）
                 val cur = _state.value
                 if (cur.marketPhase != newPhase || cur.autoRefresh != trading || cur.nextRefreshIn != newRefreshIn) {
-                    _state.value = cur.copy(
+                    _state.update { it.copy(
                         marketPhase = newPhase,
                         autoRefresh = trading,
                         nextRefreshIn = newRefreshIn,
-                    )
+                    ) }
                 }
                 if (trading) {
                     refreshQuotes()
@@ -326,19 +327,19 @@ internal class MarketStateHolder(shared: SharedVm) : StateHolder(shared) {
         pulseJob = viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             runCatching {
                 com.skapp.app.data.MarketHeartbeat.run(onTick = { tick ->
-                    _state.value = _state.value.copy(
+                    _state.update { it.copy(
                         heartbeatAt = tick.at,
                         heartbeatLabel = tick.error ?: tick.pulse.label,
-                    )
+                    ) }
                     // 把心跳同一份快照算出的板块强弱传下去：cycle_v2 不再恒为 0，
                     // 也不会为了一个分数再聚合一遍全市场
                     gap("市场状态", { null }) {
                         com.skapp.app.data.MarketStateEngine.computeLive(tick.pulse, tick.sectors)
                     }?.let { ms ->
-                            _state.value = _state.value.copy(marketState = ms, marketStateLoading = false)
+                            _state.update { it.copy(marketState = ms, marketStateLoading = false) }
                         }
                     tick.deep?.takeIf { it.isNotEmpty() }?.let { deep ->
-                        _state.value = _state.value.copy(screened = deep)
+                        _state.update { it.copy(screened = deep) }
                     }
                     if (!_state.value.marketPulseLoading) {
                         runCatching { refreshMarketPulse() }
@@ -384,7 +385,7 @@ internal class MarketStateHolder(shared: SharedVm) : StateHolder(shared) {
     }
 
     suspend fun refreshMarketPulse() {
-        _state.value = _state.value.copy(marketPulseLoading = true)
+        _state.update { it.copy(marketPulseLoading = true) }
         try {
             // 全市场快照被拒（东财风控/限流）时不能静默留空：退到自选+推股池，口径随之缩小
             var scope = "全市场"
@@ -432,7 +433,7 @@ internal class MarketStateHolder(shared: SharedVm) : StateHolder(shared) {
             // 池内也拉不到（自选为空 / 腾讯也挂）：保留上一轮结果，但把范围如实写进状态，
             // 让界面显示「异动不可用」，而不是拿旧数据冒充本轮
             if (cells.isEmpty()) {
-                _state.value = _state.value.copy(marketPulseScope = "none")
+                _state.update { it.copy(marketPulseScope = "none") }
                 return
             }
 
@@ -550,14 +551,14 @@ internal class MarketStateHolder(shared: SharedVm) : StateHolder(shared) {
                 .sortedByDescending { it.relStrength ?: Double.NEGATIVE_INFINITY }
                 .take(3)
                 .map { "${it.name} ${it.code}" }
-            _state.value = _state.value.copy(
+            _state.update { it.copy(
                 marketPulse = enriched,
                 marketPulseScope = scope,
                 marketPulseTs = java.time.OffsetDateTime.now().toString(),
                 pulseDropped = dropped,
-            )
+            ) }
         } finally {
-            _state.value = _state.value.copy(marketPulseLoading = false)
+            _state.update { it.copy(marketPulseLoading = false) }
         }
     }
 
@@ -578,7 +579,7 @@ internal class MarketStateHolder(shared: SharedVm) : StateHolder(shared) {
             if (codes.isEmpty()) return@launch
             // 先在全市场快照里取（零额外请求），快照没覆盖的才补拉
             val quotes = com.skapp.app.data.LiveQuote.quotes(codes)
-            _state.value = _state.value.copy(pickQuotes = HashMap(quotes))
+            _state.update { it.copy(pickQuotes = HashMap(quotes)) }
         }
     }
 
@@ -587,7 +588,7 @@ internal class MarketStateHolder(shared: SharedVm) : StateHolder(shared) {
         viewModelScope.launch {
             val a = MarketDataClient.aShareIndices()
             val g = MarketDataClient.globalIndices()
-            _state.value = _state.value.copy(aShareIndices = a, globalIndices = g)
+            _state.update { it.copy(aShareIndices = a, globalIndices = g) }
         }
     }
 
@@ -608,10 +609,10 @@ internal class MarketStateHolder(shared: SharedVm) : StateHolder(shared) {
                 stale = quoteAge == null || quoteAge > 10 * 60 * 1000,
             )
         }
-        _state.value = _state.value.copy(
+        _state.update { it.copy(
             quotes = rows,
             quoteTs = quotes.values.firstOrNull()?.ts,
-        )
+        ) }
     }
 
     /** 名称回退：先 names，再 symbols */
@@ -627,7 +628,7 @@ internal class MarketStateHolder(shared: SharedVm) : StateHolder(shared) {
         val query = q.trim().lowercase()
         shared.searchQuery = q
         if (query.isEmpty()) {
-            _state.value = _state.value.copy(searchResults = emptyList())
+            _state.update { it.copy(searchResults = emptyList()) }
             return
         }
         val res = (_state.value.symbols + shared.stockNames.map { (code, name) -> SymbolEntry(code, name) })
@@ -646,7 +647,7 @@ internal class MarketStateHolder(shared: SharedVm) : StateHolder(shared) {
         val fallback = if (res.isEmpty()) com.skapp.app.data.Code.directSymbol(query)?.let {
             listOf(it.copy(name = shared.stockNames[it.code]))
         } ?: emptyList() else emptyList()
-        _state.value = _state.value.copy(searchResults = res.ifEmpty { fallback })
+        _state.update { it.copy(searchResults = res.ifEmpty { fallback }) }
     }
 
     /**
@@ -669,7 +670,7 @@ internal class MarketStateHolder(shared: SharedVm) : StateHolder(shared) {
         detailJob?.cancel()
         detailJob = viewModelScope.launch {
             val code = normalized
-            _state.value = _state.value.copy(
+            _state.update { it.copy(
                 detailLoading = true,
                 detail = StockDetail(code = code, name = shared.stockNames[code]),
                 detailAdjust = adjust,
@@ -692,32 +693,32 @@ internal class MarketStateHolder(shared: SharedVm) : StateHolder(shared) {
                 keyLevels = null,
                 recoup = null,
                 exitPlan = null,
-            )
+            ) }
             try {
                 supervisorScope {
                     val holoD = async { requestResult { HoloClient.full(code) }.getOrNull() }
                     val quoteD = async {
                         val q = requestResult { DataCache.quote(code) }.getOrNull()
-                        _state.value = _state.value.copy(
+                        _state.update { it.copy(
                             detailLoading = false,
                             liveQuote = q,
                             detail = _state.value.detail?.copy(
                                 name = q?.name?.takeIf { it.isNotBlank() } ?: _state.value.detail?.name,
                             ),
-                        )
+                        ) }
                     }
                     val cloudD = async {
                         val cloud = requestResult { DbTables.stockDetail(code) }.getOrNull()
                         if (cloud != null) {
                             val current = _state.value.detail
-                            _state.value = _state.value.copy(
+                            _state.update { it.copy(
                                 detailLoading = false,
                                 detail = cloud.copy(
                                     name = _state.value.liveQuote?.name?.takeIf { it.isNotBlank() }
                                         ?: cloud.name ?: current?.name,
                                     detail = cloud.detail ?: current?.detail,
                                 ),
-                            )
+                            ) }
                         }
                     }
                     val boardsD = async {
@@ -735,7 +736,7 @@ internal class MarketStateHolder(shared: SharedVm) : StateHolder(shared) {
                                 )
                             }
                         }
-                        _state.value = _state.value.copy(boardsOf = boards)
+                        _state.update { it.copy(boardsOf = boards) }
                     }
                     val minuteD = async {
                         // 盘后腾讯 minute/query 仍返回当日全量分时（实测 20:00 仍有 267 个 tick），
@@ -753,7 +754,7 @@ internal class MarketStateHolder(shared: SharedVm) : StateHolder(shared) {
                                 code, com.skapp.app.data.MinuteKline.Period.M5, 240,
                             )
                         }
-                        _state.value = _state.value.copy(
+                        _state.update { it.copy(
                             minuteTrend = rich?.points ?: emptyList(),
                             minuteDate = rich?.date,
                             minutePreClose = rich?.preClose ?: fallbackPre,
@@ -763,17 +764,17 @@ internal class MarketStateHolder(shared: SharedVm) : StateHolder(shared) {
                             minuteBarsNote = if (mb.isEmpty()) {
                                 "分钟 K 未取到：新浪/腾讯分钟接口不可达或被限流（不是「该股无分钟数据」）；上方分时曲线另有源"
                             } else null,
-                        )
+                        ) }
                     }
                     val historyD = async {
                         val holo = holoD.await()
-                        _state.value = _state.value.copy(holo = holo?.takeIf { it.covered })
+                        _state.update { it.copy(holo = holo?.takeIf { it.covered }) }
                         // 只有「前复权」才允许用云端 holo 的固定口径 K 线；
                         // 切到后复权/不复权必须真去拉对应口径，否则会出现「点了后复权图没变」。
                         val holoBars = holo?.kline?.takeIf { it.size >= 30 && adjust == "qfq" }
                         val bars = holoBars
                             ?: requestResult { DataCache.kline(code, adjust, 250) }.getOrDefault(emptyList())
-                        _state.value = _state.value.copy(
+                        _state.update { it.copy(
                             kline = bars,
                             klineSource = if (holoBars != null) "云端 holo bundle（前复权口径）"
                             else MarketDataClient.lastKlineSource,
@@ -792,17 +793,23 @@ internal class MarketStateHolder(shared: SharedVm) : StateHolder(shared) {
                             trendForecast = gap("多日趋势", { null }) {
                                 withContext(Dispatchers.Default) { com.skapp.app.data.TrendForecast.compute(bars) }
                             },
-                        )
+                        ) }
                         val engine = requestResult {
                             withContext(Dispatchers.Default) { DataCache.engine(code, adjust, bars) }
                         }.getOrNull()
                         // 详情页没有全市场横截面（拿不到就不编），flow 会自己降成 local_abs；
                         // tape 只要日 K 就能算，所以这里链路是「技术 + 盘口」两段，不是残废链路。
+                        // 市况闸门只吃指数序列（全市场统一），不拿个股 K 线顶替；
+                        // 拿不到传 null，链路会记 degraded 并把闸门按 1.0。
+                        val regimeCloses = runCatching {
+                            com.skapp.app.data.IndexDaily.closes()
+                        }.getOrNull()
                         val chain = requestResult {
                             withContext(Dispatchers.Default) {
                                 com.skapp.app.data.EngineChain.analyze(
                                     com.skapp.app.data.EngineChain.Inputs(
                                         bars = bars,
+                                        regimeCloses = regimeCloses,
                                         nowMs = System.currentTimeMillis(),
                                     )
                                 )
@@ -810,7 +817,7 @@ internal class MarketStateHolder(shared: SharedVm) : StateHolder(shared) {
                         }.getOrNull()
                         val central = engine?.let { centralEngine(it, chain) }
                             ?: CentralEngine("中枢引擎：数据不足，无法形成有效总结。", null, null, "insufficient")
-                        _state.value = _state.value.copy(
+                        _state.update { it.copy(
                             localEngine = engine,
                             centralEngineSummary = central.summary,
                             centralEngineScore = central.score,
@@ -822,15 +829,15 @@ internal class MarketStateHolder(shared: SharedVm) : StateHolder(shared) {
                             engineSpecDrift = chain?.specDrift ?: false,
                             chainDegraded = chain?.degraded.orEmpty(),
                             chainStatus = chain?.status ?: central.status,
-                        )
+                        ) }
                         val local = requestResult {
                             bundleFromLocal(code, bars, _state.value.liveQuote, holo)
                         }.getOrNull()
                         val current = _state.value.detail
-                        _state.value = _state.value.copy(detail = current?.copy(
+                        _state.update { it.copy(detail = current?.copy(
                             name = current.name ?: holo?.holo?.get("name")?.toString()?.takeIf { it.isNotBlank() },
                             detail = current.detail ?: local,
-                        ))
+                        )) }
                     }
                     val flowD = async {
                         val holo = holoD.await()
@@ -839,7 +846,7 @@ internal class MarketStateHolder(shared: SharedVm) : StateHolder(shared) {
                         val live = if (MarketHours.isTrading() || MarketHours.isAuction()) {
                             requestResult { MarketDataClient.fundFlowIntraday(code) }.getOrDefault(emptyList())
                         } else emptyList()
-                        _state.value = _state.value.copy(fundFlow = flow, fundFlowLive = live)
+                        _state.update { it.copy(fundFlow = flow, fundFlowLive = live) }
                     }
                     quoteD.await()
                     cloudD.await()
@@ -853,7 +860,7 @@ internal class MarketStateHolder(shared: SharedVm) : StateHolder(shared) {
                 }
                 if (MarketHours.isTrading() || MarketHours.isAuction()) startDetailLiveLoop(code)
             } finally {
-                if (isActive) _state.value = _state.value.copy(detailLoading = false)
+                if (isActive) _state.update { it.copy(detailLoading = false) }
             }
         }
     }
@@ -905,17 +912,24 @@ internal class MarketStateHolder(shared: SharedVm) : StateHolder(shared) {
         var chain: com.skapp.app.data.EngineChain.ChainResult? = null
         if (now - lastEngineAt > 5_000 && updated.size >= 30) {
             lastEngineAt = now
+            val regimeCloses = runCatching {
+                com.skapp.app.data.IndexDaily.closes()
+            }.getOrNull()
             gap("实时重算", { null }) { LocalEngine.analyze(updated) }?.let {
                 engine = it
                 chain = gap("引擎链", { null }) {
                     com.skapp.app.data.EngineChain.analyze(
-                        com.skapp.app.data.EngineChain.Inputs(bars = updated, nowMs = now)
+                        com.skapp.app.data.EngineChain.Inputs(
+                            bars = updated,
+                            regimeCloses = regimeCloses,
+                            nowMs = now,
+                        )
                     )
                 }
                 central = centralEngine(it, chain)
             }
         }
-        _state.value = _state.value.copy(
+        _state.update { it.copy(
             liveQuote = quote,
             kline = updated,
             localEngine = engine,
@@ -929,7 +943,7 @@ internal class MarketStateHolder(shared: SharedVm) : StateHolder(shared) {
             centralEngineResonance = central?.resonance ?: _state.value.centralEngineResonance,
             centralEngineSummary = central?.summary ?: _state.value.centralEngineSummary,
             centralEngineStatus = central?.status ?: _state.value.centralEngineStatus,
-        )
+        ) }
     }
 
     fun refreshDetailLive() {
@@ -952,7 +966,7 @@ internal class MarketStateHolder(shared: SharedVm) : StateHolder(shared) {
         val liveFlow = if (MarketHours.isTrading() || MarketHours.isAuction()) {
             gap("资金流($code)", { emptyList() }) { MarketDataClient.fundFlowIntraday(code) }
         } else emptyList()
-        _state.value = _state.value.copy(
+        _state.update { it.copy(
             liveQuote = quote,
             kline = bars,
             minuteTrend = minute.ifEmpty { _state.value.minuteTrend },
@@ -962,7 +976,7 @@ internal class MarketStateHolder(shared: SharedVm) : StateHolder(shared) {
             centralEngineResonance = central?.resonance ?: _state.value.centralEngineResonance,
             centralEngineSummary = central?.summary ?: _state.value.centralEngineSummary,
             centralEngineStatus = central?.status ?: _state.value.centralEngineStatus,
-        )
+        ) }
     }
 
     /** 用当日分时与实时价补齐/替换今天这根日K，避免日K停在历史收盘。 */
@@ -990,7 +1004,7 @@ internal class MarketStateHolder(shared: SharedVm) : StateHolder(shared) {
     fun switchPeriod(p: KPeriod) {
         if (_state.value.kPeriod == p) return
         val daily = _state.value.kline
-        _state.value = _state.value.copy(kPeriod = p, kline = aggregateKline(daily, p))
+        _state.update { it.copy(kPeriod = p, kline = aggregateKline(daily, p)) }
     }
 
     private data class CentralEngine(
@@ -1039,7 +1053,7 @@ internal class MarketStateHolder(shared: SharedVm) : StateHolder(shared) {
     fun loadDataSources() {
         viewModelScope.launch {
             val snap = gap("数据源台账", { com.skapp.app.data.DataSourcesSnapshot() }) { DbTables.dataSources() }
-            _state.value = _state.value.copy(dataSources = snap)
+            _state.update { it.copy(dataSources = snap) }
         }
     }
 
@@ -1078,7 +1092,7 @@ internal class MarketStateHolder(shared: SharedVm) : StateHolder(shared) {
     fun closeDetail() {
         detailJob?.cancel()
         detailJob = null
-        _state.value = _state.value.copy(detail = null, detailLoading = false, kline = emptyList())
+        _state.update { it.copy(detail = null, detailLoading = false, kline = emptyList()) }
     }
 
     /** ViewModel 销毁时停掉行情循环（其余 job 随 viewModelScope 一起结束，行为与拆分前一致） */

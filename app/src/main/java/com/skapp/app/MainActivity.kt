@@ -2,6 +2,7 @@ package com.skapp.app
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.fillMaxSize
@@ -51,7 +52,16 @@ class MainActivity : ComponentActivity() {
         // 本地日级行情存档的落盘目录：连板高度/晋级率/板块动量/长周期 RPS 都靠它按天积累。
         // 放在这里初始化（而不是各模块自己找 Context），未初始化时存档模块安全地退化为 no-op。
         com.skapp.app.data.MarketDayArchive.init(filesDir)
-        enableEdgeToEdge()
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.light(
+                android.graphics.Color.TRANSPARENT,
+                android.graphics.Color.TRANSPARENT,
+            ),
+            navigationBarStyle = SystemBarStyle.light(
+                android.graphics.Color.TRANSPARENT,
+                android.graphics.Color.TRANSPARENT,
+            ),
+        )
         setContent {
             MaterialTheme(colorScheme = SkappLightColors) {
                 Surface(modifier = Modifier.fillMaxSize()) {
