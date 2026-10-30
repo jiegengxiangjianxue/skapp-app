@@ -2,8 +2,6 @@ package com.skapp.app.data
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import java.text.SimpleDateFormat
-import java.util.Locale
 
 /**
  * 腾讯行情直连（qt.gtimg.cn）——全市场快照被拒时的报价兜底。
@@ -17,7 +15,9 @@ import java.util.Locale
 object TencentQuote {
 
     private val iso get() = CstTime.fmt("yyyy-MM-dd HH:mm:ss")
-    private val rawTs = SimpleDateFormat("yyyyMMddHHmmss", Locale.US)
+    // 必须走 CstTime：SimpleDateFormat 默认跟设备时区，UTC 设备上会把北京时间的
+    // 报文解析成 UTC 再按 CST 渲染，时间戳平白差 8 小时。
+    private val rawTs get() = CstTime.fmt("yyyyMMddHHmmss")
     private val GBK = java.nio.charset.Charset.forName("GBK")
 
     /** 批量报价；返回 6 位归一化代码 → 报价。拉不到的票不进结果，由调用方决定怎么标陈旧。 */
