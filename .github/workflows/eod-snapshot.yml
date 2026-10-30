@@ -1,0 +1,84 @@
+name: eod-snapshot
+
+on:
+  schedule:
+    - cron: '35 7 * * 1-5'   # UTC 7:35 = 北京 15:35 收盘后
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: eod-snapshot
+  cancel-in-progress: false
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install pyyaml fastapi uvicorn pydantic
+      - name: Fetch engine picks from skapp-data
+        # 本仓没有 picks 生产者（skapp_pkg/engine/picks.py 只读不产），干净 checkout 里
+        # data/engine/picks_latest.json 必然不存在 -> 快照会永远回落自选股。
+        # 取上一版引擎产物作输入；产物日期由 eod_sync 写进快照的 engine_asof/stale。
+        run: |
+          mkdir -p data/engine
+          curl -fsSL -A skapp-eod/1.0 \
+            "https://raw.githubusercontent.com/jiegengxiangjianxue/skapp-data/main/data/engine/picks_latest.json" \
+            -o data/engine/picks_latest.json
+          python3 -c "import json;d=json.load(open('data/engine/picks_latest.json',encoding='utf-8'));print('engine picks asof',d.get('asof'),'| items',len(d.get('items') or []))"
+      - name: Generate EOD snapshot
+        run: python -m skapp_pkg.pipeline.eod_sync
+        env:
+          TZ: Asia/Shanghai
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Sync app-facing data to public skapp-data
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          python3 - <<'PYEOF'
+          import base64, json, os, urllib.request
+          TOK = os.environ["GH_TOKEN"]
+          API = "https://api.github.com"
+          import glob as _glob
+          FILES = ["data/search/symbols.json","data/engine/picks_latest.json",
+                   "data/engine/decision.json","data/engine/engine_fusion.json",
+                   "data/engine/ai_pick_v5.json","data/engine/strategy_rank.json"] \
+                  + sorted(_glob.glob("data/snapshots/*.json"))
+          # search index refreshed from sina full list
+          import sys; sys.path.insert(0, ".")
+          try:
+              from skapp_pkg.datasrc.market_data import all_symbols
+              syms = all_symbols()
+              if syms:
+                  compact = [{"s": x["symbol"], "n": x["name"]} for x in syms]
+                  os.makedirs("data/search", exist_ok=True)
+                  json.dump(compact, open("data/search/symbols.json","w"), ensure_ascii=False, separators=(",",":"))
+          except Exception as e:
+              print("search index refresh skipped:", e)
+          for f in FILES:
+              if not os.path.exists(f): continue
+              raw = open(f,"rb").read()
+              url = API + f"/repos/jiegengxiangjianxue/skapp-data/contents/{f}"
+              def api(method, url, body=None):
+                  data = json.dumps(body).encode() if body is not None else None
+                  r = urllib.request.Request(url, data=data, method=method, headers={
+                      "Authorization":"Bearer "+TOK, "Accept":"application/vnd.github+json"})
+                  with urllib.request.urlopen(r, timeout=60) as resp:
+                      return json.loads(resp.read() or b"{}")
+              sha = None
+              try:
+                  sha = api("GET", url).get("sha")
+              except Exception: pass
+              body = {"message": "auto sync " + f, "content": base64.b64encode(raw).decode()}
+              if sha: body["sha"] = sha
+              try:
+                  api("PUT", url, body); print("synced", f)
+              except Exception as e:
+                  print("sync failed", f, e)
+          PYEOF
