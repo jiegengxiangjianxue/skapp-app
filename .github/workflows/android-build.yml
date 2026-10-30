@@ -508,7 +508,11 @@ jobs:
       - name: Robolectric 屏渲染测试
         run: |
           set -euo pipefail
-          ./gradlew :ui:testDebugUnitTest --tests "*ScreenRenderRobolectricTest*" --stacktrace
+          # 两个类各答一个问题：屏渲染（空数据不白屏）与状态契约（冷启动/详情页/设置页）。
+          # 状态契约类含一条 @Ignore 的「盘中 SSE」用例——它只能由真机证据判定，故意不在此处跑。
+          ./gradlew :ui:testDebugUnitTest \
+            --tests "*ScreenRenderRobolectricTest*" \
+            --tests "*ColdStartDetailTokenRobolectricTest*" --stacktrace
 
       - name: 汇总每个屏的通过情况
         if: always()
