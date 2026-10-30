@@ -59,6 +59,22 @@ class LocalPicksTest {
     }
 
     @Test
+    fun `名单容量是整个 MAX_PICKS 而不是前五只`() {
+        // 板块各不同：绕开每板块 2 只的上限，单独验证名单容量本身。
+        // 曾经只有前 5 只算趋势，界面又写着「仅名单前几只算趋势」，被读成名单只出 5 只。
+        val rows = (1..12).map { i ->
+            row("6000%02d".format(i), score = 90.0 - i, sector = "板块$i")
+        }
+        val artifact = LocalPicks.build(
+            screened = rows,
+            session = LocalPicks.Session.MIDDAY,
+            calcTime = "2026-10-28T10:30:00+08:00",
+        )
+        assertEquals(LocalPicks.MAX_PICKS, artifact.picks.size)
+        assertTrue(artifact.picks.size > 5)
+    }
+
+    @Test
     fun `未达标的票只进 observed 不进 picks`() {
         val artifact = LocalPicks.build(
             screened = listOf(row("600001", 48.0), row("600002", 62.0)),

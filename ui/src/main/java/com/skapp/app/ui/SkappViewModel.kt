@@ -189,6 +189,14 @@ data class UiState(
     val minuteBarsNote: String? = null,
     /** 推股名单的多日趋势（按代码索引）：只算名单前几只，取不到的票就没条目，界面要明说 */
     val picksTrend: Map<String, com.skapp.app.data.TrendForecast.Result> = emptyMap(),
+
+    /** 参与过多日趋势计算的代码。用来区分「没轮到算」与「算了但失败」——两者都表现为没有结果。 */
+    val picksTrendAttempted: Set<String> = emptySet(),
+    /**
+     * 本地深算的分阶段耗时（首屏端到端 / 快照 / 筛选 / 引擎 / 日 K 拉取次数与均耗）。
+     * 只用于把「首屏到底慢在哪」变成可读的数字，不参与任何排序与判断。
+     */
+    val localPicksTiming: String? = null,
     val askQuestion: String = "",
     val askAnswer: String? = null,
     val askLoading: Boolean = false,

@@ -16,6 +16,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -101,6 +102,30 @@ fun PicksListScreen(vm: SkappViewModel, state: UiState, mode: PickListSession) {
                         color = SkColors.textSecondary,
                     )
                 }
+                // 验证入口：断网 / 限流空态需要让真实请求失败，而切系统网络会把 AI 通道一起切断。
+                // 注入点只有一个 HTTP 出口，上层走的是真实失败分支。验证完连同 Http.Fault 一起删。
+                val faultState = remember { mutableStateOf(com.skapp.app.data.Http.fault) }
+                Text(
+                    text = when (faultState.value) {
+                        null -> "注入断网"
+                        com.skapp.app.data.Http.Fault.OFFLINE -> "注入限流"
+                        else -> "取消注入"
+                    },
+                    modifier = Modifier
+                        .clickable {
+                            val next = when (faultState.value) {
+                                null -> com.skapp.app.data.Http.Fault.OFFLINE
+                                com.skapp.app.data.Http.Fault.OFFLINE -> com.skapp.app.data.Http.Fault.RATE_LIMIT
+                                else -> null
+                            }
+                            faultState.value = next
+                            com.skapp.app.data.Http.fault = next
+                            vm.refreshLocalPicks(mode.session)
+                        }
+                        .padding(10.dp),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (faultState.value == null) SkColors.textSecondary else SkColors.warn,
+                )
                 if (state.localPicksLoading) {
                     CircularProgressIndicator(modifier = Modifier.padding(8.dp), strokeWidth = 2.dp)
                 } else {
@@ -132,15 +157,30 @@ fun PicksListScreen(vm: SkappViewModel, state: UiState, mode: PickListSession) {
             item(key = "empty") { EmptyPickList(artifact, mode) }
         } else {
             item(key = "meta") {
-                Text(
-                    "${picks.size} 只 · 计算 ${artifact.calculationTime ?: artifact.generatedAt ?: "时点暂无"}" +
-                        " · 数据日 ${artifact.date ?: "暂无"}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = SkColors.textSecondary,
-                )
+                Column {
+                    Text(
+                        "${picks.size} 只 · 计算 ${artifact.calculationTime ?: artifact.generatedAt ?: "时点暂无"}" +
+                            " · 数据日 ${artifact.date ?: "暂无"}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = SkColors.textSecondary,
+                    )
+                    state.localPicksTiming?.let { t ->
+                        Text(
+                            t,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = SkColors.textSecondary,
+                        )
+                    }
+                }
             }
             items(picks, key = { it.code }) { pick ->
-                PickRow(pick, poolHits[pick.code].orEmpty(), vm, state.picksTrend[pick.code])
+                PickRow(
+                    pick,
+                    poolHits[pick.code].orEmpty(),
+                    vm,
+                    state.picksTrend[pick.code],
+                    trendAttempted = state.picksTrendAttempted.contains(pick.code),
+                )
             }
         }
     }
@@ -186,6 +226,7 @@ private fun PickRow(
     pools: List<String>,
     vm: SkappViewModel,
     trend: com.skapp.app.data.TrendForecast.Result? = null,
+    trendAttempted: Boolean = true,
 ) {
     Column(
         Modifier
@@ -194,7 +235,7 @@ private fun PickRow(
             .padding(vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(3.dp),
     ) {
-        TrendLine(trend)
+        TrendLine(trend, trendAttempted)
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text(
                 pick.name?.takeIf { it.isNotBlank() } ?: pick.code,
@@ -255,11 +296,23 @@ private fun PickRow(
 /**
  * 推股卡的趋势行。
  *
- * 空态要区分「没算出来」与「样本不足」：前者是拉取失败（可重试），后者是这只票日 K 不够 60 根。
- * 写成统一的「暂无趋势」会让人以为是该股没有趋势，用户就不知道该不该再刷一次。
+ * 空态要区分三种情况：
+ *   - 没轮到算（只有名单前几只算趋势，其余票本来就没拉日 K）
+ *   - 算了但没算出来（日 K 拉取失败，或不足 60 根）
+ *   - 算出来了
+ * 前两种在前端表现都是「没有结果」，合成一句「暂无趋势」会让人以为是该股没有趋势，
+ * 也会让人把性能取舍误读成「名单只取了前 5 只」。
  */
 @Composable
-private fun TrendLine(trend: com.skapp.app.data.TrendForecast.Result?) {
+private fun TrendLine(trend: com.skapp.app.data.TrendForecast.Result?, attempted: Boolean) {
+    if (trend == null && !attempted) {
+        Text(
+            "多日趋势：未计算（本轮名单未覆盖该票，点详情可看单票）",
+            style = MaterialTheme.typography.bodySmall,
+            color = SkColors.textSecondary,
+        )
+        return
+    }
     if (trend == null) {
         Text(
             "多日趋势：未算出（日 K 拉取失败或不足 60 根，可点详情重试）",

@@ -93,8 +93,10 @@ object DataCache {
         val key = klineKey(code, adjust, count)
         if (!force) get<List<KBar>>(key)?.let { return it }
         val bars = MarketDataClient.dayKline(code, count, adjust)
-        // intradaySensitive：午休/盘前写入的长 TTL 一旦跨进盘中就作废（详见 CacheEntry 注释）
-        put(key, bars, dayTtlMs(), intradaySensitive = true)
+        // 空 = 三源全失败（不是「这只票没有日 K」）。收盘后 TTL 6 小时，一次失败会让
+        // 这票整晚无日 K；盘中虽只 60 秒，但推股页趋势是按次计算后写进快照的，会被固化成
+        // 整轮「未算出」。不入缓存，让下次调用重试。
+        if (bars.isNotEmpty()) put(key, bars, dayTtlMs(), intradaySensitive = true)
         return bars
     }
 

@@ -178,9 +178,11 @@ internal class LocalPicksHolder(
             localPicksMsg = "正在本地深算${session.label}：${session.basis}",
         )
         try {
+            val t0 = System.currentTimeMillis()
             val calcTime = java.time.OffsetDateTime.now().toString()
             val dropLast = session == com.skapp.app.data.LocalPicks.Session.PREMARKET
             val snapshotSize = runCatching { LocalScreener.marketSnapshot(pz = 500).size }.getOrDefault(0)
+            val tSnapshot = System.currentTimeMillis()
             // mode=all：保留未达标票，由 LocalPicks 决定谁进 picks、谁只当「未达标观察」
             val screened = LocalScreener.screen(
                 onProgress = { msg -> _state.value = _state.value.copy(localPicksMsg = msg) },
@@ -188,7 +190,12 @@ internal class LocalPicksHolder(
                 dropLastBar = dropLast,
                 // 全市场快照不可得时退到自选池：没有这个，推股页在限流下永远是空的
                 fallbackCodes = Watchlist.codes,
+                // 深算档位按自然日推进：rotation=0 时 preselect 恒取预评分前 maxCandidates（40）只，
+                // 其余五千多只永远进不了深算，「全市场扫描」实际只是同一小撮票反复算。
+                // 用日期而不是进程内计数，是为了同一天重算得到同一份结果（可复现），跨天再换档。
+                rotation = java.time.LocalDate.now().toEpochDay().toInt(),
             )
+            val tScreen = System.currentTimeMillis()
             // 多池证据传给算法层参与排序：同一个池是另一套口径的独立判断，
             // 放在 UI 里二次排序等于让「显示顺序」和「算出来的名单」各说一套。
             // 必须在这里**同步现取**池，不能读 state.pools：那取决于名单页自己的
@@ -215,23 +222,56 @@ internal class LocalPicksHolder(
                 totalSnapshot = snapshotSize,
                 poolHits = poolHits,
             )
-            // 名单前 5 只算多日趋势供推股卡趋势段：逐票走 DataCache 拉日 K；
-            // 拉不到或不足 60 根就不给该票方向（不编、不拿同名单其他票的结果顶替）
-            val trends = artifact.picks.take(5).mapNotNull { p ->
-                val bars = runCatching {
+            val tEngine = System.currentTimeMillis()
+            // 名单**全部**票算多日趋势：逐票走 DataCache 拉日 K（6 小时缓存，名单上限 10 只）；
+            // 拉不到或不足 60 根就不给该票方向（不编、不拿同名单其他票的结果顶替）。
+            // 之前只算前 5 只，第 6 只起恒显示「未计算」，被读成「名单只出了前 5 只」——
+            // 而 MAX_PICKS 本是 10：性能取舍换来的是对名单规模的误判，不划算。
+            val trendTargets = artifact.picks
+            var klineCalls = 0
+            var klineMs = 0L
+            val trendFails = mutableListOf<String>()
+            val trends = trendTargets.mapNotNull { p ->
+                val k0 = System.currentTimeMillis()
+                val fetched = runCatching {
                     com.skapp.app.data.DataCache.kline(p.code, "qfq", 250)
-                }.getOrDefault(emptyList())
-                if (bars.size < 60) null else p.code to com.skapp.app.data.TrendForecast.compute(bars)
+                }
+                klineMs += System.currentTimeMillis() - k0
+                klineCalls++
+                val bars = fetched.getOrElse { e ->
+                    trendFails += "${p.code} 抛 ${e.javaClass.simpleName}"
+                    emptyList()
+                }
+                if (bars.size < 60) {
+                    if (bars.isNotEmpty()) trendFails += "${p.code} 仅 ${bars.size} 根"
+                    null
+                } else {
+                    runCatching { p.code to com.skapp.app.data.TrendForecast.compute(bars) }
+                        .onFailure { trendFails += "${p.code} compute ${it.javaClass.simpleName}" }
+                        .getOrNull()
+                }
             }.toMap()
+            val tTrend = System.currentTimeMillis()
+            val timing = buildString {
+                append("首屏 ${tTrend - t0}ms（快照 ${tSnapshot - t0} / 筛选 ${tScreen - tSnapshot} / 引擎 ${tEngine - tScreen}）")
+                append(" · 日K $klineCalls 次 ${klineMs}ms")
+                if (klineCalls > 0) append("，均 ${klineMs / klineCalls}ms")
+                if (trendFails.isNotEmpty()) {
+                    append(" · 趋势失败 ${trendFails.size}/$klineCalls：")
+                    append(trendFails.take(3).joinToString("；"))
+                }
+            }
             _state.value = _state.value.copy(
                 // 本地深算完成即回填首屏推股卡（TodayPicks 由本地产物映射，不经云端）
                 picks = com.skapp.app.data.LocalSnapshot.todayPicks(artifact),
                 picksTrend = trends,
+                picksTrendAttempted = trendTargets.map { it.code }.toSet(),
                 localPremarketPicks = if (session == com.skapp.app.data.LocalPicks.Session.PREMARKET)
                     artifact else _state.value.localPremarketPicks,
                 localMiddayPicks = if (session == com.skapp.app.data.LocalPicks.Session.MIDDAY)
                     artifact else _state.value.localMiddayPicks,
                 localPicksMsg = artifact.reason,
+                localPicksTiming = timing,
             )
             persistLocalPicks(session, artifact)
             // 推送历史入队：flush 交给启动/定时，不在这里等网络

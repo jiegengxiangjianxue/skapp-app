@@ -25,6 +25,20 @@ import java.util.zip.GZIPInputStream
  */
 object Http {
 
+    /**
+     * 断网 / 限流空态验证用的故障注入。默认关闭。
+     *
+     * 放在唯一的 GET 出口，是为了让上层走**真实**的失败路径（超时判定、自选池兜底、
+     * 空态文案），而不是在业务层伪造一个异常把分支抄近路。验证完应删除本开关及其调用点。
+     */
+    enum class Fault(val label: String) {
+        OFFLINE("模拟断网"),
+        RATE_LIMIT("模拟限流"),
+    }
+
+    @Volatile
+    var fault: Fault? = null
+
     /** 一次 GET 的结果。`code < 0` 表示连接层失败，原因在 [error]（类名，便于诊断页展示）。 */
     data class Probe(val code: Int, val body: String?, val error: String? = null) {
         val ok: Boolean get() = code in 200..299
@@ -42,6 +56,12 @@ object Http {
         headers: Map<String, String> = emptyMap(),
         requestGzip: Boolean = false,
     ): Probe {
+        fault?.let { f ->
+            return when (f) {
+                Fault.OFFLINE -> Probe(-1, null, "FaultInjectedOffline")
+                Fault.RATE_LIMIT -> Probe(429, null, "FaultInjectedRateLimit")
+            }
+        }
         var conn: HttpURLConnection? = null
         return try {
             conn = (URL(url).openConnection() as HttpURLConnection).apply {
