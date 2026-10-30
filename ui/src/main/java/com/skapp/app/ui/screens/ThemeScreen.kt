@@ -155,7 +155,9 @@ private fun ThemeCard(t: JSONObject, vm: SkappViewModel) {
                 val status = w.optString("status").lowercase()
                 val buyable = w.has("buyable") && w.optBoolean("buyable", false) &&
                     status !in setOf("insufficient", "fallback", "stale")
-                if (isMainBoardPick(code) && buyable && !pct.isNaN() && pct < 9.6) w else null
+                if (isMainBoardPick(code) && buyable && !pct.isNaN() &&
+                    pct < com.skapp.app.data.MarketLimits.LIMIT_UP_PCT
+                ) w else null
             }
             Text("未启动补涨候选（${watchItems.size} 只 · 星级越高越优先）",
                 fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodySmall)

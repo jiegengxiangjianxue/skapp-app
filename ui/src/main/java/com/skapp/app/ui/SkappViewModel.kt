@@ -119,11 +119,20 @@ data class QuoteRow(
 data class UiState(
     val loading: Boolean = true,
     val error: String? = null,
+    /**
+     * 取数缺口：label →「原因 @HH:mm:ss」。
+     *
+     * 红线要求「缺数据写 unknown，不得静默」：请求失败一律落到这里并在诊断页展示，
+     * 不许把失败静静地化成「暂无数据」。下一次取值成功同名条目自动清掉。
+     */
+    val dataGaps: Map<String, String> = emptyMap(),
     val quotes: List<QuoteRow> = emptyList(),
     val quoteTs: String? = null,
     val marketPulse: List<com.skapp.app.data.MarketPulseRow> = emptyList(),
     val marketPulseTs: String? = null,
     val marketPulseLoading: Boolean = false,
+    /** 异动榜口径：全市场 | 池内（自选+推股）| none（本轮没拿到）；界面必须原样展示 */
+    val marketPulseScope: String = "unknown",
     /** 本轮从异动榜掉出的票（名称+代码），最多 3 个；让用户看得到「谁掉队」而不是静默消失 */
     val pulseDropped: List<String> = emptyList(),
     /** 本地盘前推股（本地深算产出，T-1 收盘口径，当日冻结） */
@@ -490,11 +499,14 @@ class SkappViewModel : ViewModel() {
     }
 
     /**
-     * 启动预热：分 3 批串行推进，批间让出主线程。
+     * 启动预热：分 3 批串行推进（批内 2 路并发）。
      *
-     * 为什么不能一次 6 路并发：冷启动时 6 个请求同时开打，会一起培 HttpURLConnection 连接池
+     * 为什么不能一次 6 路并发：冷启动时 6 个请求同时开打，会一起打满 HttpURLConnection 连接池
      * 并抢 CPU，首页卡顿/白屏的主要原因就在这里。分批后首页首屏先拿行情与指数，
      * 其余数据随后补上；重复调用（重进前台、页面 LaunchedEffect）由 warmUpJob 去重。
+     *
+     * 批间不插固定 delay：coroutineScope 已经等齐本批全部子协程才返回，再 sleep 一遍纯属
+     * 白等（原为 200ms×2）。最大并发数不变，仍是每批 2 路。
      */
     fun warmUpAll() {
         if (warmUpJob?.isActive == true) return
@@ -506,13 +518,11 @@ class SkappViewModel : ViewModel() {
                 launch { runCatching { market.refreshQuotes() } }
                 launch { runCatching { market.loadIndices() } }
             }
-            delay(200)
             // 第 2 批：看板 + 消息（页面级，可稍后）
             coroutineScope {
                 launch { runCatching { news.loadBoard() } }
                 launch { runCatching { news.refreshNewsCalcs() } }
             }
-            delay(200)
             // 第 3 批：推股池 + 实时总结正文
             coroutineScope {
                 launch { runCatching { picks.loadPicks() } }

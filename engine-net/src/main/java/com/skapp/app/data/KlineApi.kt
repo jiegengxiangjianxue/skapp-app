@@ -3,8 +3,6 @@ package com.skapp.app.data
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
-import java.net.HttpURLConnection
-import java.net.URL
 
 /** 日 K 线一根 */
 data class KBar(
@@ -29,17 +27,11 @@ object KlineApi {
     private suspend fun tencentDayKline(code: String, count: Int): List<KBar> = withContext(Dispatchers.IO) {
         val p = SkappApi.prefixed(code)
         val url = RemoteSources.tencentKline(p, count)
-        var conn: HttpURLConnection? = null
         try {
-            conn = (URL(url).openConnection() as HttpURLConnection).apply {
-                connectTimeout = 15000
-                readTimeout = 15000
-                requestMethod = "GET"
-                setRequestProperty("User-Agent", RemoteSources.UA_ANDROID)
-                setRequestProperty("Referer", "https://gu.qq.com/")
-            }
-            if (conn.responseCode != HttpURLConnection.HTTP_OK) return@withContext emptyList()
-            val root = JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
+            // 超时/UA/Referer/gzip 统一走 Http：这四件套过去各写一份，gzip 未解压已复发两次
+            val text = Http.getText(url, timeoutMs = 15000, referer = "https://gu.qq.com/")
+                ?: return@withContext emptyList()
+            val root = JSONObject(text)
             val node = root.optJSONObject("data")?.optJSONObject(p) ?: return@withContext emptyList()
             val arr = node.optJSONArray("qfqday") ?: node.optJSONArray("day")
                 ?: return@withContext emptyList()
@@ -58,8 +50,6 @@ object KlineApi {
             }
         } catch (e: Exception) {
             emptyList()
-        } finally {
-            conn?.disconnect()
         }
     }
 }

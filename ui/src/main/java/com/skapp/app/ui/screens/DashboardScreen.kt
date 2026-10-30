@@ -130,7 +130,14 @@ fun DashboardScreen(vm: SkappViewModel, state: UiState) {
             if (state.marketPulse.isNotEmpty() || state.marketPulseLoading) {
                 SectionTitle("本地异动观察（非买入建议）")
                 Text(
-                    "全市场预筛 · ${state.marketPulseTs ?: "暂无时点"} · " +
+                    "${
+                        when (state.marketPulseScope) {
+                            "全市场" -> "全市场预筛"
+                            "池内" -> "池内预筛（自选+推股，无量比/资金分位）"
+                            "none" -> "异动不可用"
+                            else -> "预筛范围未知"
+                        }
+                    } · ${state.marketPulseTs ?: "暂无时点"} · " +
                         "排序：横截面相对强度（涨幅分位 45% + 量比分位 35% + 资金分位 20%），连续 2 轮确认优先",
                     style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary,
                 )

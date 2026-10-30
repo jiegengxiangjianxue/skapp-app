@@ -37,7 +37,7 @@ object LocalPicks {
     const val MIN_SCORE = 55.0
 
     /** 推股不追涨停：主板涨停附近(≥9.6%)不可买入 */
-    const val MAX_CHG_PCT = 9.6
+    const val MAX_CHG_PCT = MarketLimits.LIMIT_UP_PCT
 
     /** 卡片上最多展示多少条 */
     const val MAX_PICKS = 10

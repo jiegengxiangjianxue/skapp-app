@@ -168,7 +168,7 @@ object NewsCalcEngine {
                     }
                 } ?: emptyList()
                 val codes = (resolveStocks(analysisText, symbols) + storedCodes)
-                    .map { it.filter(Char::isDigit).takeLast(6) }
+                    .map { Code.digits6(it) }
                     .filter { it.length == 6 }
                     .distinct()
                 // ── 板块维度：消息命中的板块 + 板块当日动量 + 板块内个股 ──

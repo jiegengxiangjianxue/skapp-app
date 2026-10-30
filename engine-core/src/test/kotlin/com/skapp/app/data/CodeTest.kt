@@ -2,7 +2,9 @@ package com.skapp.app.data
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 /**
  * 代码归一化 / 前缀 / 直查（纯规则，无 IO）。
@@ -40,5 +42,25 @@ class CodeTest {
         assertNull(Code.directSymbol("900001"), "B 股代码段不在直查范围")
         assertEquals("001234", Code.directSymbol("1234")?.code, "短代码补零后是深市常规段，允许直查")
         assertNull(Code.directSymbol("abc"))
+    }
+
+    @Test
+    fun `取末六位数字用于对齐`() {
+        assertEquals("600519", Code.digits6("sh600519"))
+        assertEquals("000001", Code.digits6("000001"))
+        assertEquals("", Code.digits6("abc"), "无数字返回空串，调用方靠 length==6 自行过滤")
+    }
+
+    @Test
+    fun `主板判定只认沪深主板七段前缀`() {
+        assertTrue(Code.isMainBoard("600519"))
+        assertTrue(Code.isMainBoard("000001"))
+        assertTrue(Code.isMainBoard("605588"))
+        // 带市场前缀也要判对：旧实现 take(3) 会把 sh600519 判成非主板，进而整表过滤成空
+        assertTrue(Code.isMainBoard("sh600519"))
+        assertFalse(Code.isMainBoard("003816"), "003 深主板不在推荐口径内")
+        assertFalse(Code.isMainBoard("300750"))
+        assertFalse(Code.isMainBoard("688981"))
+        assertFalse(Code.isMainBoard("830799"))
     }
 }

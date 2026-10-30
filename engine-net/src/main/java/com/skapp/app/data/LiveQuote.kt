@@ -56,6 +56,15 @@ object LiveQuote {
                     out[code] = q
                 }
         }
+
+        // 快照与云端都没给到（东财 clist 被风控时两个源会一起空）：最后直连腾讯补齐。
+        // 宁可标陈旧，也不能让首页只剩空价——空价与「确实没这只票」在界面上无法区分。
+        val stillMissing = wanted.filter { it !in out }
+        if (stillMissing.isNotEmpty()) {
+            runCatching { TencentQuote.batch(stillMissing) }
+                .getOrDefault(emptyMap())
+                .forEach { (code, q) -> out[code] = q }
+        }
         out
     }
 }

@@ -2,10 +2,6 @@ package com.skapp.app.data
 
 import org.json.JSONArray
 import org.json.JSONObject
-import java.io.BufferedReader
-import java.io.InputStreamReader
-import java.net.HttpURLConnection
-import java.net.URL
 
 class AllSourcesClient {
     private val TAG = "AllSourcesClient"
@@ -44,26 +40,14 @@ class AllSourcesClient {
     // 从 GitHub API 拉取数据
     private fun fetchFromGitHubApi(apiUrl: String): JSONObject? {
         return try {
-            val url = URL(apiUrl)
-            val connection = url.openConnection() as HttpURLConnection
-            connection.requestMethod = "GET"
-            connection.setRequestProperty("Accept", "application/vnd.github.v3+json")
-            connection.connect()
-
-            if (connection.responseCode == HttpURLConnection.HTTP_OK) {
-                val reader = BufferedReader(InputStreamReader(connection.inputStream))
-                val response = reader.readText()
-                reader.close()
-
-                // GitHub API 返回的是 base64 编码的内容
-                val jsonResponse = JSONObject(response)
-                val content = jsonResponse.getString("content")
-                val decodedBytes = java.util.Base64.getDecoder().decode(content)
-                val decodedContent = String(decodedBytes)
-                JSONObject(decodedContent)
-            } else {
-                null
-            }
+            val response = Http.getText(
+                apiUrl,
+                headers = mapOf("Accept" to "application/vnd.github.v3+json"),
+            ) ?: return null
+            // GitHub API 返回的是 base64 编码的内容
+            val content = JSONObject(response).getString("content")
+            val decodedBytes = java.util.Base64.getDecoder().decode(content)
+            JSONObject(String(decodedBytes))
         } catch (e: Exception) {
             Log.e(TAG, "GitHub API fetch failed", e)
             null
@@ -73,19 +57,7 @@ class AllSourcesClient {
     // 从 URL 拉取数据
     private fun fetchFromUrl(urlString: String): JSONObject? {
         return try {
-            val url = URL(urlString)
-            val connection = url.openConnection() as HttpURLConnection
-            connection.requestMethod = "GET"
-            connection.connect()
-
-            if (connection.responseCode == HttpURLConnection.HTTP_OK) {
-                val reader = BufferedReader(InputStreamReader(connection.inputStream))
-                val response = reader.readText()
-                reader.close()
-                JSONObject(response)
-            } else {
-                null
-            }
+            Http.getText(urlString)?.let { JSONObject(it) }
         } catch (e: Exception) {
             Log.e(TAG, "URL fetch failed", e)
             null

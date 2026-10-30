@@ -20,13 +20,10 @@ import kotlinx.coroutines.withContext
  */
 object LocalScreener {
 
-    /** 主板代码前缀（推荐输出红线：600/601/603/605/000/001/002，排除 300/301/688/北交所） */
-    private val MAIN_BOARD_PREFIXES = setOf("600", "601", "603", "605", "000", "001", "002")
-
     /** 筛选条件 */
     data class Criteria(
         val minChgPct: Double = 1.0,
-        val maxChgPct: Double = 9.6,   // 推股不追涨停：主板涨停附近(≥9.6%)不可买入
+        val maxChgPct: Double = MarketLimits.LIMIT_UP_PCT,   // 推股不追涨停：主板涨停附近(≥9.6%)不可买入
         val minVolRatio: Double = 1.2,
         val minScore: Double = 55.0,
         /** 规格聚合分门槛。与 [minScore] 分开：切换期可以只开一个，不用二选一。 */
@@ -118,11 +115,44 @@ object LocalScreener {
      * @param rotation 候选池轮换档位：0=按预评分取前列；n>0 表示在预评分排序里整段后移 n 段，
      *        用于心跳多轮之间把深算名额摊到全市场（详见 [preselect]）。
      */
+    /**
+     * 全市场快照不可得时的候选池：给定代码（自选/推股池）走腾讯报价拼成与 clist 同形状的行。
+     * 只填得出价格与涨跌幅，量比/换手/资金流为 null —— 依赖它们的因子会自然落空，
+     * 这比用零值凑出一个假候选强。
+     */
+    private suspend fun poolSnap(codes: List<String>): List<LiveMarket.Row> {
+        val clean = codes.mapNotNull { Code.normalize(it) }.distinct()
+        if (clean.isEmpty()) return emptyList()
+        val ts = System.currentTimeMillis()
+        return TencentQuote.batch(clean).values.map { q ->
+            LiveMarket.Row(
+                code = q.code,
+                name = q.name,
+                price = q.price,
+                pctChg = q.pctChg,
+                volumeLots = null,
+                amount = null,
+                amplitude = null,
+                turnoverRate = null,
+                pe = null,
+                volRatio = null,
+                mv = null,
+                mainNet = null,
+                ts = ts,
+            )
+        }
+    }
+
     suspend fun screen(c: Criteria = Criteria(), onProgress: (String) -> Unit = {},
                        mode: String = "score", dropLastBar: Boolean = false,
-                       rotation: Int = 0): List<Screened> = coroutineScope {
+                       rotation: Int = 0, fallbackCodes: List<String> = emptyList()): List<Screened> = coroutineScope {
         onProgress("正在实时拉取全市场行情…")
-        val snap = LiveMarket.snapshot()
+        // 全市场快照被东财风控拒绝时退回代码池（自选），否则候选永为 0、推股名单恒空，
+        // 而用户只看到「暂无数据」——不知道是被限流。
+        val snap = LiveMarket.snapshot().ifEmpty {
+            onProgress("全市场行情不可用，改用自选池（${fallbackCodes.size} 只）深算；量比/资金流不可得")
+            poolSnap(fallbackCodes)
+        }
         if (snap.isEmpty()) return@coroutineScope emptyList()
 
         // 板块强度表：只用于排序加权，映射表拿不到就整块降级（不拖垮筛选，也不编强度）
@@ -155,11 +185,10 @@ object LocalScreener {
         val pool = snap.filter { row ->
             val chg = row.pctChg ?: return@filter false
             val name = row.name.orEmpty()
-            val st = c.excludeST && (name.contains("ST", ignoreCase = true) ||
-                name.contains("退", ignoreCase = true))
-            val main = row.code.take(3) in MAIN_BOARD_PREFIXES && !st
+            val st = c.excludeST && NameRules.isSTOrDelisting(name)
+            val main = Code.isMainBoard(row.code) && !st
             when {
-                limitup -> main && chg >= 9.5
+                limitup -> main && chg >= MarketLimits.LIMIT_UP_SCAN_PCT
                 else -> main && chg >= c.minChgPct && chg < c.maxChgPct &&
                     // 跨模块属性没法智能转换，先落局部值
                     (row.volRatio?.let { it >= c.minVolRatio } != false)
@@ -247,7 +276,7 @@ object LocalScreener {
 
         when (mode) {
             // 涨停仅观察/归因，不进入普通推荐出口。
-            "limitup" -> return@coroutineScope out.filter { (it.pctChg ?: 0.0) >= 9.5 }
+            "limitup" -> return@coroutineScope out.filter { (it.pctChg ?: 0.0) >= MarketLimits.LIMIT_UP_SCAN_PCT }
                 .sortedByDescending { it.pctChg ?: 0.0 }
             // 共振页返回全部分析结果（含未达标），由 UI 自行排序。
             "all" -> return@coroutineScope out.sortedByDescending { it.centralScore ?: (it.pctChg ?: 0.0) }
@@ -261,7 +290,7 @@ object LocalScreener {
                 it.centralScore >= c.minScore && canonicalOk && riskOk && it.buyable == true &&
                 (it.pctChg ?: Double.POSITIVE_INFINITY) < c.maxChgPct &&
                 // 普通推荐不接受涨停扫描结果，即使上游误标了可买。
-                (it.pctChg ?: Double.POSITIVE_INFINITY) < 9.5
+                (it.pctChg ?: Double.POSITIVE_INFINITY) < MarketLimits.LIMIT_UP_SCAN_PCT
         }.sortedByDescending { it.effectiveScore ?: it.centralScore ?: 0.0 }
         if (scored.isNotEmpty()) return@coroutineScope scored
         // 评分不足时只展示可买且有可用本地引擎的实时结果，不把 insufficient 伪装成推荐。

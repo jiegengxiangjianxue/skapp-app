@@ -6,11 +6,8 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
-import java.io.BufferedReader
-import java.io.InputStreamReader
 import java.net.HttpURLConnection
 import java.net.URL
-import java.nio.charset.Charset
 
 /**
  * stocks-holo 仓客户端 —— 网页版个股详情的真正数据源。
@@ -68,26 +65,19 @@ object HoloClient {
     }
 
     private fun fetch(url: String, charset: String, withAuth: Boolean): String? {
-        var conn: HttpURLConnection? = null
-        return try {
-            conn = (URL(url).openConnection() as HttpURLConnection).apply {
-                connectTimeout = 15000
-                readTimeout = 15000
-                requestMethod = "GET"
-                setRequestProperty("User-Agent", "skapp-android")
-                if (withAuth) {
-                    token?.let { setRequestProperty("Authorization", "Bearer $it") }
-                    setRequestProperty("Accept", "application/vnd.github.raw")
-                }
+        val headers = buildMap {
+            if (withAuth) {
+                token?.let { put("Authorization", "Bearer $it") }
+                put("Accept", "application/vnd.github.raw")
             }
-            if (conn.responseCode != HttpURLConnection.HTTP_OK) return null
-            val cs = if (charset == "gbk") Charset.forName("GBK") else Charsets.UTF_8
-            BufferedReader(InputStreamReader(conn.inputStream, cs)).use { it.readText() }
-        } catch (e: Exception) {
-            null
-        } finally {
-            conn?.disconnect()
         }
+        return Http.getText(
+            url = url,
+            charset = Http.charset(charset),
+            timeoutMs = 15000,
+            ua = "skapp-android",
+            headers = headers,
+        )
     }
 
     private fun getJson(url: String): JSONObject? =

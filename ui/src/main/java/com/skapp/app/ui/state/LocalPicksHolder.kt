@@ -180,6 +180,8 @@ internal class LocalPicksHolder(
                 onProgress = { msg -> _state.value = _state.value.copy(localPicksMsg = msg) },
                 mode = "all",
                 dropLastBar = dropLast,
+                // 全市场快照不可得时退到自选池：没有这个，推股页在限流下永远是空的
+                fallbackCodes = Watchlist.codes,
             )
             // 多池证据传给算法层参与排序：同一个池是另一套口径的独立判断，
             // 放在 UI 里二次排序等于让「显示顺序」和「算出来的名单」各说一套。

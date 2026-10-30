@@ -19,9 +19,8 @@ object MysticEngine {
     suspend fun weatherPowerBoost(city: String = "beijing"): Pair<String, Double> {
         return try {
             val url = "https://wttr.in/$city?format=j1"
-            val conn = java.net.URL(url).openConnection() as java.net.HttpURLConnection
-            conn.connectTimeout = 8000; conn.readTimeout = 8000
-            val body = conn.inputStream.bufferedReader().readText()
+            val body = Http.getText(url, timeoutMs = 8000)
+                ?: return "天气数据不可用" to 50.0
             val temp = org.json.JSONObject(body).getJSONArray("current_condition")
                 .getJSONObject(0).getDouble("temp_C")
             when {

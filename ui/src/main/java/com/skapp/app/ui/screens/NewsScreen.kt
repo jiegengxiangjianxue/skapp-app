@@ -84,6 +84,12 @@ fun NewsScreen(vm: SkappViewModel, state: UiState) {
                 style = MaterialTheme.typography.bodySmall)
         }
 
+        // 实时异动并进消息页：消息告诉「发生了什么」，异动告诉「谁在动」，同一屏看因果。
+        // 口径必须写明：池内口径没有量比与资金分位，榜单含义与全市场不同。
+        if (state.marketPulse.isNotEmpty() || state.marketPulseScope == "none") {
+            PulseSection(state, vm)
+        }
+
         if (snapshotRows.isEmpty() && calcRows.isEmpty() && !state.newsCalcLoading) {
             Text(
                 if (tab == 1) "暂无数据：主线消息未返回。" else "暂无数据：快讯未返回。",
@@ -120,6 +126,50 @@ fun NewsScreen(vm: SkappViewModel, state: UiState) {
                     item { Text("实时补充", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold) }
                     items(calcOnly, key = { "calc:${it.newsTitle}:${it.ts.orEmpty()}" }) { calc -> NewsCalcCard(calc, vm) }
                 }
+            }
+        }
+    }
+}
+
+/** 实时异动卡：口径、前 5 条、不可用时的原因都写在这一块。 */
+@Composable
+private fun PulseSection(state: UiState, vm: SkappViewModel) {
+    val scopeText = when (state.marketPulseScope) {
+        "全市场" -> "全市场"
+        "池内" -> "自选+推股池（无量比/资金分位）"
+        "none" -> "本轮不可用"
+        else -> "范围未知"
+    }
+    Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors()) {
+        Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("实时异动", fontWeight = FontWeight.SemiBold)
+                Text(scopeText, style = MaterialTheme.typography.labelSmall, color = SkColors.textSecondary)
+            }
+            if (state.marketPulse.isEmpty()) {
+                val why = state.dataGaps["全市场快照"] ?: state.dataGaps["池内异动报价"] ?: "原因未记录"
+                Text(
+                    "异动数据不可用：$why",
+                    style = MaterialTheme.typography.bodySmall, color = SkColors.errorText,
+                )
+            } else {
+                state.marketPulse.take(5).forEach { row ->
+                    Row(
+                        Modifier.fillMaxWidth().clickable { vm.openDetail(row.code) },
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Text("${row.name} ${row.code}", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
+                        Text(
+                            row.pctChg?.let { String.format(java.util.Locale.US, "%+.2f%%", it) } ?: "暂无",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if ((row.pctChg ?: 0.0) >= 0) SkColors.success else SkColors.errorText,
+                        )
+                    }
+                }
+                Text(
+                    "共 ${state.marketPulse.size} 条 · ${state.marketPulseTs ?: "暂无时点"} · 完整榜单见行情页",
+                    style = MaterialTheme.typography.labelSmall, color = SkColors.textSecondary,
+                )
             }
         }
     }

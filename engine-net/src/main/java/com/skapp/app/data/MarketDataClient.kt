@@ -280,7 +280,7 @@ object MarketDataClient {
      * data 形如 "日期,开,高,低,收,量,额,换手,,,0;"，条目用 ; 分隔。
      */
     private fun thsKline(code: String, count: Int, adjust: String): List<KBar> {
-        val digits = code.filter { it.isDigit() }.takeLast(6)
+        val digits = Code.digits6(code)
         if (digits.length != 6) return emptyList()
         val band = when (adjust) {
             "hfq" -> "02"

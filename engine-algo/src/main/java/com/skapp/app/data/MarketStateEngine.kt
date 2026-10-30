@@ -3,10 +3,6 @@ package com.skapp.app.data
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
-import java.io.BufferedReader
-import java.io.InputStreamReader
-import java.net.HttpURLConnection
-import java.net.URL
 import java.text.SimpleDateFormat
 import java.util.Locale
 
@@ -42,51 +38,19 @@ object MarketStateEngine {
 
     private const val TIMEOUT = 15000
 
-    private fun fetchMarket(): JSONObject? {
-        val url = RemoteSources.apiMarket()
-        var conn: HttpURLConnection? = null
-        return try {
-            conn = (URL(url).openConnection() as HttpURLConnection).apply {
-                connectTimeout = TIMEOUT
-                readTimeout = TIMEOUT
-                requestMethod = "GET"
-                setRequestProperty("User-Agent", "Mozilla/5.0 (Android) skapp")
-            }
-            if (conn.responseCode != HttpURLConnection.HTTP_OK) return null
-            BufferedReader(InputStreamReader(conn.inputStream, Charsets.UTF_8)).use {
-                runCatching { JSONObject(it.readText()) }.getOrNull()
-            }
-        } catch (e: Exception) {
-            null
-        } finally {
-            conn?.disconnect()
-        }
-    }
+    private fun fetchMarket(): JSONObject? =
+        Http.getText(RemoteSources.apiMarket(), timeoutMs = TIMEOUT, ua = "Mozilla/5.0 (Android) skapp")
+            ?.let { runCatching { JSONObject(it) }.getOrNull() }
 
     private fun fetchCyclePool(): JSONObject? {
-        // 直接从 GitHub API 拉周期池 (cycles/cycle_pool_v2.json)
+        // 直接从 GitHub API 拉周期池 (cycles/cycle_pool_v2.json)；取不到就让 E=0（中立）
         val url = "${RemoteSources.base("jiegengxiangjianxue", "skapp-data")}/cycle_pool_v2.json"
-        var conn: HttpURLConnection? = null
-        return try {
-            conn = (URL(url).openConnection() as HttpURLConnection).apply {
-                connectTimeout = TIMEOUT
-                readTimeout = TIMEOUT
-                requestMethod = "GET"
-                setRequestProperty("User-Agent", "Mozilla/5.0 (Android) skapp")
-                setRequestProperty("Accept", "application/vnd.github.v3.raw")
-            }
-            if (conn.responseCode != HttpURLConnection.HTTP_OK) {
-                // 如果文件不存在或不可访问，返回 null（让 E=0，中立）
-                return null
-            }
-            BufferedReader(InputStreamReader(conn.inputStream, Charsets.UTF_8)).use {
-                runCatching { JSONObject(it.readText()) }.getOrNull()
-            }
-        } catch (e: Exception) {
-            null
-        } finally {
-            conn?.disconnect()
-        }
+        return Http.getText(
+            url,
+            timeoutMs = TIMEOUT,
+            ua = "Mozilla/5.0 (Android) skapp",
+            accept = "application/vnd.github.v3.raw",
+        )?.let { runCatching { JSONObject(it) }.getOrNull() }
     }
 
     /**

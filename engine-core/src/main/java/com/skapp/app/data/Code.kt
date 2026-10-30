@@ -12,6 +12,17 @@ package com.skapp.app.data
  */
 object Code {
 
+    /** 推荐输出的交易权限红线：仅沪深主板（600/601/603/605/000/001/002）。 */
+    val MAIN_BOARD_PREFIXES = setOf("600", "601", "603", "605", "000", "001", "002")
+
+    /**
+     * 是否沪深主板（推荐口径）。先取末 6 位再比前缀，`sh600000` 这类带市场前缀的输入也判得对。
+     *
+     * 这是全仓唯一实现：此前 6 处各写一遍（`take(3)` / `length==6 && startsWith` /
+     * `startsWith("60")||startsWith("00")`），口径不一致使 003xxx 在统计路径与推荐路径归属相反。
+     */
+    fun isMainBoard(code: String): Boolean = code.takeLast(6).take(3) in MAIN_BOARD_PREFIXES
+
     fun normalize(raw: String): String? {
         val s = raw.trim().lowercase()
         if (s.startsWith("hk")) {
@@ -23,6 +34,9 @@ object Code {
         val b = digits.padStart(6, '0')
         return if (b.length == 6) b else null
     }
+
+    /** 取末 6 位数字，无数字时返回空串。只用于展示/对齐，不校验代码是否真实存在。 */
+    fun digits6(raw: String): String = raw.filter { it.isDigit() }.takeLast(6)
 
     /**
      * 行情接口用的带市场前缀代码（腾讯/东财批量报价要 sh/sz/bj）。
@@ -41,13 +55,13 @@ object Code {
      * 只凭代码判断是否是 A 股主板/创业板/科创板代码，不查代码表。
      * 代码表拉不到时用它兜底搜索，避免把「代码表不可用」误导成「查无此股」。
      */
+    /** 可按代码直查的 A 股代码段：主板七段 + 创业板 + 科创板。 */
+    val A_SHARE_PREFIXES = MAIN_BOARD_PREFIXES + setOf("300", "301", "688", "689")
+
     fun directSymbol(raw: String): SymbolEntry? {
         val code = normalize(raw) ?: return null
         if (code.startsWith("hk")) return null
-        val prefix = code.take(3)
-        if (prefix !in setOf("600", "601", "603", "605", "000", "001", "002", "300", "301", "688", "689")) {
-            return null
-        }
+        if (code.take(3) !in A_SHARE_PREFIXES) return null
         return SymbolEntry(code, null)
     }
 }

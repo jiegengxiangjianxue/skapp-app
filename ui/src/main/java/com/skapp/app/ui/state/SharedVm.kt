@@ -52,6 +52,29 @@ internal abstract class StateHolder(protected val shared: SharedVm) {
     protected val _state: MutableStateFlow<UiState> get() = shared.flow
 
     protected val viewModelScope: CoroutineScope get() = shared.scope
+
+    /**
+     * 取数兜底 + 记录缺口：拿不到数据时给调用方一个明确的未知值（null / 空表），
+     * 同时把「为什么没有」写进 UiState.dataGaps 供诊断页展示。
+     *
+     * 存在意义是把 `runCatching{…}.getOrDefault(emptyList())` 这类静默兜底换掉：
+     * 静默时「请求失败」和「确实没有数据」在界面上长得一样，用户只能看到「暂无数据」。
+     * 下次成功会清掉同名缺口，所以它反映的是「当前是否缺」，不是历史日志。
+     */
+    protected suspend fun <T> gap(label: String, unknown: () -> T, block: suspend () -> T): T = try {
+        val value = block()
+        if (label in _state.value.dataGaps) {
+            _state.value = _state.value.copy(dataGaps = _state.value.dataGaps - label)
+        }
+        value
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        val why = (e.message ?: e::class.simpleName ?: "unknown").take(80)
+        val at = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US).format(java.util.Date())
+        _state.value = _state.value.copy(dataGaps = _state.value.dataGaps + (label to "$why @$at"))
+        unknown()
+    }
 }
 
 /**

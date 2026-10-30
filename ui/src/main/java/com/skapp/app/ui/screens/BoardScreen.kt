@@ -480,11 +480,6 @@ private fun marketLabel(k: String): String = when (k) {
 
 /** 每日总结卡：网页版 daily_brief.json（盘后自动生成），取正文前 25 行展示 */
 
-/* 2026-10-27 删除：原 readRemoteText() 本地实现（含一段错误注释「HttpURLConnection 默认请求 gzip」）。
- * 删除原因：① 全仓 0 个调用点（`grep -rn readRemoteText` 仅命中定义本身）；
- * ② 同类实现已收敛到 engine-net 的 Http.getText()（gzip/UA/超时一份）；
- * ③ 原注释与事实相反：HttpURLConnection 不会自动加 Accept-Encoding，该 gzip 分支基本走不到。 */
-
 @Composable
 private fun DailyBriefCard(summary: Map<String, Any?>) {
     val t = summary["text"]?.toString()?.takeIf { it.isNotBlank() } ?: return

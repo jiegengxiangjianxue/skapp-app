@@ -617,9 +617,7 @@ object SiteBoardClient {
         uniqueStockItems(attribution + latest)
 
 
-    private fun isMainBoardCode(code: String): Boolean =
-        code.length == 6 && (code.startsWith("600") || code.startsWith("601") || code.startsWith("603") ||
-            code.startsWith("605") || code.startsWith("000") || code.startsWith("001") || code.startsWith("002"))
+    private fun isMainBoardCode(code: String): Boolean = Code.isMainBoard(code)
 
     private fun canonicalCode(raw: String): String? {
         val value = raw.trim().lowercase(java.util.Locale.ROOT)
@@ -656,7 +654,7 @@ object SiteBoardClient {
                 val livePct = q.pctChg
                 if (livePrice == null && livePct == null) return@map item
                 repriced++
-                val isLimitUp = (livePct ?: 0.0) >= 9.6
+                val isLimitUp = (livePct ?: 0.0) >= MarketLimits.LIMIT_UP_PCT
                 if (isLimitUp) limitUp++
                 val extra = LinkedHashMap<String, Any?>(item.extra)
                 if (item.price != null) extra["_cloud_price"] = item.price

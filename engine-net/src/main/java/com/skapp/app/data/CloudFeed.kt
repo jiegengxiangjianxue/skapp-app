@@ -6,8 +6,6 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
-import java.net.HttpURLConnection
-import java.net.URL
 import java.text.SimpleDateFormat
 import java.util.Locale
 
@@ -183,25 +181,17 @@ object CloudFeed {
     const val ERROR_JUDGEMENT_REFUSED = "judgement-refused：端上自算，仅对照面板可读"
 
     private fun fetch(doc: Doc): CloudDoc {
-        var conn: HttpURLConnection? = null
         val at = now()
+        val probe = Http.probe("$BASE/${doc.file}", timeoutMs = TIMEOUT)
+        if (!probe.ok) {
+            // 保留具体原因：连接层失败给类名，HTTP 失败给状态码，诊断页才分得清「没网」与「404」
+            return CloudDoc(doc, null, at, null, error = probe.error ?: "HTTP ${probe.code}")
+        }
         return try {
-            conn = (URL("$BASE/${doc.file}").openConnection() as HttpURLConnection).apply {
-                connectTimeout = TIMEOUT
-                readTimeout = TIMEOUT
-                requestMethod = "GET"
-                setRequestProperty("User-Agent", RemoteSources.UA_ANDROID)
-            }
-            if (conn.responseCode != 200) {
-                return CloudDoc(doc, null, at, null, error = "HTTP ${conn.responseCode}")
-            }
-            val text = conn.inputStream.bufferedReader().use { it.readText() }
-            val json = JSONObject(text)
+            val json = JSONObject(probe.text)
             CloudDoc(doc, json, at, ageHoursOf(json))
         } catch (e: Exception) {
             CloudDoc(doc, null, at, null, error = e.message ?: e.javaClass.simpleName)
-        } finally {
-            conn?.disconnect()
         }
     }
 

@@ -153,14 +153,25 @@ object LiveMarket {
         val tradable: Boolean
             get() = (price ?: 0.0) > 0.0 && (volumeLots ?: 0.0) > 0.0
 
-        /** 主板 60/00/000 才算「可交易主板」，其余（创业板/科创板/北交所）默认排除。 */
+        /**
+         * 是否沪深主板。与 [Code.isMainBoard] 同一判据——此前这里用 `startsWith("60")||startsWith("00")`
+         * 的宽口径，使 003xxx 在统计路径算主板、在推荐路径算非主板，同一只票归属相反。
+         */
         val mainBoard: Boolean
-            get() = code.length == 6 && (code.startsWith("60") || code.startsWith("00")) &&
-                !code.startsWith("300") && !code.startsWith("301") && !code.startsWith("688")
+            get() = Code.isMainBoard(code)
     }
 
     private const val PAGE_SIZE = 500
     private const val MAX_PAGES = 40
+
+    /**
+     * clist 的备用域名。实测 push2 会被风控直接返回空，而 push2delay 同一时刻有数据；
+     * 反过来 push2delay 连续请求也会被限流。两个都不是稳定源，所以两个都试。
+     */
+    private val HOSTS = arrayOf("https://push2.eastmoney.com", "https://push2delay.eastmoney.com")
+
+    /** 最近一次拉成功的域名下标：限流按域名算，粘住可用的那个能省一半请求。 */
+    @Volatile private var hostIdx = 0
 
     @Volatile private var cached: List<Row> = emptyList()
     @Volatile private var cachedAt = 0L
@@ -198,12 +209,24 @@ object LiveMarket {
     }
 
     private fun fetchPage(page: Int): List<Row> {
-        val url = "https://push2.eastmoney.com/api/qt/clist/get?pn=$page&pz=$PAGE_SIZE&po=1&fid=f3" +
+        val query = "/api/qt/clist/get?pn=$page&pz=$PAGE_SIZE&po=1&fid=f3" +
             "&fs=m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81+s:2048" +
             // f15/f18/f24/f25 一并取：RPS（60日/年初至今涨幅）与封板率（最高价 vs 涨停价）
             // 都要它们，放在同一次批量里不增加请求数。
             "&fields=f2,f3,f5,f6,f7,f8,f9,f10,f12,f14,f15,f16,f17,f18,f20,f22,f24,f25,f62"
-        val txt = httpGet(url) ?: return emptyList()
+        for (attempt in HOSTS.indices) {
+            val idx = (hostIdx + attempt) % HOSTS.size
+            val rows = parsePage(httpGet(HOSTS[idx] + query))
+            if (rows.isNotEmpty()) {
+                hostIdx = idx
+                return rows
+            }
+        }
+        return emptyList()
+    }
+
+    private fun parsePage(txt: String?): List<Row> {
+        if (txt.isNullOrEmpty()) return emptyList()
         val obj = runCatching { JSONObject(txt) }.getOrNull() ?: return emptyList()
         val arr = obj.optJSONObject("data")?.optJSONArray("diff") ?: return emptyList()
         val ts = System.currentTimeMillis()

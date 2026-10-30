@@ -117,7 +117,7 @@ object StrategyCard {
             val name = m.name.orEmpty()
             
             // 排除 ST
-            val isST = name.contains("ST", ignoreCase = true) || name.contains("退", ignoreCase = true)
+            val isST = NameRules.isSTOrDelisting(name)
             if (isST) return@filter false
             
             // 涨幅 0-5%

@@ -68,6 +68,7 @@ fun DiagScreen(vm: SkappViewModel, state: UiState) {
         Text("数据源自检", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
         DecisionCardToggles()
         HealthGuardCard()
+        DataGapCard(state)
         SourceLedgerCard(state, vm)
         val stats = state.registryStats
         val registry = rows.firstOrNull { it.first == "源注册表" }?.second
@@ -193,6 +194,44 @@ private fun SourceLedgerCard(state: UiState, vm: SkappViewModel) {
  * 注意：因为停顿是**正在进行时**写的，所以遇到真正卡死的场景，用户回来时可能已经能看到记录；
  * 内存告警则是预先留痕，两者都不依赖崩溃栈。
  */
+/**
+ * 取数缺口：哪个数据没拿到、为什么、什么时候。
+ *
+ * 与「运行健康」分开：健康看进程与守护，这里看数据本身——没有这张卡片，
+ * 「请求失败」与「真的没数据」在界面上无法区分，只能都显示成「暂无」。
+ */
+@Composable
+private fun DataGapCard(state: UiState) {
+    val gaps = state.dataGaps
+    Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors()) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("取数缺口（失败不静默）", fontWeight = FontWeight.SemiBold)
+            if (gaps.isEmpty()) {
+                Text(
+                    "当前无缺口：本轮取数全部成功",
+                    style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary,
+                )
+            } else {
+                gaps.entries.sortedBy { it.key }.take(20).forEach { (label, why) ->
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text(
+                            label,
+                            style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium,
+                        )
+                        Text(why, style = MaterialTheme.typography.bodySmall, color = SkColors.errorText)
+                    }
+                }
+                if (gaps.size > 20) {
+                    Text(
+                        "另有 ${gaps.size - 20} 项未展示",
+                        style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary,
+                    )
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun HealthGuardCard() {
     val ctx = LocalContext.current

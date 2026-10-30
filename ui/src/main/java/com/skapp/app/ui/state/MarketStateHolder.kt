@@ -100,7 +100,7 @@ internal class MarketStateHolder(shared: SharedVm) : StateHolder(shared) {
     fun loadSmartMoney() {
         viewModelScope.launch {
             _state.value = _state.value.copy(smartMoneyLoading = true)
-            val s = runCatching { DbTables.smartMoney() }.getOrNull()
+            val s = gap("聪明钱信号", { null }) { DbTables.smartMoney() }
             _state.value = _state.value.copy(smartMoney = s ?: _state.value.smartMoney, smartMoneyLoading = false)
         }
     }
@@ -138,9 +138,9 @@ internal class MarketStateHolder(shared: SharedVm) : StateHolder(shared) {
                 } else {
                     null
                 }
-                val gate = runCatching { com.skapp.app.data.SignalCalibration.load() }.getOrNull()
+                val gate = gap("因子校准闸门", { null }) { com.skapp.app.data.SignalCalibration.load() }
                 // 板块主线与因子板一起取：两者在界面上是并列的两道过滤，分开加载会错位
-                val sectors = runCatching { com.skapp.app.data.SectorLink.load() }.getOrNull()
+                val sectors = gap("板块映射", { null }) { com.skapp.app.data.SectorLink.load() }
 
                 // 计算必须离开主线程：每只票要跑 16 个指标、160 根 K 线。之前这段直接在
                 // viewModelScope（Main）里跑，进决策页会卡住主线程，严重时被判 ANR——表现为「容易闪退」。
@@ -152,7 +152,7 @@ internal class MarketStateHolder(shared: SharedVm) : StateHolder(shared) {
                 val klines = coroutineScope {
                     targets.map { code ->
                         async(Dispatchers.IO) {
-                            code to (runCatching { KlineApi.fetchDayKline(code, 160) }.getOrNull() ?: emptyList())
+                            code to gap("决策K线($code)", { emptyList() }) { KlineApi.fetchDayKline(code, 160) }
                         }
                     }.map { it.await() }
                 }
@@ -160,9 +160,9 @@ internal class MarketStateHolder(shared: SharedVm) : StateHolder(shared) {
                 val rows = withContext(Dispatchers.Default) {
                     klines.map { (code, bars) ->
                         val score = if (calib != null && bars.size >= 60) {
-                            runCatching {
+                            gap("因子评分($code)", { null }) {
                                 com.skapp.app.data.FactorWeightStrategy.score(code, bars, calib)
-                            }.getOrNull()
+                            }
                         } else null
                         com.skapp.app.data.FactorRow(code = code, name = "", score = score)
                     }
@@ -332,9 +332,9 @@ internal class MarketStateHolder(shared: SharedVm) : StateHolder(shared) {
                     )
                     // 把心跳同一份快照算出的板块强弱传下去：cycle_v2 不再恒为 0，
                     // 也不会为了一个分数再聚合一遍全市场
-                    runCatching { com.skapp.app.data.MarketStateEngine.computeLive(tick.pulse, tick.sectors) }
-                        .getOrNull()
-                        ?.let { ms ->
+                    gap("市场状态", { null }) {
+                        com.skapp.app.data.MarketStateEngine.computeLive(tick.pulse, tick.sectors)
+                    }?.let { ms ->
                             _state.value = _state.value.copy(marketState = ms, marketStateLoading = false)
                         }
                     tick.deep?.takeIf { it.isNotEmpty() }?.let { deep ->
@@ -348,10 +348,52 @@ internal class MarketStateHolder(shared: SharedVm) : StateHolder(shared) {
         }
     }
 
+    /**
+     * 全市场快照不可得时的异动口径：自选 + 当日推股池，走腾讯直连。
+     *
+     * 字段能给的只有价格与涨跌幅（腾讯报价没有量比/资金流），所以池内口径下量比、
+     * 主力净额恒为 null——排序会退化成单纯涨幅分位，这点由调用方的 scope 标注告知用户。
+     */
+    private suspend fun poolSnapshot(): List<Map<String, Any?>> {
+        val codes = (
+            Watchlist.codes +
+                _state.value.picks.signals.mapNotNull { it.code } +
+                _state.value.picks.values.mapNotNull { it.code }
+            ).mapNotNull { com.skapp.app.data.Code.normalize(it) }.distinct()
+        if (codes.isEmpty()) return emptyList()
+        val quotes = gap("池内异动报价", { emptyMap<String, Quote>() }) {
+            com.skapp.app.data.TencentQuote.batch(codes)
+        }
+        return quotes.values.map { q ->
+            mapOf<String, Any?>(
+                "code" to q.code,
+                "name" to q.name,
+                "price" to q.price,
+                "pctChg" to q.pctChg,
+                "volRatio" to null,
+                "turnover" to null,
+                "volume" to null,
+                "amplitude" to null,
+                "turnoverRate" to null,
+                "pe" to null,
+                "mv" to null,
+                "mainNet" to null,
+                "speed" to null,
+            )
+        }
+    }
+
     suspend fun refreshMarketPulse() {
         _state.value = _state.value.copy(marketPulseLoading = true)
         try {
-            val snapshot = LocalScreener.marketSnapshot(pz = 500)
+            // 全市场快照被拒（东财风控/限流）时不能静默留空：退到自选+推股池，口径随之缩小
+            var scope = "全市场"
+            val snapshot = gap("全市场快照", { emptyList<Map<String, Any?>>() }) {
+                LocalScreener.marketSnapshot(pz = 500)
+            }.ifEmpty {
+                scope = "池内"
+                poolSnapshot()
+            }
             val prevRows = _state.value.marketPulse.associateBy { it.code }
 
             // ── 1) 横截面基础过滤（主板 / 非 ST / 未涨停附近）──
@@ -369,8 +411,11 @@ internal class MarketStateHolder(shared: SharedVm) : StateHolder(shared) {
                 val code = raw["code"]?.toString() ?: return@mapNotNull null
                 val pct = (raw["pctChg"] as? Number)?.toDouble() ?: return@mapNotNull null
                 val name = raw["name"]?.toString().orEmpty()
-                if (code.take(3) !in setOf("600", "601", "603", "605", "000", "001", "002") ||
-                    name.contains("ST", true) || pct >= 9.6
+                // 与推荐/评分同一口径：ST 与退市整理股都排除（此前只判 ST，退市整理股会漏进候选）
+                // 池内口径允许 ETF与创业/科创（5/1/3 开头），全市场口径仍只留主板个股
+                if ((scope == "全市场" && !com.skapp.app.data.Code.isMainBoard(code)) ||
+                    com.skapp.app.data.NameRules.isSTOrDelisting(name) ||
+                    pct >= com.skapp.app.data.MarketLimits.LIMIT_UP_PCT
                 ) return@mapNotNull null
                 Cell(
                     code = code,
@@ -384,8 +429,12 @@ internal class MarketStateHolder(shared: SharedVm) : StateHolder(shared) {
                 )
             }
 
-            // 快照为空（接口不可达 / 盘前无返回）：保留上一轮结果，不让整表闪空
-            if (cells.isEmpty()) return
+            // 池内也拉不到（自选为空 / 腾讯也挂）：保留上一轮结果，但把范围如实写进状态，
+            // 让界面显示「异动不可用」，而不是拿旧数据冒充本轮
+            if (cells.isEmpty()) {
+                _state.value = _state.value.copy(marketPulseScope = "none")
+                return
+            }
 
             // ── 2) 横截面分位（0~1）：排序键改用相对强度后，榜单不再被单笔大单带着跳 ──
             fun ranks(values: List<Pair<String, Double>>): Map<String, Double> {
@@ -451,7 +500,7 @@ internal class MarketStateHolder(shared: SharedVm) : StateHolder(shared) {
                     when (rawCodes) {
                         is List<*> -> rawCodes.any { value ->
                             val candidate = if (value is Map<*, *>) value["code"] ?: value["symbol"] else value
-                            candidate?.toString()?.filter(Char::isDigit)?.takeLast(6) == c.code
+                            candidate?.toString()?.let { com.skapp.app.data.Code.digits6(it) } == c.code
                         }
                         else -> rawCodes?.toString()?.contains(c.code) == true
                     }
@@ -488,7 +537,7 @@ internal class MarketStateHolder(shared: SharedVm) : StateHolder(shared) {
                 .take(30)
             val enriched = rows.mapIndexed { index, row ->
                 if (index >= 15) row else {
-                    val board = runCatching { DataCache.boards(row.code) }.getOrDefault(emptyList())
+                    val board = gap("板块数据(${row.code})", { emptyList() }) { DataCache.boards(row.code) }
                         .mapNotNull { it["name"]?.toString()?.takeIf { name -> name.isNotBlank() } }
                         .distinct().take(3).joinToString("、").ifBlank { "板块数据不足" }
                     row.copy(board = board)
@@ -503,6 +552,7 @@ internal class MarketStateHolder(shared: SharedVm) : StateHolder(shared) {
                 .map { "${it.name} ${it.code}" }
             _state.value = _state.value.copy(
                 marketPulse = enriched,
+                marketPulseScope = scope,
                 marketPulseTs = java.time.OffsetDateTime.now().toString(),
                 pulseDropped = dropped,
             )
@@ -542,7 +592,9 @@ internal class MarketStateHolder(shared: SharedVm) : StateHolder(shared) {
     }
 
     suspend fun refreshQuotes() {
-        val quotes: Map<String, Quote> = com.skapp.app.data.LiveQuote.quotes(Watchlist.codes)
+        val quotes: Map<String, Quote> = gap("自选报价", { emptyMap<String, Quote>() }) {
+            com.skapp.app.data.LiveQuote.quotes(Watchlist.codes)
+        }
         val now = System.currentTimeMillis()
         val rows = Watchlist.codes.map { code ->
             val q = quotes[com.skapp.app.data.Code.normalize(code) ?: code]
@@ -714,16 +766,16 @@ internal class MarketStateHolder(shared: SharedVm) : StateHolder(shared) {
                             klineSource = if (holoBars != null) "云端 holo bundle（前复权口径）"
                             else MarketDataClient.lastKlineSource,
                             // 端侧关键位/回本率：K 线到手即算，不依赖云端；样本不足时引擎自己返回 null
-                            keyLevels = runCatching {
+                            keyLevels = gap("关键位", { null }) {
                                 withContext(Dispatchers.Default) { com.skapp.app.data.KeyLevels.compute(bars) }
-                            }.getOrNull(),
-                            recoup = runCatching {
+                            },
+                            recoup = gap("回本率", { null }) {
                                 withContext(Dispatchers.Default) { com.skapp.app.data.RecoupCalc.compute(bars) }
-                            }.getOrNull(),
+                            },
                             // 退出纪律：同一批 K 线顺手算，零额外请求。缺历史时引擎自己返回「数据不足」
-                            exitPlan = runCatching {
+                            exitPlan = gap("退出纪律", { null }) {
                                 withContext(Dispatchers.Default) { com.skapp.app.data.ExitPlan.compute(bars) }
-                            }.getOrNull(),
+                            },
                         )
                         val engine = requestResult {
                             withContext(Dispatchers.Default) { DataCache.engine(code, adjust, bars) }
@@ -815,7 +867,7 @@ internal class MarketStateHolder(shared: SharedVm) : StateHolder(shared) {
     }
 
     /** SSE 推送落盘：只更新最后一根K和报价，引擎重算限流 5 秒一次。 */
-    private fun applyLiveQuote(quote: Quote) {
+    private suspend fun applyLiveQuote(quote: Quote) {
         val now = System.currentTimeMillis()
         val bars = _state.value.kline
         val today = java.time.LocalDate.now().toString()
@@ -837,13 +889,13 @@ internal class MarketStateHolder(shared: SharedVm) : StateHolder(shared) {
         var chain: com.skapp.app.data.EngineChain.ChainResult? = null
         if (now - lastEngineAt > 5_000 && updated.size >= 30) {
             lastEngineAt = now
-            runCatching { LocalEngine.analyze(updated) }.getOrNull()?.let {
+            gap("实时重算", { null }) { LocalEngine.analyze(updated) }?.let {
                 engine = it
-                chain = runCatching {
+                chain = gap("引擎链", { null }) {
                     com.skapp.app.data.EngineChain.analyze(
                         com.skapp.app.data.EngineChain.Inputs(bars = updated, nowMs = now)
                     )
-                }.getOrNull()
+                }
                 central = centralEngine(it, chain)
             }
         }
@@ -870,18 +922,19 @@ internal class MarketStateHolder(shared: SharedVm) : StateHolder(shared) {
     }
 
     private suspend fun refreshDetailLiveNow(code: String) {
-        val quote = runCatching { MarketDataClient.quote(code) }.getOrNull() ?: return
-        val minute = runCatching { MarketDataClient.minuteTrend(code) }.getOrDefault(emptyList())
+        // 报价拿不到就别动已上屏的详情（否则旧价会被当成现价），但缺口必须留下
+        val quote = gap("最新报价($code)", { null }) { MarketDataClient.quote(code) } ?: return
+        val minute = gap("分时($code)", { emptyList() }) { MarketDataClient.minuteTrend(code) }
         // 东财/腾讯日K本身包含今日未收盘实时K；拉不到时才用分时+实时价合成。
-        val fetched = runCatching {
+        val fetched = gap("日K($code)", { emptyList() }) {
             MarketDataClient.dayKline(code, 250, _state.value.detailAdjust)
-        }.getOrDefault(emptyList())
+        }
         val base = fetched.ifEmpty { _state.value.kline }
         val bars = mergeLiveBar(base, quote, minute)
-        val engine = if (bars.size >= 30) runCatching { LocalEngine.analyze(bars) }.getOrNull() else null
+        val engine = if (bars.size >= 30) gap("本地引擎($code)", { null }) { LocalEngine.analyze(bars) } else null
         val central = engine?.let { centralEngine(it) }
         val liveFlow = if (MarketHours.isTrading() || MarketHours.isAuction()) {
-            runCatching { MarketDataClient.fundFlowIntraday(code) }.getOrDefault(emptyList())
+            gap("资金流($code)", { emptyList() }) { MarketDataClient.fundFlowIntraday(code) }
         } else emptyList()
         _state.value = _state.value.copy(
             liveQuote = quote,
@@ -969,8 +1022,7 @@ internal class MarketStateHolder(shared: SharedVm) : StateHolder(shared) {
     /** 数据源台账刷新（诊断页用） */
     fun loadDataSources() {
         viewModelScope.launch {
-            val snap = runCatching { DbTables.dataSources() }
-                .getOrDefault(com.skapp.app.data.DataSourcesSnapshot())
+            val snap = gap("数据源台账", { com.skapp.app.data.DataSourcesSnapshot() }) { DbTables.dataSources() }
             _state.value = _state.value.copy(dataSources = snap)
         }
     }
@@ -998,12 +1050,12 @@ internal class MarketStateHolder(shared: SharedVm) : StateHolder(shared) {
             ).filterValues { it != null },
             financialLatest = holo?.finance?.takeIf { it.isNotEmpty() }
                 ?: MarketDataClient.financeQuote(code).takeIf { it.isNotEmpty() }
-                ?: (runCatching { DbTables.financial(code) }.getOrNull() ?: emptyMap()),
+                ?: gap("财务快照($code)", { emptyMap<String, Any?>() }) { DbTables.financial(code) } ?: emptyMap(),
             // 财报后漂移只展示不评分：云端事件表按公告日倒序最近 90 天，按带前缀代码查
-            pead = runCatching {
+            pead = gap("财报事件", { null }) {
                 com.skapp.app.data.PeadEvents.parse(com.skapp.app.data.Db.peadEvents())
                     ?.events?.get(com.skapp.app.data.Code.prefixed(code))
-            }.getOrNull(),
+            },
         )
     }
 

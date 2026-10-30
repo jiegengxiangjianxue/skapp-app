@@ -121,13 +121,13 @@ object SectorLink {
             }
 
         fun sectorOf(code: String): SectorRow? {
-            val digits = code.filter { it.isDigit() }.takeLast(6)
+            val digits = Code.digits6(code)
             val name = stockToSector[digits] ?: return null
             return byName[name]
         }
 
         fun sectorNameOf(code: String): String? {
-            val digits = code.filter { it.isDigit() }.takeLast(6)
+            val digits = Code.digits6(code)
             return stockToSector[digits]
         }
 
@@ -213,7 +213,7 @@ object SectorLink {
                 val k = keys.next()
                 val v = m.optString(k)
                 if (v.isNotBlank()) {
-                    val digits = k.filter { it.isDigit() }.takeLast(6)
+                    val digits = Code.digits6(k)
                     // 归一化到 sector_engine 的命名，否则「白酒Ⅱ」这类带后缀的板块永远对不上 byName
                     if (digits.isNotBlank()) stockToSector[digits] = normalizeSector(digits, v)
                 }

@@ -88,12 +88,7 @@ object SkappApi {
     }
 
     /** 代码表失败时仍允许按 A 股代码直接查询，避免把“代码表不可达”误报为无匹配。 */
-    fun directSymbol(raw: String): SymbolEntry? {
-        val code = normalize(raw) ?: return null
-        val prefix = code.take(3)
-        if (prefix !in setOf("600", "601", "603", "605", "000", "001", "002", "300", "301", "688", "689")) return null
-        return SymbolEntry(code, null)
-    }
+    fun directSymbol(raw: String): SymbolEntry? = Code.directSymbol(raw)
 
     /** 全市场代码表，兼容 symbols.json 裸数组与包装，并合并 stock_names.json。 */
     suspend fun fetchSymbols(): List<SymbolEntry> = withContext(Dispatchers.IO) {
