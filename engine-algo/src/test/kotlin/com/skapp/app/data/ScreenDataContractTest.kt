@@ -28,22 +28,21 @@ import kotlin.test.fail
  *
  * | 屏 | 显示的数据 | 数据来源（state 字段 → 生产方） |
  * |---|---|---|
- * | BoardScreen | 指数、涨跌统计、涨跌幅榜、情绪、涨停池、板块热度 | `state.board` ← `LocalSectors.boardMap(res, pulse, snap)`（`SkappViewModel.kt:1684`）；`state.marketState` ← `MarketStateEngine`；`state.allSourcesSummary` ← `AllSourcesClient.summaryLine`（`ui/.../data/AllSourcesClient.kt:119`）/ `CloudFeed.healthText`（`engine-net/.../CloudFeed.kt:244`） |
+ * | DashboardScreen（看板/概览） | 指数、涨跌统计、涨跌幅榜、情绪、涨停池、板块热度 | `state.board` ← `LocalSectors.boardMap(res, pulse, snap)`（`SkappViewModel.kt:1684`）；`state.marketState` ← `MarketStateEngine`；`state.allSourcesSummary` ← `AllSourcesClient.summaryLine`（`ui/.../data/AllSourcesClient.kt:119`）/ `CloudFeed.healthText`（`engine-net/.../CloudFeed.kt:244`） |
  * | DashboardScreen | 盘面解读、市场脉搏、本地推股、行情、数据源健康 | `state.summary`（云端 summary 产物）、`state.marketPulse` ← `LivePulse`、`state.localPremarketPicks`/`localMiddayPicks` ← `LocalPicks`、`state.picks` ← `TodayPicks` |
  * | DecisionScreen | 决策卡、因子否决板、板块主线、聪明钱 | `state.decision` ← 云端 decision 产物、`state.factorBoard` ← `FactorWeightStrategy` + `SignalCalibration`、`state.sectorBoard` ← `SectorLink`、`state.smartMoney` ← `engine-net/SmartMoney.kt` |
  * | DiagScreen | 数据源台账、登记表统计、健康守卫 | `state.dataSources` ← `DataSourcesSnapshot`（`engine-net/SkappApi.kt:368`）、`state.registryStats` ← `AllSourcesClient`、`HealthGuard` ← `ProcessHealthCore` |
- * | EnginesScreen | 本地实时候选、中枢引擎、规格版本/漂移、链路状态 | `state.screened` ← `LocalScreener`、`state.localEngine` ← `LocalEngine`、`state.engineSpecVersion`/`engineSpecDrift` ← `EngineSpecLoader`、`state.chainStatus`/`chainDegraded` ← `EngineChain` |
- * | HubScreen | 全局状态带（规格版本/数据时点/降级项）、聚合分、多池 | `state.engineSpecVersion`/`engineSpecDrift`/`chainDegraded`/`screenedAt`/`canonicalScore` ← `CanonicalEngine`、`state.pools` |
+ * | （无此屏，中枢规格/链路状态改由看板 provenance 带展示） | 本地实时候选、中枢引擎、规格版本/漂移、链路状态 | `state.screened` ← `LocalScreener`、`state.localEngine` ← `LocalEngine`、`state.engineSpecVersion`/`engineSpecDrift` ← `EngineSpecLoader`、`state.chainStatus`/`chainDegraded` ← `EngineChain` |
+ * | DashboardHubScreen（provenance 带） | 全局状态带（规格版本/数据时点/降级项）、聚合分、多池 | `state.engineSpecVersion`/`engineSpecDrift`/`chainDegraded`/`screenedAt`/`canonicalScore` ← `CanonicalEngine`、`state.pools` |
  * | MarketScreen | 自选股实时报价、指数、时段文案、搜索 | `state.quotes`（行情快照）、`state.marketPhase` ← `MarketHours.describe`、`state.searchResults` ← `SymbolIndex.search` |
  * | NewsScreen | 新闻快讯、新闻计算（利好判定/命中股） | `state.news` ← `NewsSnapshot`、`state.newsCalcs` ← `NewsCalcEngine`（`engine-runtime`） |
- * | PoolsScreen | 多池名单（含实时补价）、板块降级说明 | `state.pools` ← `DbTables.pools` + `repricePools`（`SkappViewModel.kt:1699`）、`state.sectors.freshBoards/staleBoards` |
+ * | （无此屏） | 多池名单（含实时补价）、板块降级说明 | `state.pools` ← `DbTables.pools` + `repricePools`（`SkappViewModel.kt:1699`）、`state.sectors.freshBoards/staleBoards` |
  * | RealtimeSummaryScreen | 盘后摘要、复盘、胜率矩阵、本地推股、异动 | `state.summary`、`state.closeReview`/`winrateMatrix`（`Models.kt`）、`state.premarketDraft` ← `PremarketPicks`、`state.screened` |
  * | SectorsScreen | 行业/概念列表、板块成分 | `state.sectors` ← `LocalSectors` / `SkappApi`（`SectorsSnapshot`，`Models.kt:277`） |
  * | StockDetailSheet | 实时报价、日 K、分时、资金流、AI 复盘、中枢引擎 | `state.liveQuote`、`state.kline` ← `KlineApi`、`state.fundFlow`、`state.aiReview`、`state.centralEngine*` ← `EngineChain` |
  * | StockDetailTail | 十关键位、回本率、退出纪律、29 因子库、财务摘要 | `state.keyLevels` ← `KeyLevels.compute`（`SkappViewModel.kt:1318`）、`state.recoup` ← `RecoupCalc.compute`（`SkappViewModel.kt:1321`）、`state.exitPlan` ← `ExitPlan`、`ExtendedIndicators.allFactors`（`StockDetailTail.kt:272`） |
  * | ThemeScreen | 题材报告、相关新闻 | `state.themeReport`（云端 theme_report.json）、`state.news` |
- * | UnifiedAskScreen | 市场总结文本/时点、AI 复盘、问答 | `state.summary`、`state.aiReview`、`state.aiAnswer`（GitCode AI）、离线兜底 `AskEngine.answer` |
- * | AiScreen / PicksScreen / SummaryScreen | 纯路由，无自有数据 | `AiScreen` → `UnifiedAskScreen`；`PicksScreen`/`SummaryScreen` → `RealtimeSummaryScreen` |
+ * | （已删除：AiScreen / PicksScreen / SummaryScreen / UnifiedAskScreen） | 无自有数据 | `PicksScreen`/`SummaryScreen` → `RealtimeSummaryScreen`；`UnifiedAskScreen` 随总结入口的 AI 子页一并删除 |
  * | BoardRules.kt / StockDetailCharts.kt | 非独立屏，是被上面屏引用的组成件 | 图表吃 `bars`/`quotes` 纯数据（`StockDetailCharts.kt:51`） |
  *
  * ## 覆盖的断言（本文件覆盖的用例）

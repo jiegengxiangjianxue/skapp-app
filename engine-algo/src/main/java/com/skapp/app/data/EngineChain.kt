@@ -18,10 +18,14 @@ package com.skapp.app.data
  */
 object EngineChain {
 
-    /** 中枢、资金流、盘口的合成权重。三者之和为 1，缺项时按剩余权重重归一。 */
-    private const val W_CENTRAL = 0.88
-    private const val W_FLOW = 0.07
-    private const val W_TAPE = 0.05
+    /**
+     * 三路合成权重的兜底值：**只用于规格缺 `blend` 段时**。
+     *
+     * 2026-10-31 改：原来写死 0.88 / 0.07 / 0.05。问题不在数值好不好，而在它不受规格控制，
+     * 且与中枢内 flow/tape 票（`weights.flow=0.07 / weights.tape=0.05`）叠加成双计。
+     * 现在主路径读 [EngineSpec.blend]，默认中枢独占（1/0/0）；此处只保留缺段提示。
+     */
+    private val FALLBACK_BLEND = EngineSpec.BlendWeights()
 
     /**
      * 三层书籍信号（反转/涨停/订单流）在中枢内的权重来源：**只从云端规格取**。
@@ -47,6 +51,15 @@ object EngineChain {
         /** 已算过的资金流结果（扫描时复用，避免同一只票算两遍） */
         val precomputedFlow: FlowEngine.Result? = null,
         val breadth: Double? = null,
+        /**
+         * 市况判据用的**指数收盘序列**（升序，≥21 根，见 [RegimeGate]）。
+         *
+         * 不能拿被评个股自己的 K 线顶替：那样每只票各自判出一个市况，闸门就从
+         * 「全市场统一折价」变成「个股趋势的二次惩罚」——趋势已在中枢票里算过一遍。
+         * 调用方拉一次指数序列传入即可（`IndexDaily.closes`）；拿不到就传 null，
+         * 闸门按 1.0 并记 degraded，不允许猜。
+         */
+        val regimeCloses: List<Double>? = null,
         /**
          * 板块聚合结果。**当前只透传、不参与链内计算**（板块强度加权要等 stock_sector_map 落地，
          * 见 docs/ISSUES.md）；保留此入口是为了调用方不必改签名。
@@ -80,21 +93,40 @@ object EngineChain {
          * 放在末尾并给默认值：现有调用点全用位置参数构造，插在中间会静默错位。
          */
         val book: BookSignalEngine.Result? = null,
+        /** 权重来源（规格 `weights_source`）：`equal` 表示未校准、按等权跑，界面必须标出来。 */
+        val weightsSource: String? = null,
     )
+
+    private val lastRegime = java.util.concurrent.atomic.AtomicReference<Pair<List<Double>, RegimeGate.Result?>>()
+
+    private fun regimeOf(closes: List<Double>?): RegimeGate.Result? {
+        if (closes.isNullOrEmpty()) return null
+        val cached = lastRegime.get()
+        if (cached != null && cached.first === closes) return cached.second
+        val result = runCatching { RegimeGate.judge(closes) }.getOrNull()
+        lastRegime.set(closes to result)
+        return result
+    }
 
     fun analyze(inputs: Inputs, specOverride: EngineSpec? = null): ChainResult {
         val degraded = ArrayList<String>()
 
-        val loaded = runCatching { EngineSpecLoader.loadBundled() }
-            .getOrElse {
-                degraded += "规格不可用：${it.message}"
-                return ChainResult(null, null, null, null, null, emptyList(), null, true, degraded, null, "insufficient")
-            }
-        val spec = specOverride ?: loaded.spec
-        if (loaded.drift) degraded += loaded.reason
+        // 调用方已传规格时不再读资源——它已是进程内缓存，但跳过一层调用也省一次分支
+        val loaded = if (specOverride == null) {
+            runCatching { EngineSpecLoader.loadBundled() }
+                .getOrElse {
+                    degraded += "规格不可用：${it.message}"
+                    return ChainResult(null, null, null, null, null, emptyList(), null, true, degraded, null, "insufficient")
+                }
+        } else {
+            null
+        }
+        val spec = specOverride ?: loaded!!.spec
+        if (loaded != null && loaded.drift) degraded += loaded.reason
+        if (spec.weightsSource == "equal") degraded += "权重：规格未带校准权重，按等权跑"
         if (inputs.bars.size < spec.runtime.minBars) {
             degraded += "K 线 ${inputs.bars.size} < ${spec.runtime.minBars}"
-            return ChainResult(null, null, null, null, null, emptyList(), spec.specVersion, loaded.drift, degraded, null, "insufficient")
+            return ChainResult(null, null, null, null, null, emptyList(), spec.specVersion, loaded?.drift ?: false, degraded, null, "insufficient")
         }
 
         val code = inputs.row?.code ?: ""
@@ -137,12 +169,26 @@ object EngineChain {
             CanonicalEngine.score(code, inputs.bars, spec, weights = weights, externalVotes = externals)
         }.getOrNull()
         if (canonical == null) degraded += "中枢：K 线不足或规格引擎全缺"
+        canonical?.missing?.takeIf { it.isNotEmpty() }?.let {
+            degraded += "权重缺键按等权 1.0：${it.joinToString(",")}（规格未登记即含权 1.0）"
+        }
 
-        // ── 市况闸门 ──
-        val regime = runCatching { RegimeGate.judge(inputs.bars.map { it.close }) }.getOrNull()
-        if (regime == null) degraded += "市况：指数序列不足，闸门按 1.0（不缩放）"
+        // ── 市况闸门：只认指数序列，不许用个股 K 线顶替 ──
+        // 全市场扫描时同一份序列会被每只票重复判一次（~0.2ms/只），按引用相等复用上一次结果：
+        // 调用方传的是同一个 List 实例，引用相等即内容不变，不会误用其他序列。
+        val regime = regimeOf(inputs.regimeCloses)
+        if (regime == null) {
+            degraded += if (inputs.regimeCloses.isNullOrEmpty()) {
+                "市况：未提供指数序列，闸门按 1.0（不缩放）"
+            } else {
+                "市况：指数序列不足，闸门按 1.0（不缩放）"
+            }
+        }
 
-        val blended = blend(canonical?.score, flow?.score, tape?.score)
+        val blended = blend(canonical?.score, flow?.score, tape?.score, spec.blend)
+        if (spec.blend.central <= 0.0 && spec.blend.flow <= 0.0 && spec.blend.tape <= 0.0) {
+            degraded += "规格 blend 权重全为 0，合成层无输入"
+        }
         val gated = RegimeGate.applyGate(blended, regime?.gate ?: 1.0)
 
         val riskFlag = run {
@@ -168,11 +214,12 @@ object EngineChain {
             regime = regime,
             votes = externals,
             specVersion = spec.specVersion,
-            specDrift = loaded.drift,
+            specDrift = loaded?.drift ?: false,
             degraded = degraded,
             riskFlag = riskFlag,
             status = status,
             book = book,
+            weightsSource = spec.weightsSource,
         )
     }
 
@@ -182,20 +229,25 @@ object EngineChain {
      * 不补 0 是硬要求：0 分在这套口径里是「极弱」，而缺席只是「没算」。
      * 两者混同会让一只数据不全的票看起来像看空标的。
      */
-    fun blend(central: Double?, flow: Double?, tape: Double?): Double? {
+    fun blend(
+        central: Double?,
+        flow: Double?,
+        tape: Double?,
+        w: EngineSpec.BlendWeights = FALLBACK_BLEND,
+    ): Double? {
         var sum = 0.0
         var weight = 0.0
-        if (central != null) {
-            sum += W_CENTRAL * central
-            weight += W_CENTRAL
+        if (central != null && w.central > 0.0) {
+            sum += w.central * central
+            weight += w.central
         }
-        if (flow != null) {
-            sum += W_FLOW * flow
-            weight += W_FLOW
+        if (flow != null && w.flow > 0.0) {
+            sum += w.flow * flow
+            weight += w.flow
         }
-        if (tape != null) {
-            sum += W_TAPE * tape
-            weight += W_TAPE
+        if (tape != null && w.tape > 0.0) {
+            sum += w.tape * tape
+            weight += w.tape
         }
         if (weight <= 0.0) return null
         return sum / weight
@@ -295,15 +347,21 @@ object EngineChain {
 
         expect("全缺为 null", blend(null, null, null) == null, "blend 全缺应返回 null")
         expect("单路取原值", blend(60.0, null, null)?.let { kotlin.math.abs(it - 60.0) < 1e-9 } == true, "单路应等于原值")
+        val w3 = EngineSpec.BlendWeights(central = 0.88, flow = 0.07, tape = 0.05)
         expect(
             "三路加权",
-            blend(60.0, 40.0, 40.0)?.let { kotlin.math.abs(it - 57.6) < 1e-9 } == true,
+            blend(60.0, 40.0, 40.0, w3)?.let { kotlin.math.abs(it - 57.6) < 1e-9 } == true,
             "0.88*60+0.07*40+0.05*40 应为 57.6",
         )
         expect(
             "缺项归一",
-            blend(60.0, 40.0, null)?.let { kotlin.math.abs(it - (0.88 * 60.0 + 0.07 * 40.0) / 0.95) < 1e-9 } == true,
+            blend(60.0, 40.0, null, w3)?.let { kotlin.math.abs(it - (0.88 * 60.0 + 0.07 * 40.0) / 0.95) < 1e-9 } == true,
             "缺一项应按剩余权重归一",
+        )
+        expect(
+            "全零权重为 null",
+            blend(60.0, 40.0, 40.0, EngineSpec.BlendWeights(0.0, 0.0, 0.0)) == null,
+            "规格把三路权重全置 0 时必须报缺，不得用 0 除",
         )
 
         val spec = EngineSpecLoader.loadBundled().spec
@@ -349,6 +407,24 @@ object EngineChain {
             "盘口分钟口径",
             TapeEngine.minuteOfDay(0L) in 0..1439,
             "nowMs 换算必须落在当日分钟区间",
+        )
+        expect(
+            "市况只认指数序列",
+            run {
+                val bars = List(40) { i ->
+                    KBar(
+                        date = "20260101",
+                        open = 10.0 + i * 0.1,
+                        close = 10.0 + i * 0.1,
+                        high = 10.0 + i * 0.1,
+                        low = 10.0 + i * 0.1,
+                        vol = 1000.0,
+                    )
+                }
+                val r = analyze(Inputs(bars = bars), spec)
+                r.degraded.any { it.startsWith("市况：") } && r.regime == null
+            },
+            "未传指数序列时必须记 degraded 且 regime 为 null，不得拿个股 K 线充数",
         )
         expect(
             "中枢阈值为正",

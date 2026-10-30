@@ -9,6 +9,7 @@ import kotlinx.coroutines.withContext
  * 用户决策：本地 LLM 已停，全走云端免费 AI。双源互为备份解决额度担忧：
  * - 优先 GitCode（已配置且未冷却），失败 / HTTP 429 / 超时 → 自动切 GitHub Models
  * - 两个都没配 token → 返回配置提示
+ * - 用户自填 Base URL 的 OpenAI 兼容接口作为第三兜底（见 [OpenAiCompatClient]）
  * - 返回结果标注实际 provider（内容前缀 [via GitHub Models · gpt-4o] 之类）
  *
  * 额度管理：
@@ -35,6 +36,8 @@ object AiRouter {
 
     const val PROVIDER_GITCODE = "GitCode"
     const val PROVIDER_GITHUB = "GitHub Models"
+    /** 用户自填 Base URL 的 OpenAI 兼容接口，排在两个官方源之后兜底 */
+    const val PROVIDER_CUSTOM = "自定义接口"
 
     const val NOT_CONFIGURED_MSG = "请在设置页填 GitCode 或 GitHub token"
 
@@ -46,10 +49,14 @@ object AiRouter {
         context: android.content.Context,
         gitcodeToken: String?,
         githubToken: String?,
+        customBaseUrl: String? = null,
+        customApiKey: String? = null,
+        customModel: String? = null,
     ) {
         prefs = context.getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE)
         GitCodeAiClient.setToken(gitcodeToken)
         GitHubModelsClient.setToken(githubToken)
+        OpenAiCompatClient.configure(customBaseUrl, customApiKey, customModel)
     }
 
     enum class Tier { DEEP, LIGHT }
@@ -90,16 +97,17 @@ object AiRouter {
     private fun configured(provider: String): Boolean = when (provider) {
         PROVIDER_GITCODE -> GitCodeAiClient.isConfigured()
         PROVIDER_GITHUB -> GitHubModelsClient.isConfigured()
+        PROVIDER_CUSTOM -> OpenAiCompatClient.isConfigured()
         else -> false
     }
 
     /** 当前可用 provider（已配置且未冷却），供设置页显示 */
     fun availableProviders(): List<String> =
-        listOf(PROVIDER_GITCODE, PROVIDER_GITHUB).filter { configured(it) && !isCooling(it) }
+        listOf(PROVIDER_GITCODE, PROVIDER_GITHUB, PROVIDER_CUSTOM).filter { configured(it) && !isCooling(it) }
 
     /** 设置页状态行：可用 provider + 调用/失败统计 + 冷却剩余 */
     fun statusLine(): String {
-        val parts = listOf(PROVIDER_GITCODE, PROVIDER_GITHUB).map { p ->
+        val parts = listOf(PROVIDER_GITCODE, PROVIDER_GITHUB, PROVIDER_CUSTOM).map { p ->
             val cfg = if (configured(p)) "已配置" else "未配置"
             val cool = cooldownLeftMs(p)
             val coolStr = if (cool > 0) " · 冷却中（${cool / 60_000 + 1} 分钟）" else ""
@@ -118,7 +126,8 @@ object AiRouter {
      */
     suspend fun ask(messages: List<Pair<String, String>>, tier: Tier): AiResult =
         withContext(Dispatchers.IO) {
-            val order = listOf(PROVIDER_GITCODE, PROVIDER_GITHUB)
+            // 自定义接口排最后：它是用户自备的兜底，不该抢官方源的额度
+            val order = listOf(PROVIDER_GITCODE, PROVIDER_GITHUB, PROVIDER_CUSTOM)
             if (order.none { configured(it) }) {
                 return@withContext AiResult(NOT_CONFIGURED_MSG, null, null, failed = true)
             }
@@ -186,6 +195,14 @@ object AiRouter {
                     else -> GitHubModelsClient.LIGHT_MODEL
                 }
                 Triple(text, model, text == null && GitHubModelsClient.lastHttpCode == 429)
+            }
+            PROVIDER_CUSTOM -> {
+                val text = OpenAiCompatClient.rawChat(messages)
+                Triple(
+                    text,
+                    if (text != null) OpenAiCompatClient.modelName() else null,
+                    text == null && OpenAiCompatClient.lastHttpCode == 429,
+                )
             }
             else -> Triple(null, null, false)
         }

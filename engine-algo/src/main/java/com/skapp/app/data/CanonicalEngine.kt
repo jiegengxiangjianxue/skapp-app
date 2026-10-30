@@ -67,8 +67,14 @@ object CanonicalEngine {
         var den = 0.0
         var bull = 0
         var bear = 0
+        // 缺键不能静默：云端 weight_policy.missing_fallback=equal，缺键按等权 1.0 计是
+        // 约定行为（与 engine_v5 的 w.get(ind, 1.0) 对齐），但权重文件少一票与
+        // 「这一票本来就该权 1.0」看起来一样，得记下是哪几票。
+        val missingWeights = ArrayList<String>()
         for (v in votes) {
-            val weight = w[v.indicator] ?: 1.0
+            val declared = w[v.indicator]
+            if (declared == null) missingWeights += v.indicator
+            val weight = declared ?: 1.0
             num += weight * v.vote * v.strength
             den += weight
             if (v.vote > 0) bull++ else if (v.vote < 0) bear++
@@ -88,6 +94,7 @@ object CanonicalEngine {
             votes = votes,
             signal = agg.signalOf(score),
             specVersion = spec.specVersion,
+            missing = missingWeights,
         )
     }
 

@@ -23,6 +23,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.skapp.app.data.LocalPicks
+import com.skapp.app.data.MarketHours
 import com.skapp.app.data.PickSignal
 import com.skapp.app.data.StructuredPickArtifact
 import com.skapp.app.ui.SkappViewModel
@@ -48,10 +49,17 @@ import com.skapp.app.ui.theme.SkColors
 /** 名单口径。文案与口径说明都挂在这里，避免两页各写一套导致口径漂移。 */
 enum class PickListSession(
     val title: String,
-    val session: LocalPicks.Session,
+    private val fixed: LocalPicks.Session?,
 ) {
-    PREMARKET(title = "盘前推股名单", session = LocalPicks.Session.PREMARKET),
-    REALTIME(title = "实时推股名单", session = LocalPicks.Session.MIDDAY);
+    PREMARKET(title = "盘前推股名单", fixed = LocalPicks.Session.PREMARKET),
+    MORNING(title = "早盘推股名单", fixed = LocalPicks.Session.MORNING),
+    MIDDAY(title = "午盘推股名单", fixed = LocalPicks.Session.MIDDAY),
+
+    /** 实时：跟随当前交易时段出卡；非交易时段退回午盘存档，不留白屏。 */
+    REALTIME(title = "实时推股名单", fixed = null);
+
+    val session: LocalPicks.Session
+        get() = fixed ?: LocalPicks.sessionFor(MarketHours.phase()) ?: LocalPicks.Session.MIDDAY
 
     /** 口径说明直接取数据层常量，避免 UI 另写一套导致口径漂移。 */
     val basis: String get() = session.basis
@@ -63,15 +71,32 @@ fun PremarketPicksScreen(vm: SkappViewModel, state: UiState) {
 }
 
 @Composable
+fun MorningPicksScreen(vm: SkappViewModel, state: UiState) {
+    PicksListScreen(vm, state, PickListSession.MORNING)
+}
+
+@Composable
+fun MiddayPicksScreen(vm: SkappViewModel, state: UiState) {
+    PicksListScreen(vm, state, PickListSession.MIDDAY)
+}
+
+@Composable
 fun RealtimePicksScreen(vm: SkappViewModel, state: UiState) {
     PicksListScreen(vm, state, PickListSession.REALTIME)
 }
 
 @Composable
 fun PicksListScreen(vm: SkappViewModel, state: UiState, mode: PickListSession) {
-    val artifact: StructuredPickArtifact = when (mode) {
-        PickListSession.PREMARKET -> state.localPremarketPicks
-        PickListSession.REALTIME -> state.localMiddayPicks
+    // 历史页在盘前/实时两页内就地展开：它只读远端归档，与当前名单无交互，不值得单占一个 Tab
+    val showHistory = remember { mutableStateOf(false) }
+    if (showHistory.value) {
+        PicksHistoryScreen(onBack = { showHistory.value = false })
+        return
+    }
+    val artifact: StructuredPickArtifact = when (mode.session) {
+        LocalPicks.Session.PREMARKET -> state.localPremarketPicks
+        LocalPicks.Session.MORNING -> state.localMorningPicks
+        LocalPicks.Session.MIDDAY -> state.localMiddayPicks
     }
     // 已有当日存档就直接复用，不重复拉行情；没有才首次计算
     LaunchedEffect(mode) { vm.ensurePicksFor(mode.session) }
@@ -129,6 +154,16 @@ fun PicksListScreen(vm: SkappViewModel, state: UiState, mode: PickListSession) {
                     style = MaterialTheme.typography.bodySmall,
                     color = if (faultState.value == null) SkColors.textSecondary else SkColors.warn,
                 )
+                if (mode == PickListSession.PREMARKET || mode == PickListSession.REALTIME) {
+                    Text(
+                        "历史",
+                        modifier = Modifier
+                            .clickable { showHistory.value = true }
+                            .padding(10.dp),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
                 if (state.localPicksLoading) {
                     CircularProgressIndicator(modifier = Modifier.padding(8.dp), strokeWidth = 2.dp)
                 } else {
@@ -235,6 +270,10 @@ private fun EmptyPickList(artifact: StructuredPickArtifact, mode: PickListSessio
                 when (mode) {
                     PickListSession.PREMARKET ->
                         "盘前名单用上一交易日收盘数据算，若上一交易日数据缺失会留空，不做降级填充。"
+                    PickListSession.MORNING ->
+                        "早盘名单取上午盘中快照；未到交易时段或当日还没生成过快照时留空，不做降级填充。"
+                    PickListSession.MIDDAY ->
+                        "午盘名单取下午盘中快照；未到交易时段或当日还没生成过快照时留空。"
                     PickListSession.REALTIME ->
                         "实时名单随当日行情变化；开盘前没有盘中数据，留空是正常的。"
                 },

@@ -24,3 +24,6 @@ __pycache__/
 
 # Rust 构建产物
 core/target/
+
+# 验证产物（截图/控件 dump），不入库
+scripts/verify-out-*/

@@ -130,13 +130,20 @@ internal class LocalPicksHolder(
      * 上一交易日收盘数据，任何时段都算得出来，没理由等到明天早上。
      * 实时口径则相反：非交易时段没有盘中数据，算了也是旧的，因此明确跳过并给出说明。
      */
+    /** 按会话取当前存档；新增会话只改这一处，避免多处三目各漏一个分支。 */
+    private fun picksFor(session: com.skapp.app.data.LocalPicks.Session) =
+        when (session) {
+            com.skapp.app.data.LocalPicks.Session.PREMARKET -> _state.value.localPremarketPicks
+            com.skapp.app.data.LocalPicks.Session.MORNING -> _state.value.localMorningPicks
+            com.skapp.app.data.LocalPicks.Session.MIDDAY -> _state.value.localMiddayPicks
+        }
+
     fun ensurePicksFor(session: com.skapp.app.data.LocalPicks.Session) {
         if (_state.value.localPicksLoading || localPicksJob?.isActive == true) return
-        val current = if (session == com.skapp.app.data.LocalPicks.Session.PREMARKET)
-            _state.value.localPremarketPicks else _state.value.localMiddayPicks
+        val current = picksFor(session)
         val today = java.time.LocalDate.now().toString()
         if (current.date == today && current.status in CACHED_PICK_STATUS && !shared.poolsMissingForPicks) return
-        if (session == com.skapp.app.data.LocalPicks.Session.MIDDAY &&
+        if (session != com.skapp.app.data.LocalPicks.Session.PREMARKET &&
             com.skapp.app.data.LocalPicks.sessionFor(MarketHours.phase()) != session
         ) {
             _state.value = _state.value.copy(
@@ -162,8 +169,7 @@ internal class LocalPicksHolder(
      * 成本：一次全市场快照（约 11 页）+ 候选池≤40 只日 K；日 K 有 6 小时缓存，盘前/午盘各只跑一次。
      */
     suspend fun rebuildLocalPicks(session: com.skapp.app.data.LocalPicks.Session, force: Boolean = false) {
-        val current = if (session == com.skapp.app.data.LocalPicks.Session.PREMARKET)
-            _state.value.localPremarketPicks else _state.value.localMiddayPicks
+        val current = picksFor(session)
         val today = java.time.LocalDate.now().toString()
         // 当天算过且**算完**就不再重算。注意空名单的 status 不是 ok：
         //   ok         = 有票进名单
@@ -296,12 +302,25 @@ internal class LocalPicksHolder(
                 picksTrendAttempted = trendTargets.map { it.code }.toSet(),
                 localPremarketPicks = if (session == com.skapp.app.data.LocalPicks.Session.PREMARKET)
                     artifact else _state.value.localPremarketPicks,
+                localMorningPicks = if (session == com.skapp.app.data.LocalPicks.Session.MORNING)
+                    artifact else _state.value.localMorningPicks,
                 localMiddayPicks = if (session == com.skapp.app.data.LocalPicks.Session.MIDDAY)
                     artifact else _state.value.localMiddayPicks,
                 localPicksMsg = artifact.reason,
                 localPicksTiming = timing,
             )
             persistLocalPicks(session, artifact)
+            // 盘前/早盘/午盘各入队一轮，历史页才有四类时段可查；ts 去重由队列负责
+            runCatching {
+                PicksArchiveQueue.enqueuePushRound(
+                    artifact.date ?: java.time.LocalDate.now().toString(),
+                    IntradayPicks.toRound(
+                        artifact,
+                        java.time.OffsetDateTime.now().toString(),
+                        session.key,
+                    ),
+                )
+            }
             // 推送历史入队：flush 交给启动/定时，不在这里等网络
             archivePushRound(artifact, calcTime)
         } catch (e: CancellationException) {
@@ -438,9 +457,11 @@ internal class LocalPicksHolder(
         }
 
         val pre = read(com.skapp.app.data.LocalPicks.Session.PREMARKET)
+        val morning = read(com.skapp.app.data.LocalPicks.Session.MORNING)
         val mid = read(com.skapp.app.data.LocalPicks.Session.MIDDAY)
         _state.value = _state.value.copy(
             localPremarketPicks = pre ?: _state.value.localPremarketPicks,
+            localMorningPicks = morning ?: _state.value.localMorningPicks,
             localMiddayPicks = mid ?: _state.value.localMiddayPicks,
         )
     }

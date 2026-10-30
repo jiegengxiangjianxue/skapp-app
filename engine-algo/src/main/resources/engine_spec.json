@@ -50,6 +50,11 @@
     "tape": 0.05
   },
   "weights_source": "data/engine_weights.json",
+  "blend": {
+    "central": 1.0,
+    "flow": 0.0,
+    "tape": 0.0
+  },
   "engines": [
     {
       "id": "supertrend",

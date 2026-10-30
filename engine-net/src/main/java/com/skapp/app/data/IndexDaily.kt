@@ -23,6 +23,15 @@ object IndexDaily {
 
     const val DEFAULT_INDEX = "sh000001"
 
+    /**
+     * 指数日 K 缓存（5 分钟）。
+     *
+     * regime 吃的是日线，盘中每 5 秒重算一次链路却会发一次网络请求；五分钟内的
+     * 收盘序列对闸门档位没有影响。缓存只活在内存，进程重启即失效。
+     */
+    private const val CACHE_TTL_MS = 5 * 60_000L
+    private val cache = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, Result>>()
+
     private const val TIMEOUT = 15000
 
     data class Result(val code: String, val bars: List<KBar>, val source: String) {
@@ -125,10 +134,21 @@ object IndexDaily {
      */
     suspend fun fetch(code: String = DEFAULT_INDEX, count: Int = 320): Result? {
         val c = if (code.isBlank()) DEFAULT_INDEX else code
+        val key = "$c:$count"
+        val now = System.currentTimeMillis()
+        cache[key]?.let { (ts, hit) -> if (now - ts < CACHE_TTL_MS) return hit }
         val tx = runCatching { tencent(c, count) }.getOrDefault(emptyList())
-        if (tx.size >= 2) return Result(c, tx.sortedBy { it.date }, "腾讯 fqkline day（指数不复权）")
+        if (tx.size >= 2) {
+            val r = Result(c, tx.sortedBy { it.date }, "腾讯 fqkline day（指数不复权）")
+            cache[key] = now to r
+            return r
+        }
         val em = runCatching { eastmoney(c, count) }.getOrDefault(emptyList())
-        if (em.size >= 2) return Result(c, em.sortedBy { it.date }, "东财 push2his fqt=1（指数不复权）")
+        if (em.size >= 2) {
+            val r = Result(c, em.sortedBy { it.date }, "东财 push2his fqt=1（指数不复权）")
+            cache[key] = now to r
+            return r
+        }
         return null
     }
 

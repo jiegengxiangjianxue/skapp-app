@@ -23,11 +23,20 @@ class EngineChainSelfCheckTest {
     }
 
     @Test
-    fun `增强分缺项按剩余权重归一`() {
+    fun `合成权重按规格走且缺项归一`() {
+        // 规格默认 blend=1/0/0：中枢独占。资金/盘口已作为中枢内投票下发（flow 0.07/tape 0.05），
+        // 合成层再乘一次就是双计。
         val onlyCentral = EngineChain.blend(60.0, null, null)
         assertTrue(onlyCentral != null && abs(onlyCentral!! - 60.0) < 1e-9)
-        val full = EngineChain.blend(60.0, 40.0, 40.0)
+        val centralOnly = EngineChain.blend(60.0, 40.0, 40.0)
+        assertTrue(centralOnly != null && abs(centralOnly!! - 60.0) < 1e-9, "默认中枢独占，实际 $centralOnly")
+        // 规格显式下发三路权重时，按剩余权重重归一
+        val w3 = EngineSpec.BlendWeights(central = 0.88, flow = 0.07, tape = 0.05)
+        val full = EngineChain.blend(60.0, 40.0, 40.0, w3)
         assertTrue(full != null && abs(full!! - 57.6) < 1e-9, "0.88*60+0.07*40+0.05*40=57.6，实际 $full")
+        val partial = EngineChain.blend(60.0, 40.0, null, w3)
+        val expectPartial = (0.88 * 60.0 + 0.07 * 40.0) / 0.95
+        assertTrue(partial != null && abs(partial!! - expectPartial) < 1e-9, "缺一项应按剩余权重归一，实际 $partial")
         assertTrue(EngineChain.blend(null, null, null) == null, "全缺必须 null，不许回 0")
     }
 

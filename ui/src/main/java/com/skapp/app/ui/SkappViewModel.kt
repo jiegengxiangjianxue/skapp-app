@@ -44,6 +44,7 @@ import com.skapp.app.data.Quote
 import com.skapp.app.data.SiteBoardClient
 import com.skapp.app.data.AiRouter
 import com.skapp.app.data.GitCodeAiClient
+import com.skapp.app.data.OpenAiCompatClient
 import com.skapp.app.data.GitHubModelsClient
 import com.skapp.app.data.SkappApi
 import com.skapp.app.data.StockDetail
@@ -138,7 +139,10 @@ data class UiState(
     /** 本地盘前推股（本地深算产出，T-1 收盘口径，当日冻结） */
     val localPremarketPicks: com.skapp.app.data.StructuredPickArtifact =
         com.skapp.app.data.StructuredPickArtifact(session = "premarket"),
-    /** 本地午盘推股（本地深算产出，当日实时口径，当日冻结） */
+    /** 本地早盘推股（本地深算产出，上午盘中快照，含当日未完成日 K） */
+    val localMorningPicks: com.skapp.app.data.StructuredPickArtifact =
+        com.skapp.app.data.StructuredPickArtifact(session = "morning"),
+    /** 本地午盘推股（本地深算产出，下午盘中快照，含当日未完成日 K） */
     val localMiddayPicks: com.skapp.app.data.StructuredPickArtifact =
         com.skapp.app.data.StructuredPickArtifact(session = "midday"),
     val localPicksLoading: Boolean = false,
@@ -271,6 +275,11 @@ data class UiState(
     val githubConfigured: Boolean = false,
     /** AiRouter 双源状态行（可用 provider + 调用/失败/冷却） */
     val aiProviderStatus: String = "",
+    /** 自定义 OpenAI 兼容接口（第三兜底源） */
+    val customBaseUrl: String = "",
+    val customApiKey: String = "",
+    val customModel: String = "",
+    val customConfigured: Boolean = false,
     /** 最近一次 AI 调用实际走的 provider */
     val aiLastProvider: String? = null,
     val aiReview: String? = null,
@@ -297,6 +306,9 @@ class SkappViewModel : ViewModel() {
         private const val SKAPP_PREFS = com.skapp.app.ui.state.SKAPP_PREFS
         private const val KEY_TOKEN = "gitcode_token"
         private const val KEY_GITHUB_TOKEN = "github_token"
+        private const val KEY_CUSTOM_BASE_URL = "custom_base_url"
+        private const val KEY_CUSTOM_API_KEY = "custom_api_key"
+        private const val KEY_CUSTOM_MODEL = "custom_model"
     }
 
     private val _state = MutableStateFlow(UiState())
@@ -392,6 +404,9 @@ class SkappViewModel : ViewModel() {
         val sp = context.getSharedPreferences(SKAPP_PREFS, android.content.Context.MODE_PRIVATE)
         val t = sp.getString(KEY_TOKEN, "") ?: ""
         val gh = sp.getString(KEY_GITHUB_TOKEN, "") ?: ""
+        val customUrl = sp.getString(KEY_CUSTOM_BASE_URL, "") ?: ""
+        val customKey = sp.getString(KEY_CUSTOM_API_KEY, "") ?: ""
+        val customModel = sp.getString(KEY_CUSTOM_MODEL, "") ?: ""
         shared.appContext = context.applicationContext
         // 归档队列落在应用私有目录：杀进程后队列还在，下次打开接着传
         runCatching { PicksArchiveQueue.init(context.applicationContext.filesDir) }
@@ -400,10 +415,12 @@ class SkappViewModel : ViewModel() {
         // 本地推股存档：只恢复上次落盘结果，不在启动时重算（重算要拉 11 页快照 + 40 只日 K）
         runCatching { picks.restoreLocalPicks() }
         runCatching { picks.restorePremarketDraft() }
-        AiRouter.configure(context.applicationContext, t, gh)
+        AiRouter.configure(context.applicationContext, t, gh, customUrl, customKey, customModel)
         _state.value = _state.value.copy(
             aiToken = t, aiConfigured = t.isNotBlank(),
             githubToken = gh, githubConfigured = gh.isNotBlank(),
+            customBaseUrl = customUrl, customApiKey = customKey, customModel = customModel,
+            customConfigured = customUrl.isNotBlank() && customKey.isNotBlank(),
             aiProviderStatus = AiRouter.statusLine(),
         )
     }
@@ -433,6 +450,26 @@ class SkappViewModel : ViewModel() {
         shared.appContext?.let { ctx ->
             saveToken(ctx)
             GitCodeAiClient.setToken(_state.value.aiToken)
+            ai.refreshAiProviderStatus()
+        }
+    }
+
+    fun setCustomBaseUrl(v: String) { _state.value = _state.value.copy(customBaseUrl = v) }
+    fun setCustomApiKey(v: String) { _state.value = _state.value.copy(customApiKey = v) }
+    fun setCustomModel(v: String) { _state.value = _state.value.copy(customModel = v) }
+
+    /** 设置页「保存自定义接口」按钮：落盘后立刻生效，不用重启 */
+    fun saveCustomNow() {
+        val s = _state.value
+        shared.appContext?.let { ctx ->
+            ctx.getSharedPreferences(SKAPP_PREFS, android.content.Context.MODE_PRIVATE)
+                .edit()
+                .putString(KEY_CUSTOM_BASE_URL, s.customBaseUrl)
+                .putString(KEY_CUSTOM_API_KEY, s.customApiKey)
+                .putString(KEY_CUSTOM_MODEL, s.customModel)
+                .apply()
+            OpenAiCompatClient.configure(s.customBaseUrl, s.customApiKey, s.customModel)
+            _state.value = s.copy(customConfigured = OpenAiCompatClient.isConfigured())
             ai.refreshAiProviderStatus()
         }
     }

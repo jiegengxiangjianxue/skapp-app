@@ -82,6 +82,36 @@ object GitHubRepoWriter {
     }
 
     /**
+     * 列目录下的文件名（目录可能是中文名，和 [readFile] 走同一个 [apiUrl] 编码）。
+     *
+     * 目录不存在返回空表；其它非 2xx 抛给调用方，避免「网络挂了」被当成「没有历史」。
+     */
+    suspend fun listDir(path: String): List<String> = withContext(Dispatchers.IO) {
+        val conn = (URL(apiUrl(path)).openConnection() as HttpURLConnection).apply {
+            requestMethod = "GET"
+            connectTimeout = 20_000
+            readTimeout = 20_000
+            setRequestProperty("Accept", "application/vnd.github+json")
+            setRequestProperty("User-Agent", RemoteSources.UA_ANDROID)
+            token?.let { setRequestProperty("Authorization", "Bearer $it") }
+        }
+        try {
+            when (conn.responseCode) {
+                in 200..299 -> {
+                    val arr = org.json.JSONArray(conn.inputStream.bufferedReader().readText())
+                    (0 until arr.length()).mapNotNull { i ->
+                        arr.optJSONObject(i)?.optString("name")?.takeIf { it.isNotBlank() }
+                    }
+                }
+                404 -> emptyList()
+                else -> throw java.io.IOException("GitHub LIST $path HTTP ${conn.responseCode}")
+            }
+        } finally {
+            conn.disconnect()
+        }
+    }
+
+    /**
      * 写文件。`sha` 传 null 表示新建；远端已存在时会 409，调用方重读再写。
      */
     suspend fun writeFile(

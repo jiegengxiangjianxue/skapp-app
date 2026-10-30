@@ -5,21 +5,21 @@ import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.junit4.createComposeRule
-import com.skapp.app.ui.screens.AiScreen
-import com.skapp.app.ui.screens.BoardScreen
+import com.skapp.app.ui.screens.CredentialsScreen
+import com.skapp.app.ui.screens.DashboardHubScreen
 import com.skapp.app.ui.screens.DashboardScreen
 import com.skapp.app.ui.screens.DecisionScreen
 import com.skapp.app.ui.screens.DiagScreen
-import com.skapp.app.ui.screens.HubScreen
 import com.skapp.app.ui.screens.MarketScreen
+import com.skapp.app.ui.screens.NewsHubScreen
 import com.skapp.app.ui.screens.NewsScreen
 import com.skapp.app.ui.screens.PremarketPicksScreen
 import com.skapp.app.ui.screens.RealtimePicksScreen
 import com.skapp.app.ui.screens.RealtimeSummaryScreen
 import com.skapp.app.ui.screens.SectorsScreen
-import com.skapp.app.ui.screens.SummaryScreen
+import com.skapp.app.ui.screens.PicksHubScreen
+import com.skapp.app.ui.screens.SummaryHubScreen
 import com.skapp.app.ui.screens.ThemeScreen
-import com.skapp.app.ui.screens.UnifiedAskScreen
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -105,11 +105,6 @@ class ScreenRenderRobolectricTest {
     ) { RealtimePicksScreen(vm(), UiState()) }
 
     @Test(timeout = 120_000)
-    fun `看板页 空数据下渲染标题`() = assertShowsAny(
-        "BoardScreen", "看板",
-    ) { BoardScreen(vm(), UiState()) }
-
-    @Test(timeout = 120_000)
     fun `首页看板 空数据下渲染入口`() = assertShowsAny(
         "DashboardScreen", "看盘", "看板", "行情",
     ) { DashboardScreen(vm(), UiState()) }
@@ -118,11 +113,6 @@ class ScreenRenderRobolectricTest {
     fun `诊断页 空数据下渲染自检标题`() = assertShowsAny(
         "DiagScreen", "数据源自检", "源注册表",
     ) { DiagScreen(vm(), UiState()) }
-
-    @Test(timeout = 120_000)
-    fun `中枢页 空数据下渲染导航入口`() = assertShowsAny(
-        "HubScreen", "看盘", "行情看板", "看板",
-    ) { HubScreen(vm(), UiState()) {} }
 
     @Test(timeout = 120_000)
     fun `行情页 空数据下渲染标题`() = assertShowsAny(
@@ -151,12 +141,21 @@ class ScreenRenderRobolectricTest {
 
     // ── 文案由数据/组件拼出的屏：断言不白屏、有文本 ──────────────────────
 
-    @Test(timeout = 120_000)
-    fun `AI 页 空数据下可渲染`() = assertRenders("AiScreen") { AiScreen(vm(), UiState()) }
+
+    // ── 一级入口容器：顶栏切换后不得白屏 ─────────────────────────────
 
     @Test(timeout = 120_000)
-    fun `总结页 空数据下可渲染`() = assertRenders("SummaryScreen") { SummaryScreen(vm(), UiState()) }
+    fun `看板入口 默认页可渲染`() = assertRenders("DashboardHubScreen") { DashboardHubScreen(vm(), UiState()) }
 
     @Test(timeout = 120_000)
-    fun `统一问答页 空数据下可渲染`() = assertRenders("UnifiedAskScreen") { UnifiedAskScreen(vm(), UiState()) }
+    fun `总结入口 默认页可渲染`() = assertRenders("SummaryHubScreen") { SummaryHubScreen(vm(), UiState()) }
+
+    @Test(timeout = 120_000)
+    fun `消息入口 默认页可渲染`() = assertRenders("NewsHubScreen") { NewsHubScreen(vm(), UiState()) }
+
+    @Test(timeout = 120_000)
+    fun `选股入口 默认页可渲染`() = assertRenders("PicksHubScreen") { PicksHubScreen(vm(), UiState()) }
+
+    @Test(timeout = 120_000)
+    fun `凭据入口 默认页可渲染`() = assertRenders("CredentialsScreen") { CredentialsScreen(vm(), UiState()) }
 }

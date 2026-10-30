@@ -26,10 +26,15 @@ object LocalPicks {
             label = "盘前推股",
             basis = "本地深算 · 口径：截至上一交易日收盘（剔除当日未完成日 K）",
         ),
+        MORNING(
+            key = "morning",
+            label = "早盘推股",
+            basis = "本地深算 · 口径：当日实时行情（上午盘中快照，含当日未完成日 K）",
+        ),
         MIDDAY(
             key = "midday",
             label = "午盘推股",
-            basis = "本地深算 · 口径：当日实时行情（含当日未完成日 K）",
+            basis = "本地深算 · 口径：当日实时行情（下午盘中快照，含当日未完成日 K）",
         ),
     }
 
@@ -362,7 +367,7 @@ object LocalPicks {
     /** 当前时段该出哪张卡：盘前/竞价 → 盘前推股；午间/下午 → 午盘推股。 */
     fun sessionFor(phase: MarketHours.Phase): Session? = when (phase) {
         MarketHours.Phase.PRE_OPEN, MarketHours.Phase.AUCTION_OPEN -> Session.PREMARKET
-        MarketHours.Phase.MORNING, MarketHours.Phase.LUNCH_BREAK,
+        MarketHours.Phase.MORNING, MarketHours.Phase.LUNCH_BREAK -> Session.MORNING
         MarketHours.Phase.AFTERNOON, MarketHours.Phase.CLOSING -> Session.MIDDAY
         MarketHours.Phase.AFTER_HOURS, MarketHours.Phase.CLOSED_DAY -> null
     }

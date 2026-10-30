@@ -200,6 +200,10 @@ object LocalScreener {
         val cands = if (limitup) pool.sortedByDescending { it.pctChg ?: 0.0 }.take(50)
         else preselect(pool, c.maxCandidates, rotation)
 
+        // 市况闸门只吃指数序列：全轮拉一次，不随个股变化。
+        // 拿不到就传 null，链路会记 degraded 并把闸门按 1.0，不拿个股 K 线充数。
+        val regimeCloses = runCatching { IndexDaily.closes() }.getOrNull()
+
         onProgress("预筛命中 ${cands.size} 只，逐只拉 K 线 + 本地引擎计算…")
 
         // 逐只拉 K 线 + 本地引擎（并发 4，避免打满）
@@ -225,6 +229,7 @@ object LocalScreener {
                                 breadth = breadth,
                                 sectors = sectorsRes,
                                 turnScale = turnScale,
+                                regimeCloses = regimeCloses,
                                 nowMs = nowMs,
                             )
                         )

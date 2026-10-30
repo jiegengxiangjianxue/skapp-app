@@ -26,6 +26,18 @@ data class EngineSpec(
     val runtime: RuntimePolicy,
     /** 校准权重（weight_calibrator 产物）：两端读同一份，缺失时等权。 */
     val weights: Map<String, Double>,
+    /** 权重的来源标识（`data/engine_weights.json` / `equal`）。页面上要能回放「这份分用的是哪套权重」。 */
+    val weightsSource: String,
+    /**
+     * 三路合成权重（中枢 / 资金流 / 盘口）。
+     *
+     * 此前硬编码在 `EngineChain`（中枢 0.88 / 资金 0.07 / 盘口 0.05），而规格已把
+     * flow/tape 作为**中枢内**投票下发（`weights.flow=0.07 / weights.tape=0.05`），
+     * 同一份信息在中枢内与合成层各算一次，等于双计。现在合成权重也进规格：
+     * 默认 `central=1.0, flow=0, tape=0`（中枢独占，资金/盘口只作诊断分展示），
+     * 云端要恢复三路加权只改这份数值，端上不发版。
+     */
+    val blend: BlendWeights,
     val engines: List<VoteEngine>,
     val deviceEngines: List<String>,
     val cloudOnlyEngines: List<String>,
@@ -67,6 +79,12 @@ data class EngineSpec(
         fun score(base: Double, resonance: Double): Double =
             scoreCenter + scoreScale * base * (resonanceBase + resonanceSpan * resonance)
     }
+
+    data class BlendWeights(
+        val central: Double = 1.0,
+        val flow: Double = 0.0,
+        val tape: Double = 0.0,
+    )
 
     data class RuntimePolicy(
         val minBars: Int,
@@ -110,7 +128,25 @@ object EngineSpecLoader {
 
     class Loaded(val spec: EngineSpec, val drift: Boolean, val reason: String)
 
-    fun loadBundled(): Loaded = try {
+    @Volatile
+    private var cached: Loaded? = null
+
+    /**
+     * 内置规格（进程内缓存）。
+     *
+     * 每次调用都读资源 + 解析 36KB JSON 是主链最大的隐性开销：`EngineChain.analyze`
+     * 每只票都会调一次，全市场扫一遍就重复解析几千遍。规格在进程内不变，缓存即可；
+     * 测试需重建时调 [clearCache]。
+     */
+    fun loadBundled(): Loaded = cached ?: synchronized(this) {
+        cached ?: loadBundledUncached().also { cached = it }
+    }
+
+    internal fun clearCache() {
+        cached = null
+    }
+
+    private fun loadBundledUncached(): Loaded = try {
         val text = EngineSpec::class.java.getResourceAsStream(RESOURCE)
             ?.bufferedReader()?.use { it.readText() }
             ?: return Loaded(fallback(), true, "内置规格资源缺失（$RESOURCE）")
@@ -173,6 +209,13 @@ object EngineSpecLoader {
         val weights = root.optJSONObject("weights")?.let { w ->
             w.keys().asSequence().associateWith { k -> w.optDouble(k, 1.0) }
         } ?: emptyMap()
+        val weightsSource = root.optString("weights_source", "equal")
+        val blendJson = root.optJSONObject("blend")
+        val blend = EngineSpec.BlendWeights(
+            central = blendJson?.optDouble("central", 1.0) ?: 1.0,
+            flow = blendJson?.optDouble("flow", 0.0) ?: 0.0,
+            tape = blendJson?.optDouble("tape", 0.0) ?: 0.0,
+        )
         val pipeline = root.optJSONArray("pipeline")?.let { arr ->
             (0 until arr.length()).mapNotNull { i ->
                 arr.optJSONObject(i)?.let { o ->
@@ -196,6 +239,8 @@ object EngineSpecLoader {
             aggregation = aggregation,
             runtime = runtime,
             weights = weights,
+            weightsSource = weightsSource,
+            blend = blend,
             engines = engines,
             deviceEngines = root.optJSONArray("device_engines")?.let { a ->
                 (0 until a.length()).map { a.optString(it, "") }
@@ -227,6 +272,8 @@ object EngineSpecLoader {
             missingVotePolicy = "drop", aiPickBasis = "local-score",
         ),
         weights = emptyMap(),
+        weightsSource = "builtin-fallback",
+        blend = EngineSpec.BlendWeights(),
         engines = emptyList(), deviceEngines = emptyList(),
         cloudOnlyEngines = emptyList(), pipeline = emptyList(),
     )

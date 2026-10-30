@@ -63,4 +63,46 @@ class PerfProbeTest {
                 "即 " + String.format("%.1f", msEach / mb) + " ms/MB"
         )
     }
+
+    /**
+     * 主链单票耗时：EngineChain.analyze（21 票 + flow + tape + 市况闸门 + blend）。
+     *
+     * 上面那条测的是 FactorWeightStrategy（16 指标），不是 App 现在真正跑的链路；
+     * 判断要不要换语言/换实现，得看主链的数。
+     */
+    @Test
+    fun `引擎链单票耗时`() {
+        val root = listOfNotNull(
+            System.getProperty("skapp.fixtures")?.let(::File),
+            File("../testdata"),
+            File("src/test/resources"),
+        ).first { it.exists() }
+        val spec = EngineSpecLoader.loadBundled().spec
+        val arr = JSONObject(File(root, "kline_fixtures.json").readText())
+            .getJSONObject("mid_002230").getJSONArray("bars")
+        val bars = (0 until arr.length()).map { i ->
+            val o = arr.getJSONObject(i)
+            KBar(
+                o.getString("date"), o.getDouble("open"), o.getDouble("close"),
+                o.getDouble("high"), o.getDouble("low"), o.getDouble("vol"),
+            )
+        }
+        val regime = (0 until 300).map { 3000.0 + it * 2.0 }
+        val inputs = EngineChain.Inputs(
+            bars = bars, regimeCloses = regime, nowMs = System.currentTimeMillis(),
+        )
+        repeat(300) { EngineChain.analyze(inputs, spec) }
+        val n = 500
+        // 单次测量噪声可达 25%，取 5 轮中位数才可引用
+        val samples = (0 until 5).map {
+            val t0 = System.nanoTime()
+            repeat(n) { EngineChain.analyze(inputs, spec) }
+            (System.nanoTime() - t0) / 1e6 / n
+        }.sorted()
+        println(
+            "EngineChain.analyze bars=" + bars.size + "  中位数 " +
+                String.format("%.3f", samples[samples.size / 2]) + " ms  样本 " +
+                samples.joinToString(", ") { String.format("%.2f", it) },
+        )
+    }
 }
