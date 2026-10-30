@@ -87,6 +87,9 @@ fun PicksListScreen(vm: SkappViewModel, state: UiState, mode: PickListSession) {
         idx
     }
 
+    // 决策卡按代码索引：市场决策已并入推股页，不再单独占一个 Tab
+    val decisionCards = remember(state.decision) { state.decision.cards.associateBy { it.code } }
+
     LazyColumn(
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -140,6 +143,33 @@ fun PicksListScreen(vm: SkappViewModel, state: UiState, mode: PickListSession) {
             }
         }
 
+        val regime = state.decision.marketRegime?.takeIf { it.isNotBlank() }
+        if (regime != null) {
+            item(key = "decision_brief") {
+                SkCard {
+                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("市场状态：$regime", fontWeight = FontWeight.SemiBold)
+                        state.decision.regimeDetail?.takeIf { it.isNotBlank() }?.let {
+                            Text(it, style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
+                        }
+                        val pa = state.decision.positionAdvice
+                        val label = pa["label"]?.toString()?.takeIf { it.isNotBlank() }
+                        val cap = (pa["cap"] as? Number)?.toDouble()
+                        if (label != null || cap != null) {
+                            Text(
+                                "仓位建议：" + (label ?: "暂无标签") +
+                                    (cap?.let { "　上限 ${"%.0f%%".format(it * 100)}" } ?: ""),
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                        (pa["gates"] as? List<*>)?.mapNotNull { it?.toString() }?.forEach { g ->
+                            Text("闸门命中：$g", style = MaterialTheme.typography.bodySmall, color = SkColors.warn)
+                        }
+                    }
+                }
+            }
+        }
+
         state.localPicksMsg?.let { msg ->
             item(key = "msg") {
                 Text(
@@ -180,6 +210,7 @@ fun PicksListScreen(vm: SkappViewModel, state: UiState, mode: PickListSession) {
                     vm,
                     state.picksTrend[pick.code],
                     trendAttempted = state.picksTrendAttempted.contains(pick.code),
+                    decision = decisionCards[pick.code],
                 )
             }
         }
@@ -227,6 +258,7 @@ private fun PickRow(
     vm: SkappViewModel,
     trend: com.skapp.app.data.TrendForecast.Result? = null,
     trendAttempted: Boolean = true,
+    decision: com.skapp.app.data.DecisionCard? = null,
 ) {
     Column(
         Modifier
@@ -283,6 +315,24 @@ private fun PickRow(
         }
         pick.engine?.takeIf { it.isNotBlank() }?.let {
             Text("引擎：$it", style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
+        }
+        decision?.let { d ->
+            val bits = listOfNotNull(
+                d.entry?.let { "入场 ${"%.2f".format(it)}" },
+                d.stop?.let { "止损 ${"%.2f".format(it)}" },
+                d.target?.let { "目标 ${"%.2f".format(it)}" },
+                d.holdingDays?.let { "持有 $it 日" },
+            )
+            if (bits.isNotEmpty()) {
+                Text(
+                    bits.joinToString(" · "),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
+            d.risk?.takeIf { it.isNotBlank() }?.let {
+                Text("风险：$it", style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
+            }
         }
         val why = pick.reason?.takeIf { it.isNotBlank() }
             ?: pick.why.take(3).joinToString("；").takeIf { it.isNotBlank() }

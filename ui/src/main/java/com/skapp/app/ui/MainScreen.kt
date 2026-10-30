@@ -25,7 +25,6 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.skapp.app.ui.screens.DashboardScreen
-import com.skapp.app.ui.screens.DecisionScreen
 import com.skapp.app.ui.screens.DiagScreen
 import com.skapp.app.ui.screens.PremarketPicksScreen
 import com.skapp.app.ui.screens.RealtimePicksScreen
@@ -40,7 +39,7 @@ import com.skapp.app.ui.screens.UnifiedAskScreen
 /** 模块编号与 HubScreen 一致；保留旧编号，避免业务页面路由变化。 */
 private val MODULE_NAMES = mapOf(
     0 to "看板", 1 to "实时总结", 2 to "消息与题材", 3 to "消息与题材", 4 to "全部",
-    5 to "行情", 6 to "决策", 8 to "盘前推股", 9 to "实时推股", 11 to "AI 总结", 12 to "自检",
+    5 to "行情", 8 to "盘前推股", 9 to "实时推股", 11 to "AI 总结", 12 to "自检",
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -120,7 +119,6 @@ fun MainScreen(vm: SkappViewModel) {
                     3 -> NewsScreen(vm, state)
                     4 -> HubScreen(vm, state) { module = it }
                     5 -> MarketScreen(vm, state)
-                    6 -> DecisionScreen(vm, state)
                     8 -> PremarketPicksScreen(vm, state)
                     9 -> RealtimePicksScreen(vm, state)
                     11 -> UnifiedAskScreen(vm, state)

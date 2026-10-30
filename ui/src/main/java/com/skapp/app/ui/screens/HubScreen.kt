@@ -65,7 +65,6 @@ fun HubScreen(vm: SkappViewModel, state: UiState, onNavigate: (Int) -> Unit) {
                 ModuleSpec("盘前推股名单", "上一交易日收盘口径，当日冻结", "盘前推股", 8, Icons.AutoMirrored.Filled.PlaylistAddCheck),
                 ModuleSpec("实时推股名单", "当日实时行情口径，随行情刷新", "实时推股", 9, Icons.Filled.Bolt),
                 ModuleSpec("实时总结", "刷新反馈、中枢引擎说明与 AI 二次总结", "实时总结", 1, Icons.Filled.AutoGraph),
-                ModuleSpec("决策台", "中枢结论与执行纪律", "决策", 6, Icons.Filled.QueryStats),
             ),
         ),
         ModuleGroup(
