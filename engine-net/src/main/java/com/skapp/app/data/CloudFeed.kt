@@ -219,7 +219,12 @@ object CloudFeed {
         val s = raw.trim().replace(Regex("""\.\d+"""), "")
         for (f in stampFormats) {
             try {
-                val fmt = SimpleDateFormat(f, Locale.CHINA).apply { isLenient = true }
+                val fmt = SimpleDateFormat(f, Locale.CHINA).apply {
+                    isLenient = true
+                    // 云端产物里的时间戳是北京时间；无偏移的格式（yyyy-MM-dd HH:mm:ss）
+                    // 若跟设备时区解析，UTC 设备上会整体偏 8 小时，陈旧度判定跟着错
+                    timeZone = java.util.TimeZone.getTimeZone(MarketHours.TZ_CST)
+                }
                 return fmt.parse(s)?.time
             } catch (_: Exception) {
                 // 试下一个
