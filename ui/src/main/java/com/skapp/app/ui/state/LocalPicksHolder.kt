@@ -105,9 +105,15 @@ internal class LocalPicksHolder(
         if (_state.value.localPicksLoading || localPicksJob?.isActive == true) return
         val session = com.skapp.app.data.LocalPicks.sessionFor(MarketHours.phase())
         if (session == null) {
-            if (_state.value.localPicksMsg == null) {
+            // 收盘/休市时 sessionFor 返回 null。原先这里只写一句「非交易时段」就 return，
+            // 推股页于是整屏无名单——用户看到的是「没有自动推荐」而不是「暂无盘中新名单」。
+            // 盘前口径用上一交易日收盘数据，任何时段都算得出来，所以回落到它；
+            // 当日已有存档时 ensurePicksFor 会直接复用，不会重复深算。
+            if (localPicksArtifact() == null) {
+                ensurePicksFor(com.skapp.app.data.LocalPicks.Session.PREMARKET)
+            } else if (_state.value.localPicksMsg == null) {
                 _state.value = _state.value.copy(
-                    localPicksMsg = "当前非交易时段（收盘后/休市），本地推股不在此时生成；存档仍可在卡片上查看。",
+                    localPicksMsg = "当前非交易时段，显示的是最近一次存档（盘前口径）。",
                 )
             }
             return

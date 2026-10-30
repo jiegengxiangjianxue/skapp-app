@@ -161,8 +161,11 @@ object LiveMarket {
             get() = Code.isMainBoard(code)
     }
 
-    private const val PAGE_SIZE = 500
-    private const val MAX_PAGES = 40
+    // 东财 clist 单页最多回 100 行（实测 pz=200/500 都只回 100），旧值 500 会让
+    // fetchAll 的 `batch.size < PAGE_SIZE` 第一页就成立，快照永远只剩涨幅前 100 只。
+    private const val PAGE_SIZE = 100
+    // 实测 total=5926，100/页 需 60 页。
+    private const val MAX_PAGES = 60
 
     /**
      * clist 的备用域名。实测 push2 会被风控直接返回空，而 push2delay 同一时刻有数据；
@@ -216,7 +219,10 @@ object LiveMarket {
             // f15/f18/f24/f25 一并取：RPS（60日/年初至今涨幅）与封板率（最高价 vs 涨停价）
             // 都要它们，放在同一次批量里不增加请求数。
             "&fields=f2,f3,f5,f6,f7,f8,f9,f10,f12,f14,f15,f16,f17,f18,f20,f22,f24,f25,f62"
-        for (attempt in HOSTS.indices) {
+        // 单页失败不只换 host：限流是成片断连（实测第 28 页起成组 RemoteDisconnected），
+        // 只换 host 一次仍会空页，fetchAll 随即 break 把快照截在一半。这里按 host 轮换 ×2 轮重试。
+        for (attempt in 0 until HOSTS.size * 2) {
+            if (attempt > 0) Thread.sleep(400L * attempt)
             val idx = (hostIdx + attempt) % HOSTS.size
             val rows = parsePage(httpGet(HOSTS[idx] + query))
             if (rows.isNotEmpty()) {
