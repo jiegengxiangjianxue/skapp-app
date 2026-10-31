@@ -1,7 +1,7 @@
 package com.skapp.app.data
 
 /**
- * 三层书籍信号引擎：反转（MTR）/ 涨停结构 / 订单流近似。
+ * 书籍信号引擎：反转（MTR）/ 涨停结构 / 订单流近似 / K 线形态。
  *
  * 与云端 `stocks-ai-view/scripts/{reversal_engine,limit_structure,orderflow_proxy}.py`
  * 同源同判据，端上重算而不是读云端产物：端上本来就有 120 根日 K（`runtime.screen_bars`），
@@ -31,13 +31,15 @@ package com.skapp.app.data
  */
 object BookSignalEngine {
 
-    /** 三层都要足够历史，80 根与云端 MIN_BARS 一致。 */
+    /** 各层都要足够历史，80 根与云端 MIN_BARS 一致。 */
     const val MIN_BARS = 80
 
     /** 三条信号各自的层 id，用于 reason 拼接与降级提示。 */
     const val LAYER_REVERSAL = "reversal"
     const val LAYER_LIMIT = "limit"
     const val LAYER_FLOW = "orderflow"
+    /** K 线形态层（#1 日本蜡烛图）。 */
+    const val LAYER_PATTERN = "candle"
 
     /**
      * 校准快照。`label` 必须与云端校准表键名逐字一致，否则两端理由对不上。
@@ -104,7 +106,7 @@ object BookSignalEngine {
         val score: Double?,
         /** 加权 5 日期望收益（%）。 */
         val expected5d: Double?,
-        /** 全部标签（三层合并，去重保序）。 */
+        /** 全部标签（各层合并，去重保序）。 */
         val tags: List<String>,
         /** 每层命中的标签，便于界面解释「这条信号来自哪本书」。 */
         val layers: Map<String, List<String>>,
@@ -134,19 +136,22 @@ object BookSignalEngine {
             .getOrElse { degraded += "涨停层异常：${it.message}"; emptyList() }
         val flow = runCatching { flowTags(bars) }
             .getOrElse { degraded += "订单流层异常：${it.message}"; emptyList() }
+        val pattern = runCatching { candlePatternTags(bars) }
+            .getOrElse { degraded += "形态层异常：${it.message}"; emptyList() }
 
         val layers = linkedMapOf(
             LAYER_REVERSAL to reversal,
             LAYER_LIMIT to limit,
             LAYER_FLOW to flow,
+            LAYER_PATTERN to pattern,
         )
-        val tags = (reversal + limit + flow).distinct()
+        val tags = (reversal + limit + flow + pattern).distinct()
         val scored = scoreOf(tags)
 
         val reason = when {
-            scored.first == null -> "三层皆无过检信号（不给分）"
+            scored.first == null -> "各层皆无过检信号（不给分）"
             else -> buildString {
-                append("三层信号 ")
+                append("多层信号 ")
                 append("%.2f%%/5日".format(scored.second))
                 scored.third?.let { append("（${it.label} t_net=${"%.2f".format(it.netT)} n=${it.n}）") }
             }
@@ -261,6 +266,48 @@ object BookSignalEngine {
         }
         if (lastLimitIdx >= n - 5) tags += "limit:active_5d"
         return tags
+    }
+
+    /** K 线形态标签（#1 日本蜡烛图）。当前只落地锤子/倒锤子两类，判据全部来自卡片可核部分。 */
+    private fun candlePatternTags(bars: List<KBar>): List<String> {
+        val n = bars.size
+        if (n < MIN_BARS) return emptyList()
+        val atrv = atr(bars)
+        if (atrv <= 0.0) return emptyList()
+        val b = bars[n - 1]
+        val rng = b.high - b.low
+        if (rng <= 0.0 || rng < 0.8 * atrv) return emptyList() // 全幅≥0.8×ATR
+        val body = kotlin.math.abs(b.close - b.open)
+        if (body <= 0.0) return emptyList()
+        val upper = b.high - maxOf(b.open, b.close)
+        val lower = minOf(b.open, b.close) - b.low
+        // 锤子（看多）：下影≥2×实体、上影≤0.5×实体、实体在上 1/3、距窗口低点<0.5×ATR
+        if (lower >= 2.0 * body && upper <= 0.5 * body &&
+            maxOf(b.open, b.close) >= b.low + rng * (2.0 / 3.0) && nearSwingLow(bars, atrv)) {
+            return listOf("pat:hammer")
+        }
+        // 倒锤子（看空）：上影≥2×实体、下影≤0.5×实体、实体在下 1/3、距窗口高点<0.5×ATR
+        if (upper >= 2.0 * body && lower <= 0.5 * body &&
+            minOf(b.open, b.close) <= b.low + rng / 3.0 && nearSwingHigh(bars, atrv)) {
+            return listOf("pat:inv_hammer")
+        }
+        return emptyList()
+    }
+
+    /** 最近 20 根（不含当根）的最低价，当根距它 <0.5×ATR 视为「低位附近」。 */
+    private fun nearSwingLow(bars: List<KBar>, atrv: Double): Boolean {
+        val n = bars.size
+        var lo = Double.POSITIVE_INFINITY
+        for (i in maxOf(0, n - 21) until n - 1) lo = minOf(lo, bars[i].low)
+        return lo.isFinite() && (bars[n - 1].low - lo) < 0.5 * atrv
+    }
+
+    /** 最近 20 根（不含当根）的最高价，当根距它 <0.5×ATR 视为「高位附近」。 */
+    private fun nearSwingHigh(bars: List<KBar>, atrv: Double): Boolean {
+        val n = bars.size
+        var hi = Double.NEGATIVE_INFINITY
+        for (i in maxOf(0, n - 21) until n - 1) hi = maxOf(hi, bars[i].high)
+        return hi.isFinite() && (hi - bars[n - 1].high) < 0.5 * atrv
     }
 
     // ─────────────────────── 订单流近似层（#9） ───────────────────────

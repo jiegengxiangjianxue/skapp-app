@@ -127,73 +127,6 @@ fun DashboardScreen(vm: SkappViewModel, state: UiState) {
         item { CommentaryCard(state.summary) }
 
         item {
-            if (state.marketPulse.isNotEmpty() || state.marketPulseLoading) {
-                SectionTitle("本地异动观察（非买入建议）")
-                Text(
-                    "${
-                        when (state.marketPulseScope) {
-                            "全市场" -> "全市场预筛"
-                            "池内" -> "池内预筛（自选+推股，无量比/资金分位）"
-                            "none" -> "异动不可用"
-                            else -> "预筛范围未知"
-                        }
-                    } · ${state.marketPulseTs ?: "暂无时点"} · " +
-                        "排序：横截面相对强度（涨幅分位 45% + 量比分位 35% + 资金分位 20%），连续 2 轮确认优先",
-                    style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary,
-                )
-                if (state.pulseDropped.isNotEmpty()) {
-                    Text(
-                        "本轮掉出：${state.pulseDropped.joinToString("、")}",
-                        style = MaterialTheme.typography.labelSmall, color = SkColors.textSecondary,
-                    )
-                }
-                if (state.marketPulseLoading) CircularProgressIndicator(modifier = Modifier.height(20.dp), strokeWidth = 2.dp)
-            }
-        }
-        items(state.marketPulse.take(10), key = { it.code }) { row ->
-            Card(
-                modifier = Modifier.fillMaxWidth().clickable { vm.openDetail(row.code) },
-                colors = CardDefaults.cardColors(),
-            ) {
-                Row(Modifier.fillMaxWidth().padding(10.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Column(Modifier.weight(1f)) {
-                        Text("${row.name} ${row.code}", fontWeight = FontWeight.Medium)
-                        Text(
-                            "板块 ${row.board ?: "暂无数据"}",
-                            style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary,
-                        )
-                        Text(
-                            "强度 ${row.relStrength?.let { "%.0f".format(it) } ?: "暂无"} · " +
-                                "涨幅 ${row.pctChg?.let { "%+.2f%%".format(it) } ?: "暂无数据"} · " +
-                                "量比 ${row.volRatio?.let { "%.2f".format(it) } ?: "暂无数据"} · " +
-                                "判断 ${outlookText(row.outlook)}",
-                            style = MaterialTheme.typography.bodySmall,
-                        )
-                        Text(
-                            when {
-                                row.streak >= 2 -> "连续 ${row.streak} 轮同向（已确认）"
-                                else -> "本轮新进（未经 2 轮确认，仅观察）"
-                            } + " · 涨速 " + (row.speed?.let { "%+.2f%%".format(it) } ?: "暂无") +
-                                when (row.speedSource) {
-                                    "tick" -> "（30 秒快照差）"
-                                    "field" -> "（东财字段·首轮替代）"
-                                    else -> ""
-                                },
-                            style = MaterialTheme.typography.labelSmall,
-                            color = if (row.streak >= 2) SkColors.textSecondary else MaterialTheme.colorScheme.primary,
-                        )
-                        Text(row.outlookReason ?: "暂无推断依据", style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
-                        if (row.eventTitle != null) Text(
-                            "事件：${row.eventTitle} · ${row.eventDirection ?: "方向暂无"} · ${row.eventReason ?: "理由暂无"} · 时点 ${row.evidenceTs ?: "暂无"}",
-                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary,
-                        ) else Text("事件：未匹配消息，不能据此归因", style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
-                    }
-                    Text("详情 ›", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodySmall)
-                }
-            }
-        }
-
-        item {
             DashboardNewsSection(state, vm)
         }
 
@@ -223,14 +156,6 @@ fun DashboardScreen(vm: SkappViewModel, state: UiState) {
 
         item { Spacer(Modifier.height(80.dp)) }
     }
-}
-
-private fun outlookText(value: String): String = when (value) {
-    "bullish" -> "偏多"
-    "bearish" -> "偏空"
-    "watch_up" -> "观察偏强"
-    "watch_down" -> "观察偏弱"
-    else -> "数据不足"
 }
 
 private fun numOf(v: Any?): Double? = when (v) {

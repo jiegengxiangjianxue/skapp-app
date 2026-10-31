@@ -52,6 +52,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.skapp.app.data.BookSignalEngine
 import com.skapp.app.data.EngineScore
 import com.skapp.app.data.ExtendedIndicators
 import com.skapp.app.data.KBar
@@ -388,6 +389,23 @@ fun StockDetailSheet(vm: SkappViewModel, state: UiState) {
                     style = MaterialTheme.typography.bodySmall)
                 Text("族级共振：${state.centralEngineResonance?.let { String.format("%.0f%%", it * 100) } ?: "insufficient"}（趋势/动量/通道/量能/波动/位置 6 族，同族不重复计票）· 状态：${state.centralEngineStatus}",
                     style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
+                // 形态标签（#1 日本蜡烛图）：引擎只认锤子/倒锤子，无命中时整行不出现，不占位
+                val patternTags = remember(d.code, state.kline.size) {
+                    runCatching { BookSignalEngine.compute(state.kline).layers[BookSignalEngine.LAYER_PATTERN] }
+                        .getOrNull().orEmpty()
+                }
+                if (patternTags.isNotEmpty()) {
+                    Text(
+                        "K 线形态：" + patternTags.joinToString("、") { tag ->
+                            when (tag) {
+                                "pat:hammer" -> "锤子线（低位）"
+                                "pat:inv_hammer" -> "倒锤子线（高位）"
+                                else -> tag
+                            }
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
                 Text(
                     "基于 ${eng?.barsUsed ?: 0} 根日 K，有效引擎 ${eng?.nValid ?: 0}/${eng?.engines?.size ?: 0}",
                     style = MaterialTheme.typography.bodySmall,
