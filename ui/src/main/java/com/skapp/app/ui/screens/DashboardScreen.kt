@@ -72,12 +72,16 @@ fun DashboardScreen(vm: SkappViewModel, state: UiState) {
                     Text("看板", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                     Text(
                         (b["ts"]?.toString() ?: "时点暂无") +
-                            " · " + (if (b["source"] == "local") "本地实时" else "库表回看") +
+                            " · " + when {
+                                b.isEmpty() -> "未加载"
+                                b["source"] == "local" -> "本地实时"
+                                else -> "库表回看"
+                            } +
                             " · " + heartbeatText(state),
                         style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary,
                     )
                 }
-                Text("刷新", Modifier.clickable { vm.loadBoard() },
+                Text("刷新", Modifier.clickable { vm.loadBoard(force = true) },
                     color = MaterialTheme.colorScheme.primary,
                     style = MaterialTheme.typography.bodySmall)
             }
@@ -85,14 +89,16 @@ fun DashboardScreen(vm: SkappViewModel, state: UiState) {
 
         // ── KPI 8 格：涨停/跌停/炸板/封板率/上涨/下跌/成交/阶段（网页版 kpis 对齐）──
         item {
-            val limitUp = numOf(market["limit_up"])
-            val limitDown = numOf(market["limit_down"])
-            val broken = numOf(market["broken"])
-            val advance = numOf(market["advance"])
-            val decline = numOf(market["decline"])
-            val turnover = numOf(market["turnover_yi"] ?: (market["turnover"] as? Map<*, *>)?.get("total_yi"))
-            val phase = market["phase"]?.toString() ?: "—"
-            val phaseScore = numOf(market["phase_score"])
+            // 字段契约以 LocalSectors.boardMap 为准：统计在 market 内用中文键，相位在顶层 phase{label,score}
+            val limitUp = numOf(market["涨停"])
+            val limitDown = numOf(market["跌停"])
+            val broken = numOf(market["炸板"])
+            val advance = numOf(market["涨"])
+            val decline = numOf(market["跌"])
+            val turnover = numOf(market["成交额(亿)"])
+            val phaseMeta = b["phase"] as? Map<*, *>
+            val phase = phaseMeta?.get("label")?.toString() ?: "—"
+            val phaseScore = numOf(phaseMeta?.get("score"))
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     KpiCard("涨停", limitUp?.toInt()?.toString(), UP, Modifier.weight(1f))
@@ -125,10 +131,6 @@ fun DashboardScreen(vm: SkappViewModel, state: UiState) {
 
         // 盘面解读只保留看板这一处；实时总结复用同一份 summary，不再重复展示正文。
         item { CommentaryCard(state.summary) }
-
-        item {
-            DashboardNewsSection(state, vm)
-        }
 
         // ── 个股查（panel-stock）：搜索入口 ──
         item { StockSearchCard(vm, state) }
@@ -192,50 +194,6 @@ private fun CommentaryCard(summary: Map<String, Any?>) {
                 }
         }
     }
-}
-
-@Composable
-private fun DashboardNewsSection(state: UiState, vm: SkappViewModel) {
-    val rows = state.news.items.take(8)
-    SkCard(contentPadding = PaddingValues(0.dp)) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-            Text("实时异动", fontWeight = FontWeight.SemiBold)
-            Text("盘前分析后的实时消息异动；板块和涨停数据在多池选股查看。",
-                style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
-            if (rows.isEmpty() && state.newsCalcs.isEmpty()) {
-                Text("暂无数据：实时消息异动尚未返回。", style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
-            } else if (rows.isNotEmpty()) {
-                rows.forEach { row ->
-                    val title = (row["title"] ?: row["newsTitle"] ?: row["content"] ?: "暂无标题").toString()
-                    val meta = listOfNotNull(row["source"]?.toString(), row["time"]?.toString(), row["verdict"]?.toString())
-                        .filter { it.isNotBlank() }.joinToString(" · ")
-                    Text(title, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
-                    if (meta.isNotBlank()) Text(meta, style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
-                    extractNewsCodes(row).take(5).forEach { code ->
-                        Text("影响个股：$code", style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.clickable { vm.openDetail(code) }.padding(vertical = 2.dp))
-                    }
-                }
-            } else {
-                Text("${state.newsCalcs.size} 条实时异动已计算，原始消息正文暂无。",
-                    style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
-            }
-        }
-    }
-}
-
-private fun extractNewsCodes(row: Map<String, Any?>): List<String> {
-    val raw = row["codes"] ?: row["impactCodes"] ?: row["affected_stocks"] ?: row["stocks"] ?: return emptyList()
-    return when (raw) {
-        is List<*> -> raw.mapNotNull { value ->
-            when (value) {
-                is Map<*, *> -> (value["code"] ?: value["symbol"] ?: value["stock_code"])?.toString()
-                else -> value?.toString()
-            }
-        }
-        else -> listOf(raw.toString())
-    }.map { it.trim() }.filter { it.isNotBlank() }.distinct()
 }
 
 @Composable
@@ -508,7 +466,18 @@ private fun PickTrackingSection(state: UiState, vm: SkappViewModel) {
 
 /** 盘中心跳时点：让「数据是不是刚刚的」一眼可见，而不是靠猜。 */
 private fun heartbeatText(state: UiState): String {
-    if (state.heartbeatAt <= 0L) return "心跳未启动"
+    val phase = com.skapp.app.data.MarketHours.phase()
+    val inSession = com.skapp.app.data.MarketHours.isTrading() || com.skapp.app.data.MarketHours.isAuction()
+    if (state.heartbeatAt <= 0L) {
+        if (inSession) return "心跳未启动"
+        return when (phase) {
+            com.skapp.app.data.MarketHours.Phase.CLOSED_DAY -> "休市日 · 心跳暂停"
+            com.skapp.app.data.MarketHours.Phase.PRE_OPEN -> "盘前 · 心跳暂停"
+            com.skapp.app.data.MarketHours.Phase.LUNCH_BREAK -> "午间休市 · 心跳暂停"
+            com.skapp.app.data.MarketHours.Phase.AFTER_HOURS -> "盘后 · 心跳暂停"
+            else -> "非交易时段 · 心跳暂停"
+        }
+    }
     val age = ((System.currentTimeMillis() - state.heartbeatAt) / 1000).coerceAtLeast(0)
     val label = state.heartbeatLabel.takeIf { it.isNotBlank() } ?: "运行中"
     return "心跳 ${age}s 前 · $label"

@@ -213,8 +213,8 @@ internal class NewsSummaryHolder(
     }
 
     /** 本地实时看板：全市场快照 × 板块映射现算，涨跌榜/涨停池/板块热度都是当下的。 */
-    suspend fun localBoardMap(): Map<String, Any?> {
-        val snap = com.skapp.app.data.LiveMarket.snapshot()
+    suspend fun localBoardMap(force: Boolean = false): Map<String, Any?> {
+        val snap = com.skapp.app.data.LiveMarket.snapshot(force = force)
         if (snap.isEmpty()) return localBoardUnavailable()
         val pulse = com.skapp.app.data.LivePulse.of(snap)
         val res = runCatching { com.skapp.app.data.LocalSectors.compute() }.getOrNull()
@@ -360,11 +360,13 @@ internal class NewsSummaryHolder(
 
     /** 看板 */
     fun loadBoard(force: Boolean = false) {
-        // 去重：启动预热与页面 LaunchedEffect 会各叫一次，同一份数据没必要拉两遍
-        if (!force && boardJob?.isActive == true) return
+        // 去重：启动预热与页面 LaunchedEffect 会各叫一次，同一份数据没必要拉两遍；
+        // 手动刷新必须真重拉：先取消在途任务，否则会被旧任务挡住拿不到新数据
+        if (force) boardJob?.cancel()
+        else if (boardJob?.isActive == true) return
         boardJob = viewModelScope.launch {
             // 看板与宽度都走本地实时：全市场快照 × 板块映射现算，不再读云端 latest.json
-            val boardD = async { runCatching { localBoardMap() }.getOrDefault(localBoardUnavailable()) }
+            val boardD = async { runCatching { localBoardMap(force) }.getOrDefault(localBoardUnavailable()) }
             val breadthD = async {
                 runCatching {
                     com.skapp.app.data.LocalSectors.breadth(
