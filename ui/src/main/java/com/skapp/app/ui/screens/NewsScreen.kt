@@ -345,10 +345,18 @@ private fun NewsCalcInline(n: NewsCalc, vm: SkappViewModel) {
         n.positiveReason?.takeIf { it.isNotBlank() && it != "insufficient" },
         n.negativeReason?.takeIf { it.isNotBlank() && it != "insufficient" },
     ).distinct().joinToString("；")
-    if (moveBasis.isNotBlank()) {
-        Text("异动依据：$moveBasis", style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
+    if (n.reasoning.isNotEmpty()) {
+        n.reasoning.forEach { line ->
+            Text(line, style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
+        }
     }
-    if (n.sentimentHits.isNotEmpty()) Text("命中依据：${n.sentimentHits.joinToString("、")}", style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
+    // 数据层给出的正/负理由往往是最具体的一条，不能被 reasoning 挤掉
+    if (moveBasis.isNotBlank()) {
+        Text("依据：$moveBasis", style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
+    }
+    if (n.sentimentHits.isNotEmpty()) {
+        Text("命中依据：${n.sentimentHits.joinToString("、")}", style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
+    }
     if (n.impactCodes.isNotEmpty() && n.stocks.isEmpty()) Text("影响个股：${n.impactCodes.joinToString("、")}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
     if (n.boards.isNotEmpty()) {
         val detail = n.boards.joinToString("、") { name ->
@@ -367,8 +375,13 @@ private fun NewsCalcInline(n: NewsCalc, vm: SkappViewModel) {
     }
     if (n.themes.isNotEmpty()) Text("影响题材：${n.themes.joinToString("、")}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
     if (n.stocks.isEmpty()) {
-        Text(if (n.status == "no_stock") "该条未提及具体股票，无个股计算。" else if (n.status == "board_only") (n.note ?: "仅命中板块，个股待确认。") else "计算中或数据不足。",
-            style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
+        val statusText = when (n.status) {
+            "symbols_missing" -> n.note ?: "全市场代码表未加载，无法识别个股。"
+            "no_stock" -> "标题未出现股票名或代码，本条只做文字层面的方向判断。"
+            "board_only" -> n.note ?: "仅命中板块，个股待确认。"
+            else -> n.note ?: "计算中或数据不足。"
+        }
+        Text(statusText, style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
     } else {
         n.stocks.forEach { stock ->
             Row(

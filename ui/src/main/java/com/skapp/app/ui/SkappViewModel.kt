@@ -392,6 +392,52 @@ class SkappViewModel : ViewModel() {
 
     private var warmUpJob: Job? = null
 
+    /** 全市场约 5500 条；低于这个数视为半截响应，不能覆盖好快照，也不能当全表用 */
+    private val SYMBOL_TABLE_MIN = 3000
+
+    private fun symbolsSnapshotFile(): java.io.File? =
+        shared.appContext?.let { java.io.File(it.filesDir, "symbols_snapshot.tsv") }
+
+    private fun writeSymbolsSnapshot(list: List<SymbolEntry>) {
+        val file = symbolsSnapshotFile() ?: return
+        runCatching {
+            // 先写临时文件再原子替换：写到一半被杀不会留下半截表被当成全表
+            val tmp = java.io.File(file.parentFile, "${file.name}.tmp")
+            tmp.writeText(list.joinToString("\n") { "${it.code}\t${it.name.orEmpty()}" })
+            if (!tmp.renameTo(file)) {
+                file.delete()
+                tmp.renameTo(file)
+            }
+        }
+    }
+
+    private fun readSymbolsSnapshot(): List<SymbolEntry>? {
+        val file = symbolsSnapshotFile() ?: return null
+        if (!file.exists()) return null
+        return runCatching {
+            file.readLines().mapNotNull { line ->
+                val parts = line.split('\t')
+                if (parts.size != 2 || parts[0].isBlank()) null
+                else SymbolEntry(parts[0], parts[1].ifBlank { null })
+            }
+        }.getOrNull()
+    }
+
+    /** 打包在 assets 里的代码表快照（app/src/main/assets/symbols_snapshot.json）。 */
+    private fun readSymbolsFromAssets(): List<SymbolEntry>? {
+        val ctx = shared.appContext ?: return null
+        return runCatching {
+            val text = ctx.assets.open("symbols_snapshot.json").bufferedReader().use { it.readText() }
+            val arr = org.json.JSONArray(text)
+            (0 until arr.length()).mapNotNull { i ->
+                val o = arr.optJSONObject(i) ?: return@mapNotNull null
+                val code = o.optString("s").ifBlank { o.optString("code") }
+                val name = o.optString("n").ifBlank { o.optString("name") }
+                if (code.isBlank()) null else SymbolEntry(code, name.ifBlank { null })
+            }
+        }.getOrNull()?.takeIf { it.isNotEmpty() }
+    }
+
     init {
         // 不在 init 里 load()：token 要等 loadSavedToken 恢复；此时拉数据会因无鉴权全失败（app 打开全空的根因）
         market.startQuoteLoop()
@@ -483,11 +529,22 @@ class SkappViewModel : ViewModel() {
                     market.search(shared.searchQuery)
                 }
             }
-            val symbolsD = async {
-                requestResult { DbTables.symbols() }.getOrDefault(emptyList()).also { symbols ->
-                    _state.value = _state.value.copy(symbols = symbols)
-                    market.search(shared.searchQuery)
+            val symbolsD = async(Dispatchers.IO) {
+                var loaded = requestResult { DbTables.symbols() }.getOrDefault(emptyList())
+                // 代码表直连 raw.githubusercontent.com，国内网络经常拉不到；而消息识股、搜索、问答全依赖它。
+                // 拉全了就落盘快照，拉不到就用上次快照，避免整条分析链路静默失效（50 条快讯全「无个股」）。
+                if (loaded.size >= SYMBOL_TABLE_MIN) writeSymbolsSnapshot(loaded)
+                else readSymbolsSnapshot()?.takeIf { it.size >= SYMBOL_TABLE_MIN }?.let { loaded = it }
+                // 首次或缓存失效时用内置快照：GitHub raw 与 api.github.com 在部分网络下都不可达
+                if (loaded.size < SYMBOL_TABLE_MIN) {
+                    readSymbolsFromAssets()?.let {
+                        loaded = it
+                        writeSymbolsSnapshot(it)
+                    }
                 }
+                _state.value = _state.value.copy(symbols = loaded)
+                market.search(shared.searchQuery)
+                loaded
             }
             // ── 推股 / 决策 / 市场概览：本地产出（实时），不再读云端快照 ──
             // 云端那三份（today_picks / decision / market）是收盘后算的，盘中打开是旧结论。
