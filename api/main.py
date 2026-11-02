@@ -10,6 +10,7 @@ HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, HERE)
 
 from skapp_pkg.datasrc.market_data import realtime_quotes, news_feed
+from skapp_pkg.datasrc.webfetch import fetch_structured
 from skapp_pkg.engine.analyze import analyze
 from skapp_pkg.engine.picks import picks as engine_picks
 
@@ -67,3 +68,29 @@ def news(num: int = 30):
 @app.get("/api/v1/snapshot/{date}")
 def snapshot(date: str):
     return _snap(date)
+
+class FetchBody(BaseModel):
+    url: str
+    selectors: dict[str, str] | None = None
+    text_limit: int = 1500
+    include_links: bool = False
+    include_tables: bool = False
+    method: str = "GET"
+    referer: str | None = None
+    timeout: int = 20
+
+@app.post("/api/v1/fetch")
+def fetch_endpoint(body: FetchBody):
+    """通用网页抓取：伪装 Chrome，输出裁剪后的结构化结果（JSON / HTML / 纯文本）。"""
+    if not body.url.startswith(("http://", "https://")):
+        raise HTTPException(400, "url must start with http:// or https://")
+    return fetch_structured(
+        body.url,
+        selectors=body.selectors,
+        text_limit=max(200, min(body.text_limit, 8000)),
+        include_links=body.include_links,
+        include_tables=body.include_tables,
+        method=body.method,
+        referer=body.referer,
+        timeout=max(5, min(body.timeout, 60)),
+    )

@@ -523,6 +523,7 @@ class SkappViewModel : ViewModel() {
     fun load() {
         viewModelScope.launch {
             _state.value = _state.value.copy(loading = true, error = null)
+            try {
             val namesD = async {
                 requestResult { DbTables.stockNames() }.getOrDefault(emptyMap()).also { names ->
                     shared.stockNames = names
@@ -605,6 +606,13 @@ class SkappViewModel : ViewModel() {
             news.refreshPoolReprice()  // 池子成分本地实时重算（首屏先用云端快照，随即覆盖）
             market.loadIndices()
             market.loadMarketState()
+            } catch (e: CancellationException) {
+                // 用户离开/协程被取消：静默结束，不覆盖 loading 终态
+                throw e
+            } catch (e: Exception) {
+                // 任一取数或快照 IO 失败都复位 loading，否则 spinner 永久转（截图「加载中」卡死根因）
+                _state.value = _state.value.copy(loading = false, error = e.message ?: "首屏加载失败")
+            }
         }
     }
 

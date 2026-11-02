@@ -10,6 +10,9 @@ captures/
 *.apk
 *.aab
 
+# 本地虚拟环境（CI 不需要，不入库）
+.venv/
+
 # Python 运行产物
 __pycache__/
 *.pyc
