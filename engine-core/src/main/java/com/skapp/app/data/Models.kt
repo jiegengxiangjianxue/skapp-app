@@ -309,11 +309,4 @@ data class DataSourcesSnapshot(
     val items: List<DataSourceStatus> = emptyList(),
 )
 
-/** 用户提问 → 命中个股 → 答案 */
-data class AskResult(
-    val question: String,
-    val matched: List<StockDetail> = emptyList(),
-    val answer: String? = null,
-    val sources: Map<String, Any?> = emptyMap(),
-    val error: String? = null,
-)
+

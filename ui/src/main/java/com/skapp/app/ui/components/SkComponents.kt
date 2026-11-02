@@ -25,7 +25,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -84,35 +83,6 @@ fun SkCard(
         ),
         content = { Column(Modifier.padding(contentPadding), content = content) },
     )
-}
-
-/** 带标题的区块卡：标题 + 可选副标题 + 可选操作 + 分隔线。 */
-@Composable
-fun SkSectionCard(
-    title: String,
-    modifier: Modifier = Modifier,
-    subtitle: String? = null,
-    action: (@Composable () -> Unit)? = null,
-    content: @Composable ColumnScope.() -> Unit,
-) {
-    SkCard(modifier = modifier) {
-        Row(
-            Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text(title, style = SkType.title, color = SkColors.textPrimary)
-                if (!subtitle.isNullOrBlank()) {
-                    Text(subtitle, style = SkType.caption, color = SkColors.textSecondary)
-                }
-            }
-            action?.invoke()
-        }
-        HorizontalDivider(color = SkColors.divider, thickness = 1.dp)
-        Spacer(Modifier.height(SkSpace.s))
-        content()
-    }
 }
 
 enum class UiStateKind { Loading, Empty, Error }
