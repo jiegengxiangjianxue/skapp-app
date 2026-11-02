@@ -5,16 +5,24 @@ import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.lightColorScheme
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.skapp.app.ui.MainScreen
 import com.skapp.app.ui.SkappViewModel
+import com.skapp.app.ui.screens.Session
+import com.skapp.app.ui.screens.SessionDetailScreen
+import com.skapp.app.ui.screens.SessionListScreen
 import com.skapp.app.ui.theme.SkColors
 
 private val SkappLightColors = lightColorScheme(
@@ -36,21 +44,16 @@ private val SkappLightColors = lightColorScheme(
     onErrorContainer = SkColors.errorText,
 )
 
+/** 启动页状态机：会话列表 → 会话详情 / 主界面。 */
+private enum class StartPage { LIST, MAIN, DETAIL }
+
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // 尽最早安装崩溃捕获：闪退原因未知时，这是唯一能拿到堆栈的途径
         com.skapp.app.ui.CrashGuard.install(this)
-        // 上次若崩过，把原始堆栈导出到 Download：用户不连电脑就能把日志发出来。
-        // 放后台线程——MediaStore 写入要几百毫秒，不能拖住首帧。
         Thread { com.skapp.app.ui.CrashGuard.exportPending(applicationContext) }.start()
-        // vc19 守卫：CrashGuard 只抓 Java 未捕获异常，抓不到 ANR / 低内存被回收 / native 崩溃。
-        // 这里补一条与异常无关的通道：主线程心跳（停顿当场落盘）+ 内存水位采样。
-        // 必须在主线程调用——心跳靠 mainLooper 自循环，这正是它能反映主线程卡顿的原因。
         com.skapp.app.ui.HealthGuard.install(applicationContext)
         Thread { com.skapp.app.ui.HealthGuard.exportPending(applicationContext) }.start()
-        // 本地日级行情存档的落盘目录：连板高度/晋级率/板块动量/长周期 RPS 都靠它按天积累。
-        // 放在这里初始化（而不是各模块自己找 Context），未初始化时存档模块安全地退化为 no-op。
         com.skapp.app.data.MarketDayArchive.init(filesDir)
         enableEdgeToEdge(
             statusBarStyle = SystemBarStyle.light(
@@ -72,7 +75,27 @@ class MainActivity : ComponentActivity() {
                         vm.load()
                         vm.warmUpAll()
                     }
-                    MainScreen(vm)
+
+                    // 启动顺序：先会话列表页 → 选择会话进会话页 / 新建进主界面
+                    var page by remember { mutableStateOf(StartPage.LIST) }
+                    var currentSession by remember { mutableStateOf<Session?>(null) }
+
+                    // 会话详情页的返回键 → 回会话列表
+                    BackHandler(enabled = page == StartPage.DETAIL) {
+                        page = StartPage.LIST
+                    }
+
+                    when (page) {
+                        StartPage.LIST -> SessionListScreen(
+                            onNewSession = { page = StartPage.MAIN },
+                            onSelectSession = { session ->
+                                currentSession = session
+                                page = StartPage.DETAIL
+                            },
+                        )
+                        StartPage.MAIN -> MainScreen(vm)
+                        StartPage.DETAIL -> currentSession?.let { SessionDetailScreen(it) }
+                    }
                 }
             }
         }

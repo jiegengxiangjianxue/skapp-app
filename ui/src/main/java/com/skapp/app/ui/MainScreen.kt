@@ -2,14 +2,19 @@ package com.skapp.app.ui
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -20,6 +25,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.blur
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -57,6 +68,46 @@ private enum class MainTab(val label: String, val subtitle: String) {
     NEWS("消息", "新闻与题材"),
     PICKS("选股", "候选名单、板块与中枢结论"),
     CREDENTIALS("凭据", "AI 双源配置与自检"),
+}
+
+/** 底部悬浮玻璃栏容器，液体圆角玻璃效果。 */
+@Composable
+private fun GlassBottomBar(
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit,
+) {
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(72.dp)
+            .navigationBarsPadding(),
+        contentAlignment = Alignment.Center,
+    ) {
+        // 玻璃背景层：模糊 + 半透明白色渐变
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .clip(RoundedCornerShape(24.dp))
+                .blur(24.dp)
+                .alpha(0.65f)
+                .background(
+                    Brush.linearGradient(
+                        colors = listOf(Color(0x40FFFFFF), Color(0x10FFFFFF)),
+                        start = Offset(0f, 0f),
+                        end = Offset(0f, 300f),
+                    ),
+                ),
+        )
+        // 外边框：极淡白色描边，模拟玻璃边缘高光
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .clip(RoundedCornerShape(24.dp))
+                .border(1.dp, Color(0x30FFFFFF), RoundedCornerShape(24.dp)),
+        )
+        // Tab 内容
+        content()
+    }
 }
 
 @Composable
@@ -131,12 +182,6 @@ fun MainScreen(vm: SkappViewModel) {
                 }
                 Spacer(Modifier.weight(1f))
             }
-            SkTabBar(
-                tabs = MainTab.entries.map { it.label },
-                selected = tab.ordinal,
-                onSelect = { tab = MainTab.entries[it] },
-                modifier = Modifier.padding(horizontal = 18.dp),
-            )
             Box(Modifier.weight(1f)) {
                 when (tab) {
                     MainTab.DASHBOARD -> DashboardHubScreen(vm, state, sub, ::selectSub)
@@ -148,10 +193,22 @@ fun MainScreen(vm: SkappViewModel) {
             }
         }
 
+        // 底部悬浮玻璃栏
+        GlassBottomBar {
+            SkTabBar(
+                tabs = MainTab.entries.map { it.label },
+                selected = tab.ordinal,
+                onSelect = { tab = MainTab.entries[it] },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp),
+            )
+        }
+
         if (detailOpen) {
             Box(
                 Modifier.fillMaxSize()
-                    .background(MaterialTheme.colorScheme.background)
+                    .background(MaterialTheme.colorScheme.background),
             ) {
                 StockDetailSheet(vm, state)
             }
