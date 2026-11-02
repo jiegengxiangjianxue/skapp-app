@@ -47,6 +47,9 @@ private val SkappLightColors = lightColorScheme(
 /** 启动页状态机：会话列表 → 会话详情 / 主界面。 */
 private enum class StartPage { LIST, MAIN, DETAIL }
 
+/** 主界面默认 tab；会话"今日实时看盘" 进 MAIN 时预选今日看盘。 */
+private var initialMainTab: Int = 0  // 0 = DASHBOARD（默认）
+
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -87,13 +90,21 @@ class MainActivity : ComponentActivity() {
 
                     when (page) {
                         StartPage.LIST -> SessionListScreen(
-                            onNewSession = { page = StartPage.MAIN },
+                            onNewSession = {
+                                initialMainTab = 1  // DASHBOARD
+                                page = StartPage.MAIN
+                            },
                             onSelectSession = { session ->
-                                currentSession = session
-                                page = StartPage.DETAIL
+                                if (session.id == "today_board") {
+                                    initialMainTab = 0  // TODAY_BOARD
+                                    page = StartPage.MAIN
+                                } else {
+                                    currentSession = session
+                                    page = StartPage.DETAIL
+                                }
                             },
                         )
-                        StartPage.MAIN -> MainScreen(vm)
+                        StartPage.MAIN -> MainScreen(vm, initialTab = initialMainTab)
                         StartPage.DETAIL -> currentSession?.let { SessionDetailScreen(it) }
                     }
                 }

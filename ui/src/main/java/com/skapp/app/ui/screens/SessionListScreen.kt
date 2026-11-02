@@ -42,12 +42,14 @@ fun SessionListScreen(
     modifier: Modifier = Modifier,
 ) {
     // Mock data for now — real storage can be added later
+    val now = System.currentTimeMillis()
     val sessions = listOf(
-        Session("s1", "今日市场复盘", "大盘指数震荡上行，科技股领涨...", 1730500000000L),
-        Session("s2", "候选池分析", "连续3天筛选结果对比，资金流向...", 1730400000000L),
-        Session("s3", "板块动量观察", "半导体、新能源板块轮动分析...", 1730300000000L),
-        Session("s4", "历史回测验证", "策略胜率回测，参数敏感性分析...", 1730200000000L),
-        Session("s5", "新闻事件解读", "政策面、消息面影响评估...", 1730100000000L),
+        Session("today_board", "今日实时看盘", "指数行情·异动榜·自选报价实时刷新", now),
+        Session("s1", "今日市场复盘", "大盘指数震荡上行，科技股领涨...", now - 730 * 86_400_000L),
+        Session("s2", "候选池分析", "连续3天筛选结果对比，资金流向...", now - 731 * 86_400_000L),
+        Session("s3", "板块动量观察", "半导体、新能源板块轮动分析...", now - 732 * 86_400_000L),
+        Session("s4", "历史回测验证", "策略胜率回测，参数敏感性分析...", now - 734 * 86_400_000L),
+        Session("s5", "新闻事件解读", "政策面、消息面影响评估...", now - 735 * 86_400_000L),
     )
 
     Column(

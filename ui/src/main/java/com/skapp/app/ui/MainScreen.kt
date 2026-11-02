@@ -26,7 +26,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
@@ -37,6 +36,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.skapp.app.ui.components.SkTabBar
 import com.skapp.app.ui.screens.CredentialsScreen
 import com.skapp.app.ui.screens.DashboardHubScreen
+import com.skapp.app.ui.screens.TodayBoardScreen
 import com.skapp.app.ui.screens.NewsHubScreen
 import com.skapp.app.ui.screens.PicksHubScreen
 import com.skapp.app.ui.screens.StockDetailSheet
@@ -63,6 +63,7 @@ import com.skapp.app.ui.theme.SkColors
  * 于是「看板 / 行情」这类同属看板的子页在返回时无处可去，直接退出 App。
  */
 private enum class MainTab(val label: String, val subtitle: String) {
+    TODAY_BOARD("今日看盘", "今日实时盘面数据"),
     DASHBOARD("看板", "今天市场是什么状态"),
     SUMMARY("总结", "结论、AI 复盘与决策"),
     NEWS("消息", "新闻与题材"),
@@ -70,7 +71,7 @@ private enum class MainTab(val label: String, val subtitle: String) {
     CREDENTIALS("凭据", "AI 双源配置与自检"),
 }
 
-/** 底部悬浮玻璃栏容器，液体圆角玻璃效果。 */
+/** 底部悬浮栏容器，半透明圆角背景（不含 blur：API < 31 设备上会闪退）。 */
 @Composable
 private fun GlassBottomBar(
     modifier: Modifier = Modifier,
@@ -83,27 +84,26 @@ private fun GlassBottomBar(
             .navigationBarsPadding(),
         contentAlignment = Alignment.Center,
     ) {
-        // 玻璃背景层：模糊 + 半透明白色渐变
+        // 半透明白色渐变背景（替代原 blur 方案，全 API 层级兼容）
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .clip(RoundedCornerShape(24.dp))
-                .blur(24.dp)
-                .alpha(0.65f)
+                .alpha(0.82f)
                 .background(
                     Brush.linearGradient(
-                        colors = listOf(Color(0x40FFFFFF), Color(0x10FFFFFF)),
+                        colors = listOf(Color(0xCCFFFFFF), Color(0xE0FFFFFF)),
                         start = Offset(0f, 0f),
-                        end = Offset(0f, 300f),
+                        end = Offset(0f, 72f),
                     ),
                 ),
         )
-        // 外边框：极淡白色描边，模拟玻璃边缘高光
+        // 外边框：淡白色描边模拟边缘高光
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .clip(RoundedCornerShape(24.dp))
-                .border(1.dp, Color(0x30FFFFFF), RoundedCornerShape(24.dp)),
+                .border(1.dp, Color(0x40FFFFFF), RoundedCornerShape(24.dp)),
         )
         // Tab 内容
         content()
@@ -111,9 +111,9 @@ private fun GlassBottomBar(
 }
 
 @Composable
-fun MainScreen(vm: SkappViewModel) {
+fun MainScreen(vm: SkappViewModel, initialTab: Int = 0) {
     val state by vm.state.collectAsStateWithLifecycle()
-    var tab by remember { mutableStateOf(MainTab.DASHBOARD) }
+    var tab by remember { mutableStateOf(MainTab.entries.getOrElse(initialTab) { MainTab.DASHBOARD }) }
     val subTabs = remember { mutableStateMapOf<MainTab, Int>() }
     val sub = subTabs[tab] ?: 0
     val detailOpen = state.detail != null || state.detailLoading
@@ -184,6 +184,7 @@ fun MainScreen(vm: SkappViewModel) {
             }
             Box(Modifier.weight(1f)) {
                 when (tab) {
+                    MainTab.TODAY_BOARD -> TodayBoardScreen(vm, state)
                     MainTab.DASHBOARD -> DashboardHubScreen(vm, state, sub, ::selectSub)
                     MainTab.SUMMARY -> SummaryHubScreen(vm, state, sub, ::selectSub)
                     MainTab.NEWS -> NewsHubScreen(vm, state, sub, ::selectSub)
