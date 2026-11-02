@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Card
@@ -19,6 +20,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -49,6 +51,13 @@ fun TodayBoardScreen(vm: SkappViewModel, state: UiState) {
     val quotes = state.quotes
     val marketPulse = state.marketPulse
     val aShare = state.aShareIndices
+
+    // 看板数据为空的触发加载（loadBoard 在 ViewModel.init 中不自动调用，
+    // 因为 token 要等 loadSavedToken 恢复，这里在数据缺失时补一次）
+    LaunchedEffect(Unit) {
+        if (state.board.isEmpty()) vm.loadBoard()
+    }
+
     val heartbeatAge = if (state.heartbeatAt > 0L) {
         val age = ((System.currentTimeMillis() - state.heartbeatAt) / 1000).coerceAtLeast(0)
         "心跳 ${age}s 前 · ${state.heartbeatLabel.takeIf { it.isNotBlank() } ?: "运行中"}"
@@ -59,7 +68,8 @@ fun TodayBoardScreen(vm: SkappViewModel, state: UiState) {
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 12.dp),
+            .padding(horizontal = 12.dp)
+            .padding(bottom = 80.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         // ── 顶栏：标题 + 时点 + 刷新 ──
@@ -100,17 +110,37 @@ fun TodayBoardScreen(vm: SkappViewModel, state: UiState) {
         // ── KPI 行：涨停/跌停/炸板/上涨/下跌/成交 ──
         val b = state.board
         val market = b["market"] as? Map<*, *> ?: emptyMap<String, Any?>()
-        item {
-            KpiGrid(
-                items = listOf(
-                    KpiCell("涨停", numOf(market["涨停"]), UP),
-                    KpiCell("跌停", numOf(market["跌停"]), DOWN),
-                    KpiCell("炸板", numOf(market["炸板"]), SkColors.warn),
-                    KpiCell("上涨", numOf(market["涨"]), UP),
-                    KpiCell("下跌", numOf(market["跌"]), DOWN),
-                    KpiCell("成交(亿)", numOf(market["成交额(亿)"]), SkColors.textTertiary),
-                ),
-            )
+        if (b.isEmpty()) {
+            item {
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 16.dp),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    CircularProgressIndicator(modifier = Modifier.height(24.dp), strokeWidth = 2.dp)
+                    Spacer(Modifier.width(12.dp))
+                    Text(
+                        "看板数据加载中…",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = SkColors.textSecondary,
+                    )
+                }
+            }
+        } else {
+            item {
+                KpiGrid(
+                    items = listOf(
+                        KpiCell("涨停", numOf(market["涨停"]), UP),
+                        KpiCell("跌停", numOf(market["跌停"]), DOWN),
+                        KpiCell("炸板", numOf(market["炸板"]), SkColors.warn),
+                        KpiCell("上涨", numOf(market["涨"]), UP),
+                        KpiCell("下跌", numOf(market["跌"]), DOWN),
+                        KpiCell("成交(亿)", numOf(market["成交额(亿)"]), SkColors.textTertiary),
+                    ),
+                )
+            }
         }
 
         // ── 自选行情 ──

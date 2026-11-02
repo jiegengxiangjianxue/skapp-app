@@ -182,7 +182,7 @@ fun MainScreen(vm: SkappViewModel, initialTab: Int = 0) {
                 }
                 Spacer(Modifier.weight(1f))
             }
-            Box(Modifier.weight(1f)) {
+            Box(Modifier.weight(1f).padding(bottom = 76.dp)) {
                 when (tab) {
                     MainTab.TODAY_BOARD -> TodayBoardScreen(vm, state)
                     MainTab.DASHBOARD -> DashboardHubScreen(vm, state, sub, ::selectSub)
