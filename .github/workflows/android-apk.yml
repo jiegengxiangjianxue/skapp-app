@@ -1,8 +1,8 @@
 name: android-apk
 
 on:
-  push:
-    paths: ['app/**', 'gradle/**', 'build.gradle.kts', 'settings.gradle.kts', 'gradle.properties', '.github/workflows/android-apk.yml']
+  # 仅手动触发：常规构建与发布由 android-build 负责，避免同一提交重复出包、
+  # 以及本工作流固定 tag apk-v0.2.0 覆盖正式发布资产。
   workflow_dispatch:
 
 permissions:
