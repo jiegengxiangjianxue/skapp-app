@@ -72,25 +72,18 @@ fun TodayBoardScreen(vm: SkappViewModel, state: UiState) {
             .padding(bottom = 80.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        // ── 顶栏：标题 + 时点 + 刷新 ──
+        // ── 顶栏：时点 + 刷新 ──
         item {
             Row(
                 Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Column {
-                    Text(
-                        "今日实时看盘",
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold,
-                    )
-                    Text(
-                        "${state.quoteTs ?: "时点暂无"} · $heartbeatAge",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = SkColors.textSecondary,
-                    )
-                }
+                Text(
+                    "${state.quoteTs ?: "时点暂无"} · $heartbeatAge",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = SkColors.textSecondary,
+                )
                 Text(
                     "刷新",
                     Modifier
