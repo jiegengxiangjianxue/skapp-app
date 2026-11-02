@@ -3,7 +3,6 @@ package com.skapp.app.data
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.withContext
-import org.json.JSONObject
 
 /**
  * 策略卡 v1：胜率导向组合 B 规则（移植自 Python strategy_card.py）

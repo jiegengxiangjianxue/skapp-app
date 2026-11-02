@@ -2,8 +2,6 @@ package com.skapp.app.data
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import java.text.SimpleDateFormat
-import java.util.Locale
 
 /**
  * MarketScene.kt — 市场场景枚举 (牛/熊/震荡/极端 四象限)

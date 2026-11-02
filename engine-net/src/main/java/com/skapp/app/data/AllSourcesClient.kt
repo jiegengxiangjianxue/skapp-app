@@ -1,6 +1,5 @@
 package com.skapp.app.data
 
-import org.json.JSONArray
 import org.json.JSONObject
 
 class AllSourcesClient {

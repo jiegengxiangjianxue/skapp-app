@@ -1,7 +1,5 @@
 package com.skapp.app.data
 
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 
 /**
  * 提问式选股：把用户的自然语言问题映射到真实数据上。

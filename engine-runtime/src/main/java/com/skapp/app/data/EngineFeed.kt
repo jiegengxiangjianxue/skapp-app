@@ -3,8 +3,6 @@ package com.skapp.app.data
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
-import java.net.HttpURLConnection
-import java.net.URL
 
 /**
  * 云端引擎产物解析器（qwerzxcva/stocks-ai-view）。

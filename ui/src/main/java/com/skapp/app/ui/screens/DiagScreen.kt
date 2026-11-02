@@ -26,13 +26,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.skapp.app.data.Http
 import com.skapp.app.data.RemoteSources
-import com.skapp.app.data.SkappApi
 import com.skapp.app.ui.SkappViewModel
 import com.skapp.app.ui.UiState
 import com.skapp.app.ui.HealthGuard
