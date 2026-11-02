@@ -1,0 +1,13 @@
+# Kotlin 未使用 import 自动清理
+# 安装：pip install pre-commit && pre-commit install
+# 手动运行：pre-commit run --all-files
+repos:
+  - repo: local
+    hooks:
+      - id: kt-unused-imports
+        name: Kotlin unused imports cleanup
+        entry: python3 scripts/cleanup_imports.py
+        language: system
+        pass_filenames: false
+        stages:
+          - commit

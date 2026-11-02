@@ -124,6 +124,14 @@ jobs:
       - name: Guard - analysis must not read cloud snapshots
         run: python3 tools/layer_source_guard.py
 
+      # Kotlin 未使用 import 守卫：扫描全工程，有残留则拦截。
+      # 本地开发节奏：pre-commit 自动清理 + 提交前确认；CI 是远程最后防线。
+      - name: Guard - no unused Kotlin imports
+        run: |
+          set -euo pipefail
+          python3 scripts/scan_unused_imports.py .
+          echo "no unused imports"
+
       # ── 分层构建：一层一层编译/单测，哪一层坏了当场就能看出来 ──
       # 顺序就是依赖方向；前排的层不过，后面的层不用看（和本地开发节奏一致）。
       - name: Render layer presence check
