@@ -27,6 +27,8 @@ fun DashboardHubScreen(
     state: UiState,
     selected: Int = 0,
     onSelect: (Int) -> Unit = {},
+    onResearch: (Int) -> Unit = {},
+    onInterpret: () -> Unit = {},
 ) {
     Column(Modifier.fillMaxSize()) {
         ProvenanceStrip(state)
@@ -38,7 +40,7 @@ fun DashboardHubScreen(
         )
         Box(Modifier.weight(1f)) {
             when (selected) {
-                0 -> DashboardScreen(vm, state)
+                0 -> DashboardScreen(vm, state, onResearch, onInterpret)
                 else -> MarketScreen(vm, state)
             }
         }

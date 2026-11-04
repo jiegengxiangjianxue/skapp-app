@@ -86,6 +86,9 @@ object PortfolioRiskEngine {
 
         // ── 收益率序列（按各自最后 lookback 根对齐；两端长度可能不等，取短的一致部分） ──
         val rets = usable.associate { h -> h.code to dailyReturns(h.bars, lookback) }
+        rets.filterValues { it == null }.keys.forEach { code ->
+            missing += "$code 收益率序列不可用（样本不足或收盘价无效），未能完整计算组合风险"
+        }
         val pairs = ArrayList<PairCorr>()
         for (i in usable.indices) {
             for (j in i + 1 until usable.size) {
@@ -126,7 +129,7 @@ object PortfolioRiskEngine {
         if (topSectorWeight != null && topSectorWeight >= 0.5 && topSector != null) {
             advices += "$topSector 占 ${(topSectorWeight * 100).toInt()}%，行业过度集中"
         }
-        if (maxDrawdown != null && maxDrawdown >= 15.0) {
+        if (maxDrawdown != null && maxDrawdown >= 0.15) {
             advices += "按现权重复盘，历史上曾回撤 ${(maxDrawdown * 100).toInt()}%，当前仓位需按此设止损"
         }
         if (volPct != null && volPct >= 35.0) {
@@ -136,9 +139,13 @@ object PortfolioRiskEngine {
         val level = when {
             (maxPair?.corr ?: 0.0) >= CORR_HIGH || (topSectorWeight ?: 0.0) >= 0.6 -> "高"
             (avgCorr ?: 0.0) >= CORR_MID || (topSectorWeight ?: 0.0) >= 0.4 -> "中"
+            rets.values.any { it == null } -> "未知"
             else -> "低"
         }
-        if (advices.isEmpty()) advices += "组合内相关性与行业分布未触发风险阈值"
+        if (advices.isEmpty()) {
+            advices += if (rets.values.any { it == null }) "收益率数据不完整，无法完整评估组合风险"
+            else "组合内相关性与行业分布未触发风险阈值"
+        }
 
         return Result(
             volPct = volPct,
@@ -159,12 +166,13 @@ object PortfolioRiskEngine {
     /** 取最后 [lookback]+1 根收盘价算日收益率；不足返回 null。 */
     private fun dailyReturns(bars: List<KBar>, lookback: Int): DoubleArray? {
         val closes = bars.map { it.close }.takeLast(lookback + 1)
-        if (closes.size < MIN_BARS) return null
+        if (closes.size < MIN_BARS || closes.any { !it.isFinite() || it <= 0.0 }) return null
         val out = DoubleArray(closes.size - 1)
         for (i in 1 until closes.size) {
             val prev = closes[i - 1]
-            if (prev <= 0.0) return null
-            out[i - 1] = (closes[i] - prev) / prev
+            val ret = (closes[i] - prev) / prev
+            if (!ret.isFinite()) return null
+            out[i - 1] = ret
         }
         return out
     }
@@ -228,7 +236,7 @@ object PortfolioRiskEngine {
         return sqrt(x.sumOf { (it - m) * (it - m) } / (x.size - 1))
     }
 
-    /** 按权重合成日收益 → 净值 → 最大回撤（正数百分比）。 */
+    /** 按权重合成日收益 → 净值 → 最大回撤（正数比例，0.15 表示 15%）。 */
     private fun maxDrawdown(
         codes: List<String>,
         weights: Map<String, Double>,

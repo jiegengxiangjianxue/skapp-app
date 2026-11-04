@@ -139,17 +139,8 @@ object TrendForecast {
         return Macd(dif = difLast, dea = deaLast, hist = 2 * (difLast - deaLast))
     }
 
-    private fun ema(values: List<Double>, n: Int): List<Double?> {
-        if (values.isEmpty()) return emptyList()
-        val k = 2.0 / (n + 1)
-        val out = ArrayList<Double?>(values.size)
-        var prev: Double? = null
-        values.forEach { v ->
-            prev = if (prev == null) v else v * k + prev!! * (1 - k)
-            out.add(prev)
-        }
-        return out
-    }
+    /** EMA：委托 [CanonicalIndicators.ema]（种子=前 n 均值），与 MACD 主链同口径。 */
+    internal fun ema(values: List<Double>, n: Int): List<Double?> = CanonicalIndicators.ema(values, n)
 
     private fun meanOfLast(values: List<Double>, n: Int): Double? =
         if (values.size < n) null else values.takeLast(n).average()

@@ -6,14 +6,13 @@ import androidx.lifecycle.viewModelScope
 import com.skapp.app.data.DbTables
 import com.skapp.app.data.NewsArchive
 import com.skapp.app.data.IntradayPicks
+import com.skapp.app.data.toPlainMap
 import com.skapp.app.data.PicksArchiveQueue
 import com.skapp.app.data.GitHubRepoWriter
 import com.skapp.app.data.DataCache
 import com.skapp.app.data.NewsCalc
-import com.skapp.app.data.NewsCalcEngine
 import com.skapp.app.data.LocalScreener
 import com.skapp.app.data.StructuredPickArtifact
-import com.skapp.app.data.MarketDataClient
 import com.skapp.app.data.MarketHours
 import com.skapp.app.data.PickSignal
 import com.skapp.app.data.TodayPicks
@@ -44,78 +43,54 @@ internal class LocalPicksHolder(
     private var localPicksJob: Job? = null
 
     /** 当前可用的本地推股产物：午盘优先（更近），其次盘前；都不是今天则视为没有。 */
-    fun localPicksArtifact(): com.skapp.app.data.StructuredPickArtifact? {
-        val today = java.time.LocalDate.now().toString()
-        val midday = _state.value.localMiddayPicks
-        val premarket = _state.value.localPremarketPicks
-        // 只要「今天跑过深算」就返回产物，不再要求 picks 非空：
-        // 弱市/达标 0 只时 status=defensive，metadata 里还带着观察名单。
-        // 旧写法要求 picks.isNotEmpty()，把「算完了但没达标」当成「尚未完成」，
-        // 观察名单被丢掉，首屏报的是一个不存在的状态（待完成）。
-        return when {
-            midday.date == today -> midday
-            premarket.date == today -> premarket
-            else -> null
-        }
+    fun localPicksArtifact(): StructuredPickArtifact? {
+        val session = com.skapp.app.data.LocalPicks.sessionAt(System.currentTimeMillis(), !MarketHours.isClosedDay())
+            ?: return null
+        return picksFor(session).takeIf { it.date == MarketHours.todayKey() }
     }
 
-    /** 页面进入时调用：当前时段还没有当日存档才真的算一次。 */
     fun ensureLocalPicks() {
-        if (_state.value.localPicksLoading || localPicksJob?.isActive == true) return
-        val session = com.skapp.app.data.LocalPicks.sessionFor(MarketHours.phase())
-        if (session == null) {
-            // 收盘/休市时 sessionFor 返回 null。原先这里只写一句「非交易时段」就 return，
-            // 推股页于是整屏无名单——用户看到的是「没有自动推荐」而不是「暂无盘中新名单」。
-            // 盘前口径用上一交易日收盘数据，任何时段都算得出来，所以回落到它；
-            // 当日已有存档时 ensurePicksFor 会直接复用，不会重复深算。
-            if (localPicksArtifact() == null) {
-                ensurePicksFor(com.skapp.app.data.LocalPicks.Session.PREMARKET)
-            } else if (_state.value.localPicksMsg == null) {
-                _state.value = _state.value.copy(
-                    localPicksMsg = "当前非交易时段，显示的是最近一次存档（盘前口径）。",
-                )
-            }
-            return
-        }
-        localPicksJob = viewModelScope.launch { requestResult { rebuildLocalPicks(session, force = false) } }
+        val session = com.skapp.app.data.LocalPicks.sessionAt(System.currentTimeMillis(), !MarketHours.isClosedDay())
+            ?: return
+        ensurePicksFor(session)
     }
 
-    /**
-     * 按**指定时段**保证名单可用（推股名单页专用）。
-     *
-     * 与 [ensureLocalPicks] 的区别：后者按当前交易时段挑一个会话，于是当天下午打开
-     * 「盘前推股名单」时只会算午盘口径，盘前名单永远空着——而盘前口径用的是
-     * 上一交易日收盘数据，任何时段都算得出来，没理由等到明天早上。
-     * 实时口径则相反：非交易时段没有盘中数据，算了也是旧的，因此明确跳过并给出说明。
-     */
-    /** 按会话取当前存档；新增会话只改这一处，避免多处三目各漏一个分支。 */
-    private fun picksFor(session: com.skapp.app.data.LocalPicks.Session) =
-        when (session) {
-            com.skapp.app.data.LocalPicks.Session.PREMARKET -> _state.value.localPremarketPicks
-            com.skapp.app.data.LocalPicks.Session.MORNING -> _state.value.localMorningPicks
-            com.skapp.app.data.LocalPicks.Session.MIDDAY -> _state.value.localMiddayPicks
-        }
+    private fun picksFor(session: com.skapp.app.data.LocalPicks.Session) = when (session) {
+        com.skapp.app.data.LocalPicks.Session.PREMARKET -> _state.value.localPremarketPicks
+        com.skapp.app.data.LocalPicks.Session.REALTIME -> _state.value.localRealtimePicks
+        com.skapp.app.data.LocalPicks.Session.MORNING -> _state.value.localMorningPicks
+        com.skapp.app.data.LocalPicks.Session.MIDDAY -> _state.value.localMiddayPicks
+    }
 
     fun ensurePicksFor(session: com.skapp.app.data.LocalPicks.Session) {
-        if (_state.value.localPicksLoading || localPicksJob?.isActive == true) return
-        val current = picksFor(session)
-        val today = java.time.LocalDate.now().toString()
-        if (current.date == today && current.status in CACHED_PICK_STATUS && !shared.poolsMissingForPicks) return
-        if (session != com.skapp.app.data.LocalPicks.Session.PREMARKET &&
-            com.skapp.app.data.LocalPicks.sessionFor(MarketHours.phase()) != session
-        ) {
-            _state.value = _state.value.copy(
-                localPicksMsg = "当前非交易时段，实时名单不在此刻生成；显示的仍是最近一次存档。",
-            )
-            return
-        }
-        localPicksJob = viewModelScope.launch { requestResult { rebuildLocalPicks(session, force = false) } }
+        startSession(session, false)
     }
 
-    /** 卡片上的「重算」：用户显式要求重跑指定时段（盘前卡重算仍是盘前口径）。 */
     fun refreshLocalPicks(session: com.skapp.app.data.LocalPicks.Session) {
+        startSession(session, true)
+    }
+
+    private fun startSession(session: com.skapp.app.data.LocalPicks.Session, force: Boolean) {
         if (_state.value.localPicksLoading || localPicksJob?.isActive == true) return
-        localPicksJob = viewModelScope.launch { requestResult { rebuildLocalPicks(session, force = true) } }
+        val window = com.skapp.app.data.AnalysisSessionPolicy.window(session.key,
+            System.currentTimeMillis(), !MarketHours.isClosedDay())
+        if (!window.updating) {
+            _state.value = _state.value.copy(localPicksMsg =
+                if (window.frozen) "时段已结束，保留当时记录；不能事后重算冒充历史。" else "尚未进入该时段；不会借用其他时段名单。")
+            return
+        }
+        val current = picksFor(session)
+        val age = current.calculationTime?.let {
+            runCatching { System.currentTimeMillis() - java.time.OffsetDateTime.parse(it).toInstant().toEpochMilli() }.getOrNull()
+        }
+        if (!force && current.date == window.date && age != null && age in 0..300_000L) return
+        localPicksJob = viewModelScope.launch {
+            try {
+                kotlinx.coroutines.withTimeout(90_000) { rebuildLocalPicks(session, force = true) }
+            } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                _state.value = _state.value.copy(localPicksLoading = false, localPicksMsg = "筛选超时，已保留上一轮记录；可重试。")
+            }
+        }
     }
 
     /**
@@ -128,7 +103,10 @@ internal class LocalPicksHolder(
      */
     suspend fun rebuildLocalPicks(session: com.skapp.app.data.LocalPicks.Session, force: Boolean = false) {
         val current = picksFor(session)
-        val today = java.time.LocalDate.now().toString()
+        val today = MarketHours.todayKey()
+        val window = com.skapp.app.data.AnalysisSessionPolicy.window(session.key,
+            System.currentTimeMillis(), !MarketHours.isClosedDay())
+        if (!window.updating) return
         // 当天算过且**算完**就不再重算。注意空名单的 status 不是 ok：
         //   ok         = 有票进名单
         //   defensive  = 数据齐、但一只都没达标（弱市，设计内结果）
@@ -144,22 +122,34 @@ internal class LocalPicksHolder(
         )
         try {
             val t0 = System.currentTimeMillis()
-            val calcTime = java.time.OffsetDateTime.now().toString()
+            val calcTime = java.time.OffsetDateTime.now(com.skapp.app.data.AnalysisSessionPolicy.zone).toString()
             val dropLast = session == com.skapp.app.data.LocalPicks.Session.PREMARKET
             val snapshotSize = runCatching { LocalScreener.marketSnapshot(pz = 500).size }.getOrDefault(0)
             val tSnapshot = System.currentTimeMillis()
             // mode=all：保留未达标票，由 LocalPicks 决定谁进 picks、谁只当「未达标观察」
-            val screened = LocalScreener.screen(
+            val analyzed = LocalScreener.screen(
                 onProgress = { msg -> _state.value = _state.value.copy(localPicksMsg = msg) },
                 mode = "all",
                 dropLastBar = dropLast,
+                news = com.skapp.app.data.CentralAnalysis.newsOf(_state.value.newsCalcs),
+                newsAvailable = com.skapp.app.data.CentralAnalysis.newsAvailable(_state.value.news),
                 // 全市场快照不可得时退到自选池：没有这个，推股页在限流下永远是空的
                 fallbackCodes = Watchlist.codes,
                 // 深算档位按自然日推进：rotation=0 时 preselect 恒取预评分前 maxCandidates（40）只，
                 // 其余五千多只永远进不了深算，「全市场扫描」实际只是同一小撮票反复算。
                 // 用日期而不是进程内计数，是为了同一天重算得到同一份结果（可复现），跨天再换档。
-                rotation = java.time.LocalDate.now().toEpochDay().toInt(),
+                rotation = java.time.LocalDate.now(com.skapp.app.data.AnalysisSessionPolicy.zone).toEpochDay().toInt(),
             )
+            val screened = analyzed.map { row ->
+                val impacts = _state.value.newsCalcs.filter { n ->
+                    row.code in n.impactCodes || n.stocks.any { it.code == row.code }
+                }
+                val adverse = impacts.filter { it.direction == "neg" || it.sentiment == "neg" }
+                if (adverse.isEmpty()) row else row.copy(
+                    riskFlag = "消息风险待核实：" + adverse.take(2).joinToString("；") { it.newsTitle },
+                    reason = listOfNotNull(row.reason, adverse.first().negativeReason).joinToString("；"),
+                )
+            }
             val tScreen = System.currentTimeMillis()
             // 多池证据传给算法层参与排序：同一个池是另一套口径的独立判断，
             // 放在 UI 里二次排序等于让「显示顺序」和「算出来的名单」各说一套。
@@ -253,17 +243,27 @@ internal class LocalPicksHolder(
                     append(trendFails.take(3).joinToString("；"))
                 }
             }
+            if (!com.skapp.app.data.AnalysisSessionPolicy.mayPublish(session.key, t0,
+                    System.currentTimeMillis(), !MarketHours.isClosedDay())) {
+                _state.value = _state.value.copy(localPicksMsg = "本轮计算已跨时段截止点，已丢弃迟到结果并保留冻结记录。")
+                return
+            }
             _state.value = _state.value.copy(
                 // 本地深算完成即回填首屏推股卡（TodayPicks 由本地产物映射，不经云端）
                 picks = com.skapp.app.data.LocalSnapshot.todayPicks(artifact),
                 picksTrend = trends,
                 picksTrendAttempted = trendTargets.map { it.code }.toSet(),
+                localRealtimePicks = if (session == com.skapp.app.data.LocalPicks.Session.REALTIME)
+                    artifact else _state.value.localRealtimePicks,
                 localPremarketPicks = if (session == com.skapp.app.data.LocalPicks.Session.PREMARKET)
                     artifact else _state.value.localPremarketPicks,
                 localMorningPicks = if (session == com.skapp.app.data.LocalPicks.Session.MORNING)
                     artifact else _state.value.localMorningPicks,
                 localMiddayPicks = if (session == com.skapp.app.data.LocalPicks.Session.MIDDAY)
                     artifact else _state.value.localMiddayPicks,
+                engineSpecVersion = screened.mapNotNull { it.chain?.specVersion }.distinct().singleOrNull(),
+                chainStatus = if (screened.isEmpty()) "insufficient" else if (screened.all { it.chain?.status == "ok" }) "ok" else "degraded",
+                chainDegraded = screened.flatMap { it.chain?.degraded.orEmpty() }.distinct(),
                 localPicksMsg = artifact.reason,
                 localPicksTiming = timing,
             )
@@ -271,10 +271,10 @@ internal class LocalPicksHolder(
             // 盘前/早盘/午盘各入队一轮，历史页才有四类时段可查；ts 去重由队列负责
             runCatching {
                 PicksArchiveQueue.enqueuePushRound(
-                    artifact.date ?: java.time.LocalDate.now().toString(),
+                    artifact.date ?: java.time.LocalDate.now(com.skapp.app.data.AnalysisSessionPolicy.zone).toString(),
                     IntradayPicks.toRound(
                         artifact,
-                        java.time.OffsetDateTime.now().toString(),
+                        java.time.OffsetDateTime.now(com.skapp.app.data.AnalysisSessionPolicy.zone).toString(),
                         session.key,
                     ),
                 )
@@ -301,6 +301,7 @@ internal class LocalPicksHolder(
             put("engine", artifact.engine)
             put("status", artifact.status)
             put("reason", artifact.reason)
+            put("metadata", org.json.JSONObject(artifact.metadata))
             put("picks", org.json.JSONArray().also { arr ->
                 artifact.picks.forEach { p ->
                     arr.put(org.json.JSONObject().apply {
@@ -410,14 +411,17 @@ internal class LocalPicksHolder(
                     status = o.optString("status", "insufficient"),
                     reason = o.optString("reason").takeIf { it.isNotBlank() },
                     picks = picks,
+                    metadata = o.optJSONObject("metadata")?.toPlainMap().orEmpty(),
                 )
             }.getOrNull()
         }
 
+        val realtime = read(com.skapp.app.data.LocalPicks.Session.REALTIME)
         val pre = read(com.skapp.app.data.LocalPicks.Session.PREMARKET)
         val morning = read(com.skapp.app.data.LocalPicks.Session.MORNING)
         val mid = read(com.skapp.app.data.LocalPicks.Session.MIDDAY)
         _state.value = _state.value.copy(
+            localRealtimePicks = realtime ?: _state.value.localRealtimePicks,
             localPremarketPicks = pre ?: _state.value.localPremarketPicks,
             localMorningPicks = morning ?: _state.value.localMorningPicks,
             localMiddayPicks = mid ?: _state.value.localMiddayPicks,
@@ -455,7 +459,7 @@ internal class LocalPicksHolder(
     /** 把本轮算好的消息写入归档队列（只存当天：历史消息由云端库负责，端上不重复传）。 */
     fun archiveNewsCalcs(calcs: List<com.skapp.app.data.NewsCalc>) {
         if (!PicksArchiveQueue.isReady()) return
-        val today = java.time.LocalDate.now().toString()
+        val today = java.time.LocalDate.now(com.skapp.app.data.AnalysisSessionPolicy.zone).toString()
         calcs.forEach { calc ->
             val ts = calc.ts?.takeIf { it.isNotBlank() } ?: return@forEach
             if (!ts.startsWith(today)) return@forEach
@@ -466,68 +470,15 @@ internal class LocalPicksHolder(
     /** 推送记录入队（成功与否都不影响名单展示）。 */
     private fun archivePushRound(artifact: com.skapp.app.data.StructuredPickArtifact, ts: String) {
         if (!PicksArchiveQueue.isReady()) return
-        val today = java.time.LocalDate.now().toString()
+        val today = java.time.LocalDate.now(com.skapp.app.data.AnalysisSessionPolicy.zone).toString()
         runCatching { PicksArchiveQueue.enqueuePushRound(today, IntradayPicks.toRound(artifact, ts)) }
     }
 
     /** 早盘推股草稿：本地深算为底、消息面修正，09:30 后冻结。 */
     suspend fun refreshPremarketDraft() {
-        val ctx = shared.appContext ?: return
-        val now = java.time.OffsetDateTime.now().toString()
-        val date = now.take(10)
-        val sp = ctx.getSharedPreferences(SKAPP_PREFS, Context.MODE_PRIVATE)
-        val frozenDate = sp.getString("premarket_frozen", null)
-        val frozen = frozenDate == date || com.skapp.app.data.PremarketPicks.isFrozen(now)
-        // 已冻结且今天已经有草稿：不再重算，也不再去读消息库（每次消息刷新都走一遍网络太重）
-        if (frozen && _state.value.premarketDraft?.date == date) return
-
-        // 消息库：有 PAT 才读；读失败按「无历史消息」处理并在 dataGap 里体现
-        val stored = if (GitHubRepoWriter.isConfigured()) {
-            runCatching {
-                GitHubRepoWriter.readFile("${PicksArchiveQueue.NEWS_DB_DIR}/$date.json")?.body
-                    ?.let { org.json.JSONObject(it).optJSONArray("items") }
-                    ?.let { NewsArchive.readRows(it) }
-            }.getOrNull().orEmpty()
-        } else emptyList()
-
-        val draft = com.skapp.app.data.PremarketPicks.build(
-            base = _state.value.localPremarketPicks,
-            stored = stored,
-            live = _state.value.newsCalcs,
-            date = date,
-            now = now,
-            frozen = frozen,
-            coverage = NewsArchive.coverage(stored),
-        )
-        // 缺口补拉：消息库覆盖不到早盘窗口（前一夜没开 App）时，从消息源再拉一段历史
-        val draftWithGap = if (!frozen && draft.dataGap) {
-            val backfill = runCatching { MarketDataClient.news724(100) }.getOrDefault(emptyList())
-            if (backfill.isEmpty()) draft else {
-                val calcs = runCatching {
-                    com.skapp.app.data.NewsCalcEngine.compute(backfill, _state.value.symbols)
-                }.getOrDefault(emptyList())
-                if (calcs.isEmpty()) draft else {
-                    val merged = (_state.value.newsCalcs + calcs).distinctBy { it.newsTitle }
-                    com.skapp.app.data.PremarketPicks.build(
-                        base = _state.value.localPremarketPicks,
-                        stored = stored,
-                        live = merged,
-                        date = date,
-                        now = now,
-                        frozen = frozen,
-                        coverage = NewsArchive.coverage(stored),
-                    )
-                }
-            }
-        } else draft
-        _state.value = _state.value.copy(premarketDraft = draftWithGap)
-        persistPremarketDraft(draftWithGap)
-        if (frozen && frozenDate != date) {
-            sp.edit().putString("premarket_frozen", date).apply()
-        }
+        ensureLocalPicks()
     }
 
-    /** 早盘草稿落盘：杀进程再开也能看到「当时给的名单」，而不是重算出一份新的。 */
     private fun persistPremarketDraft(draft: com.skapp.app.data.PremarketPicks.Draft) {
         val ctx = shared.appContext ?: return
         val json = org.json.JSONObject().apply {
@@ -574,12 +525,13 @@ internal class LocalPicksHolder(
         try {
             val res = LocalScreener.screen(onProgress = { msg ->
                 _state.value = _state.value.copy(screenMsg = msg)
-            }, mode = mode)
+            }, mode = mode, news = com.skapp.app.data.CentralAnalysis.newsOf(_state.value.newsCalcs),
+                newsAvailable = com.skapp.app.data.CentralAnalysis.newsAvailable(_state.value.news))
             currentCoroutineContext().ensureActive()
             _state.value = _state.value.copy(
                 screened = res,
                 scanMode = mode,
-                screenedAt = java.time.OffsetDateTime.now().toString(),
+                screenedAt = java.time.OffsetDateTime.now(com.skapp.app.data.AnalysisSessionPolicy.zone).toString(),
                 screenMsg = if (res.isEmpty()) "预筛后无满足条件的股票" else null,
             )
         } catch (e: CancellationException) {

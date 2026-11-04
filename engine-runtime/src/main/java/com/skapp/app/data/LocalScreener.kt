@@ -1,5 +1,6 @@
 package com.skapp.app.data
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -33,6 +34,25 @@ object LocalScreener {
         val maxCandidates: Int = 40,   // 逐只拉 K 线的上限（控制耗时/流量）
         val klineCount: Int = 120,
     )
+
+    /** 调用方必须提供真实财报/复权证据与显式有效期；不从价格或PE反推。 */
+    data class DataEvidence(
+        val eps: Double?,
+        val dps: Double?,
+        val reportPeriod: String?,
+        val adjustmentEvidence: String?,
+        val source: String?,
+        val snapshotAtMs: Long?,
+        val expiresAtMs: Long?,
+    ) {
+        fun validAt(nowMs: Long): Boolean {
+            val period = try { java.time.LocalDate.parse(reportPeriod) } catch (_: Exception) { null }
+            val today = java.time.Instant.ofEpochMilli(nowMs).atZone(AnalysisSessionPolicy.zone).toLocalDate()
+            return eps?.isFinite() == true && dps?.isFinite() == true && period != null && period <= today &&
+                adjustmentEvidence?.startsWith("cnfin:hfq_factor:") == true && !source.isNullOrBlank() &&
+                snapshotAtMs != null && snapshotAtMs in 1..nowMs && expiresAtMs != null && expiresAtMs >= nowMs
+        }
+    }
 
     /** 一只股票的实时分析结果 */
     data class Screened(
@@ -73,8 +93,9 @@ object LocalScreener {
         val sector: String? = null,
         /** 板块强度（0~100，见 [LocalSectors.Row.strength]）；板块未映射或数据不足为 null */
         val sectorStrength: Double? = null,
-        /** 排序分 = centralScore + 板块偏移，见 [effectiveScoreOf]；只影响排序，不影响 minScore 过滤 */
+        /** 排序分 = canonicalScore + 板块偏移，见 [effectiveScoreOf]；只影响排序，不影响 minScore 过滤 */
         val effectiveScore: Double? = null,
+        val dataEvidence: DataEvidence? = null,
     )
 
     /**
@@ -106,7 +127,7 @@ object LocalScreener {
     /**
      * 实时选股：市场快照 → 预筛 → 逐只本地引擎 → 排序。
      * mode: "score" 常规（评分达标池） | "all" 全分析池（共振/评分页用） | "limitup" 涨停扫描
-     * dropLastBar: 剔除日 K 的最后一根（盘中最后一根是当日未完成 bar）。
+     * dropLastBar: 按CST日期只排除当日bar（以及非法/未来日期）。
      *   盘前口径必须置 true —— 盘前推股只能看「截至上一交易日收盘」的指标，
      *   否则会把盘中实时当收盘值，等于用未来数据推过去。
      */
@@ -142,9 +163,20 @@ object LocalScreener {
         }
     }
 
+    private suspend fun <T> cancellable(block: suspend () -> T): Result<T> = try {
+        Result.success(block())
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        Result.failure(e)
+    }
+
     suspend fun screen(c: Criteria = Criteria(), onProgress: (String) -> Unit = {},
                        mode: String = "score", dropLastBar: Boolean = false,
-                       rotation: Int = 0, fallbackCodes: List<String> = emptyList()): List<Screened> = coroutineScope {
+                       rotation: Int = 0, fallbackCodes: List<String> = emptyList(),
+                       evidenceByCode: Map<String, DataEvidence> = emptyMap(),
+                       news: List<EngineChain.NewsEvidence> = CentralAnalysis.newsOf(emptyList()),
+                       newsAvailable: Boolean = CentralAnalysis.hasNewsContext): List<Screened> = coroutineScope {
         onProgress("正在实时拉取全市场行情…")
         // 全市场快照被东财风控拒绝时退回代码池（自选），否则候选永为 0、推股名单恒空，
         // 而用户只看到「暂无数据」——不知道是被限流。
@@ -155,27 +187,28 @@ object LocalScreener {
         if (snap.isEmpty()) return@coroutineScope emptyList()
 
         // 板块强度表：只用于排序加权，映射表拿不到就整块降级（不拖垮筛选，也不编强度）
-        val board = runCatching { SectorLink.load() }.getOrNull()
+        val board = cancellable { SectorLink.load() }.getOrNull()
         // 板块聚合只算一次，结果同时给「排序加权」和 rotation 引擎：分两次算会得到两个时点的热度。
         val sectorsRes: LocalSectors.Result? = board?.let { b ->
-            runCatching { LocalSectors.aggregate(snap, sectorOf = { b.sectorNameOf(it) }) }.getOrNull()
+            cancellable { LocalSectors.aggregate(snap, sectorOf = { b.sectorNameOf(it) }) }.getOrNull()
         }
         val strengthByName: Map<String, Double> = sectorsRes?.rows
             ?.mapNotNull { r -> r.strength?.let { s -> r.name to s } }?.toMap().orEmpty()
 
         // 横截面（flow 分位）与广度一轮只算一次：逐票重算 = 5000×5000 次比较。
-        val breadth: Double? = runCatching {
+        val breadth: Double? = cancellable {
             val up = snap.count { (it.pctChg ?: 0.0) > 0.0 }
             val down = snap.count { (it.pctChg ?: 0.0) < 0.0 }
             if (up + down > 0) up.toDouble() / (up + down) else null
         }.getOrNull()
         // 盘中早期换手率是「已交易分钟」口径，按已过分钟还原成全天预估，否则一律判低换手。
-        val turnScale: Double = runCatching {
+        val turnScale: Double = cancellable {
             val m = TapeEngine.minuteOfDay(System.currentTimeMillis())
             if (m > 570 && m < 897) (240.0 / (m - 570).toDouble()).coerceIn(1.0, 16.0) else 1.0
         }.getOrDefault(1.0)
-        val flowOf: Map<String, FlowEngine.Result> = runCatching {
-            FlowEngine.screen(snap, emptyMap(), emptyMap(), breadth, turnScale).associateBy { it.code }
+        val parameters = CentralAnalysis.loadParameters()
+        val flowOf: Map<String, FlowEngine.Result> = cancellable {
+            FlowEngine.screen(snap, emptyMap(), emptyMap(), breadth, turnScale, EngineChain.flowParams(parameters.spec)).associateBy { it.code }
         }.getOrDefault(emptyMap())
         val limitup = mode == "limitup"
         onProgress("全市场快照 ${snap.size} 只，预筛中（${if (limitup) "涨停扫描" else "涨幅/量比/非ST/主板"}）…")
@@ -201,7 +234,7 @@ object LocalScreener {
 
         // 市况闸门只吃指数序列：全轮拉一次，不随个股变化。
         // 拿不到就传 null，链路会记 degraded 并把闸门按 1.0，不拿个股 K 线充数。
-        val regimeCloses = runCatching { IndexDaily.closes() }.getOrNull()
+        val regimeCloses = cancellable { IndexDaily.closes() }.getOrNull()
 
         onProgress("预筛命中 ${cands.size} 只，逐只拉 K 线 + 本地引擎计算…")
 
@@ -214,12 +247,13 @@ object LocalScreener {
                     kotlinx.coroutines.withTimeoutOrNull(PER_STOCK_TIMEOUT_MS) {
                     val code = m.code
                     val barsRaw = DataCache.kline(code, "qfq", c.klineCount)
-                    // 盘前口径：最后一根通常是当日未完成 bar（盘中）或昨日收盘（盘前），
-                    // 统一剔除最后一根，保证「盘前推股」口径不随打开时间漂移。
-                    val bars = if (dropLastBar && barsRaw.size > 1) barsRaw.dropLast(1) else barsRaw
+                    // 只剔除 CST 当日（以及非法/未来日期），不能误删昨日已完成 bar。
+                    val bars = barsRaw.filter {
+                        AnalysisSessionPolicy.acceptsBar(it.date, System.currentTimeMillis(), dropLastBar)
+                    }
                     val eng = if (bars.size >= 30) DataCache.engine(code, "qfq", bars) else null
                     val nowMs = System.currentTimeMillis()
-                    val chain = if (bars.size >= 30) runCatching {
+                    val chain = if (bars.size >= 30) cancellable {
                         EngineChain.analyze(
                             EngineChain.Inputs(
                                 bars = bars,
@@ -229,16 +263,21 @@ object LocalScreener {
                                 sectors = sectorsRes,
                                 turnScale = turnScale,
                                 regimeCloses = regimeCloses,
-                                nowMs = nowMs,
-                            )
-                        )
+                                nowMs = nowMs, code = code, news = news, newsAvailable = newsAvailable,
+                            ), parameters.spec
+                        ).let { result -> result.copy(degraded = result.degraded + parameters.notes,
+                            status = if (parameters.notes.isNotEmpty() && result.status == "ok") "partial" else result.status) }
                     }.getOrNull() else null
-                    val central = eng?.centralScore ?: eng?.composite
+                    val primary = chain?.canonicalScore?.takeIf { it.isFinite() }
+                    val evidence = evidenceByCode[code]
+                    val evidenceOk = evidence?.validAt(nowMs) == true
+                    val chainUsable = primary != null && chain?.status != "insufficient" &&
+                        chain?.flow?.score != null && chain?.tape?.score != null && evidenceOk
                     val sectorName = board?.sectorNameOf(code)
                     val sectorStrength = sectorName?.let { strengthByName[it] }
                     // 退出纪律：破位（收盘跌破 20 日最低）的票一票否决，不再进推荐
                     val exit = if (bars.size >= ExitPlan.LOOKBACK + 1) {
-                        runCatching { ExitPlan.compute(bars) }.getOrNull()
+                        cancellable { ExitPlan.compute(bars) }.getOrNull()
                     } else null
                     Screened(
                         code = code,
@@ -252,9 +291,10 @@ object LocalScreener {
                         mv = m.mv,
                         engine = eng,
                         chain = chain,
-                        detailStatus = if (eng != null) "ok" else "insufficient",
+                        detailStatus = if (chainUsable) "ok" else "insufficient",
                         reason = when {
-                            eng == null -> "K线不足，无法本地计算"
+                            !evidenceOk -> "insufficient_data：缺EPS/DPS/财报报告期/同源复权/来源或有效期证据"
+                            !chainUsable -> "多输入链路证据不足：" + (chain?.degraded?.joinToString("；") ?: "K线或链路不可得")
                             exit?.action == ExitPlan.ACT_CLEAR -> "已破位：" + exit.reasons.first()
                             exit?.action == ExitPlan.ACT_TRIM -> "高位回吐过半：" + (exit.reasons.firstOrNull() ?: "")
                             else -> null
@@ -269,11 +309,12 @@ object LocalScreener {
                         snapshotStatus = FreshnessPolicy.snapshotStatus(m.ts, System.currentTimeMillis()),
                         sector = sectorName,
                         sectorStrength = sectorStrength,
-                        effectiveScore = effectiveScoreOf(central, sectorStrength),
+                        effectiveScore = effectiveScoreOf(primary, sectorStrength),
+                        dataEvidence = evidence,
                     )
                     }
                 }
-            }.mapNotNull { runCatching { it.await() }.getOrNull() }
+            }.mapNotNull { cancellable { it.await() }.getOrNull() }
             out.addAll(results)
             onProgress("本地引擎已分析 ${out.size}/${cands.size} 只…")
         }
@@ -283,19 +324,18 @@ object LocalScreener {
             "limitup" -> return@coroutineScope out.filter { (it.pctChg ?: 0.0) >= MarketLimits.LIMIT_UP_SCAN_PCT }
                 .sortedByDescending { it.pctChg ?: 0.0 }
             // 共振页返回全部分析结果（含未达标），由 UI 自行排序。
-            "all" -> return@coroutineScope out.sortedByDescending { it.centralScore ?: (it.pctChg ?: 0.0) }
+            "all" -> return@coroutineScope out.sortedByDescending { it.canonicalScore ?: Double.NEGATIVE_INFINITY }
         }
         val scored = out.filter {
-            // 规格分缺失（规格不可用/bars 不足）时不拦：否则规格读失败会把整个候选池清空，
-            // 用户看到的是「今天没机会」，而不是「引擎没跑起来」——这两种必须先能区分。
-            val canonicalOk = it.canonicalScore == null || it.canonicalScore >= c.minCanonical
+            // 缺失主链分就是证据不足，绝不拿旧 central 填洞。
+            val canonicalOk = it.canonicalScore?.let { score -> score.isFinite() && score >= c.minCanonical } == true
             val riskOk = !c.vetoByRiskFlag || it.riskFlag == null
-            it.detailStatus == "ok" && it.centralScore != null &&
-                it.centralScore >= c.minScore && canonicalOk && riskOk && it.buyable == true &&
+            it.detailStatus == "ok" && (it.canonicalScore ?: Double.NEGATIVE_INFINITY) >= c.minScore &&
+                it.snapshotStatus == "live" && canonicalOk && riskOk && it.buyable == true &&
                 (it.pctChg ?: Double.POSITIVE_INFINITY) < c.maxChgPct &&
                 // 普通推荐不接受涨停扫描结果，即使上游误标了可买。
                 (it.pctChg ?: Double.POSITIVE_INFINITY) < MarketLimits.LIMIT_UP_SCAN_PCT
-        }.sortedByDescending { it.effectiveScore ?: it.centralScore ?: 0.0 }
+        }.sortedByDescending { it.effectiveScore ?: it.canonicalScore ?: 0.0 }
         if (scored.isNotEmpty()) return@coroutineScope scored
         // 评分不足时只展示可买且有可用本地引擎的实时结果，不把 insufficient 伪装成推荐。
         onProgress("评分达标 0 只，暂无可买推荐（数据不足或过滤涨停）")

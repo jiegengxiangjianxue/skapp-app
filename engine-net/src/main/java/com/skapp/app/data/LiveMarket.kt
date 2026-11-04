@@ -210,6 +210,8 @@ object LiveMarket {
      * @param force 跳缓存（用户手动刷新时用）
      * @return 真实抓取结果；网络全挂时返回空列表（**不返回假数据**，由上层显示「暂无数据」）
      */
+    fun lastSnapshot(): List<Row> = cached
+
     suspend fun snapshot(force: Boolean = false): List<Row> = withContext(Dispatchers.IO) {
         val fresh = cached.takeIf { !force && it.isNotEmpty() && System.currentTimeMillis() - cachedAt < ttlMs() }
         if (fresh != null) return@withContext fresh

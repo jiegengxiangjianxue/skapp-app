@@ -52,6 +52,8 @@ internal class MarketStateHolder(shared: SharedVm) : StateHolder(shared) {
     private var lastSseEventAt: Long = 0L
 
     private var lastEngineAt: Long = 0L
+    private val centralRevision = java.util.concurrent.atomic.AtomicLong()
+    private val detailGeneration = java.util.concurrent.atomic.AtomicLong()
 
     /** 云端引擎产物（qwerzxcva/stocks-ai-view），供 EnginesScreen 使用 */
     /**
@@ -634,6 +636,9 @@ internal class MarketStateHolder(shared: SharedVm) : StateHolder(shared) {
             !_state.value.detailLoading && _state.value.holo != null
         if (same) return
         detailJob?.cancel()
+        detailLiveJob?.cancel()
+        detailGeneration.incrementAndGet()
+        centralRevision.incrementAndGet()
         detailJob = viewModelScope.launch {
             val code = normalized
             _state.update { it.copy(
@@ -641,6 +646,7 @@ internal class MarketStateHolder(shared: SharedVm) : StateHolder(shared) {
                 detail = StockDetail(code = code, name = shared.stockNames[code]),
                 detailAdjust = adjust,
                 kline = emptyList(),
+                detailDailyKline = emptyList(),
                 kPeriod = KPeriod.DAY,
                 holo = null,
                 localEngine = null,
@@ -650,6 +656,7 @@ internal class MarketStateHolder(shared: SharedVm) : StateHolder(shared) {
                 centralEngineStatus = "insufficient",
                 liveQuote = null,
                 fundFlow = emptyList(),
+                fundFlowLive = emptyList(),
                 boardsOf = emptyList(),
                 minuteTrend = emptyList(),
                 minuteDate = null,
@@ -740,62 +747,29 @@ internal class MarketStateHolder(shared: SharedVm) : StateHolder(shared) {
                         val holoBars = holo?.kline?.takeIf { it.size >= 30 && adjust == "qfq" }
                         val bars = holoBars
                             ?: requestResult { DataCache.kline(code, adjust, 250) }.getOrDefault(emptyList())
-                        _state.update { it.copy(
-                            kline = bars,
-                            klineSource = if (holoBars != null) "云端 holo bundle（前复权口径）"
-                            else MarketDataClient.lastKlineSource,
-                            // 端侧关键位/回本率：K 线到手即算，不依赖云端；样本不足时引擎自己返回 null
-                            keyLevels = gap("关键位", { null }) {
-                                withContext(Dispatchers.Default) { com.skapp.app.data.KeyLevels.compute(bars) }
-                            },
-                            recoup = gap("回本率", { null }) {
-                                withContext(Dispatchers.Default) { com.skapp.app.data.RecoupCalc.compute(bars) }
-                            },
-                            // 退出纪律：同一批 K 线顺手算，零额外请求。缺历史时引擎自己返回「数据不足」
-                            exitPlan = gap("退出纪律", { null }) {
-                                withContext(Dispatchers.Default) { com.skapp.app.data.ExitPlan.compute(bars) }
-                            },
-                            // 多日趋势：与关键位同源（同一批日 K），不另拉网络；不足 60 根时引擎自述原因
-                            trendForecast = gap("多日趋势", { null }) {
-                                withContext(Dispatchers.Default) { com.skapp.app.data.TrendForecast.compute(bars) }
-                            },
+                        val keyLevels = gap("关键位", { null }) {
+                            withContext(Dispatchers.Default) { com.skapp.app.data.KeyLevels.compute(bars) }
+                        }
+                        val recoup = gap("回本率", { null }) {
+                            withContext(Dispatchers.Default) { com.skapp.app.data.RecoupCalc.compute(bars) }
+                        }
+                        val exitPlan = gap("退出纪律", { null }) {
+                            withContext(Dispatchers.Default) { com.skapp.app.data.ExitPlan.compute(bars) }
+                        }
+                        val forecast = gap("多日趋势", { null }) {
+                            withContext(Dispatchers.Default) { com.skapp.app.data.TrendForecast.compute(bars) }
+                        }
+                        _state.update { current -> if (current.detail?.code != code) current else current.copy(
+                            kline = aggregateKline(bars, current.kPeriod), detailDailyKline = bars,
+                            klineSource = if (holoBars != null) "云端holo；请求前复权，因子未独立核验"
+                                else "DataCache/行情接口；具体单次来源未随数据返回",
+                            keyLevels = keyLevels, recoup = recoup, exitPlan = exitPlan, trendForecast = forecast,
                         ) }
                         val engine = requestResult {
                             withContext(Dispatchers.Default) { DataCache.engine(code, adjust, bars) }
                         }.getOrNull()
-                        // 详情页没有全市场横截面（拿不到就不编），flow 会自己降成 local_abs；
-                        // tape 只要日 K 就能算，所以这里链路是「技术 + 盘口」两段，不是残废链路。
-                        // 市况闸门只吃指数序列（全市场统一），不拿个股 K 线顶替；
-                        // 拿不到传 null，链路会记 degraded 并把闸门按 1.0。
-                        val regimeCloses = runCatching {
-                            com.skapp.app.data.IndexDaily.closes()
-                        }.getOrNull()
-                        val chain = requestResult {
-                            withContext(Dispatchers.Default) {
-                                com.skapp.app.data.EngineChain.analyze(
-                                    com.skapp.app.data.EngineChain.Inputs(
-                                        bars = bars,
-                                        regimeCloses = regimeCloses,
-                                        nowMs = System.currentTimeMillis(),
-                                    )
-                                )
-                            }
-                        }.getOrNull()
-                        val central = engine?.let { centralEngine(it, chain) }
-                            ?: CentralEngine("中枢引擎：数据不足，无法形成有效总结。", null, null, "insufficient")
-                        _state.update { it.copy(
-                            localEngine = engine,
-                            centralEngineSummary = central.summary,
-                            centralEngineScore = central.score,
-                            centralEngineResonance = central.resonance,
-                            centralEngineStatus = central.status,
-                            canonicalScore = chain?.canonicalScore,
-                            canonicalResonance = chain?.canonical?.resonance,
-                            engineSpecVersion = chain?.specVersion,
-                            engineSpecDrift = chain?.specDrift ?: false,
-                            chainDegraded = chain?.degraded.orEmpty(),
-                            chainStatus = chain?.status ?: central.status,
-                        ) }
+                        _state.update { if (it.detail?.code == code) it.copy(localEngine = engine) else it }
+                        refreshDetailCentral()
                         val local = requestResult {
                             bundleFromLocal(code, bars, _state.value.liveQuote, holo)
                         }.getOrNull()
@@ -807,12 +781,13 @@ internal class MarketStateHolder(shared: SharedVm) : StateHolder(shared) {
                     }
                     val flowD = async {
                         val holo = holoD.await()
-                        val flow = holo?.moneyflow?.takeIf { it.isNotEmpty() }
-                            ?: requestResult { DataCache.fundFlow(code, 60) }.getOrDefault(emptyList())
+                        val direct = requestResult { DataCache.fundFlow(code, 60) }.getOrDefault(emptyList())
+                        val flow = direct.ifEmpty { holo?.moneyflow.orEmpty() }
                         val live = if (MarketHours.isTrading() || MarketHours.isAuction()) {
                             requestResult { MarketDataClient.fundFlowIntraday(code) }.getOrDefault(emptyList())
                         } else emptyList()
-                        _state.update { it.copy(fundFlow = flow, fundFlowLive = live) }
+                        _state.update { if (it.detail?.code == code) it.copy(fundFlow = flow, fundFlowLive = live) else it }
+                        refreshDetailCentral()
                     }
                     quoteD.await()
                     cloudD.await()
@@ -858,8 +833,8 @@ internal class MarketStateHolder(shared: SharedVm) : StateHolder(shared) {
     /** SSE 推送落盘：只更新最后一根K和报价，引擎重算限流 5 秒一次。 */
     private suspend fun applyLiveQuote(quote: Quote) {
         val now = System.currentTimeMillis()
-        val bars = _state.value.kline
-        val today = java.time.LocalDate.now().toString()
+        val bars = _state.value.detailDailyKline
+        val today = java.time.LocalDate.now(com.skapp.app.data.AnalysisSessionPolicy.zone).toString()
         val price = quote.price
         val updated = if (bars.isEmpty() || price == null) bars else {
             val last = bars.last()
@@ -873,43 +848,37 @@ internal class MarketStateHolder(shared: SharedVm) : StateHolder(shared) {
                 bars + KBar(date = today, open = price, close = price, high = price, low = price, vol = 0.0)
             }
         }
-        var engine = _state.value.localEngine
-        var central: CentralEngine? = null
-        var chain: com.skapp.app.data.EngineChain.ChainResult? = null
+        _state.update { if (it.detail?.code == quote.code) it.copy(liveQuote = quote, detailDailyKline = updated, kline = aggregateKline(updated, it.kPeriod)) else it }
         if (now - lastEngineAt > 5_000 && updated.size >= 30) {
             lastEngineAt = now
-            val regimeCloses = runCatching {
-                com.skapp.app.data.IndexDaily.closes()
-            }.getOrNull()
-            gap("实时重算", { null }) { LocalEngine.analyze(updated) }?.let {
-                engine = it
-                chain = gap("引擎链", { null }) {
-                    com.skapp.app.data.EngineChain.analyze(
-                        com.skapp.app.data.EngineChain.Inputs(
-                            bars = updated,
-                            regimeCloses = regimeCloses,
-                            nowMs = now,
-                        )
-                    )
-                }
-                central = centralEngine(it, chain)
-            }
+            val engine = withContext(Dispatchers.Default) { LocalEngine.analyze(updated) }
+            _state.update { if (it.detail?.code == quote.code) it.copy(localEngine = engine) else it }
+            refreshDetailCentral()
         }
-        _state.update { it.copy(
-            liveQuote = quote,
-            kline = updated,
-            localEngine = engine,
-            canonicalScore = chain?.canonicalScore ?: _state.value.canonicalScore,
-            canonicalResonance = chain?.canonical?.resonance ?: _state.value.canonicalResonance,
-            engineSpecVersion = chain?.specVersion ?: _state.value.engineSpecVersion,
-            engineSpecDrift = chain?.specDrift ?: _state.value.engineSpecDrift,
-            chainDegraded = chain?.degraded ?: _state.value.chainDegraded,
-            chainStatus = chain?.status ?: _state.value.chainStatus,
-            centralEngineScore = central?.score ?: _state.value.centralEngineScore,
-            centralEngineResonance = central?.resonance ?: _state.value.centralEngineResonance,
-            centralEngineSummary = central?.summary ?: _state.value.centralEngineSummary,
-            centralEngineStatus = central?.status ?: _state.value.centralEngineStatus,
-        ) }
+    }
+
+    suspend fun refreshDetailCentral() {
+        val captured = _state.value
+        val code = captured.detail?.code ?: return
+        if (captured.detailDailyKline.size < 30) return
+        val revision = centralRevision.incrementAndGet()
+        val chain = requestResult {
+            com.skapp.app.data.CentralAnalysis.analyze(code, captured.detailDailyKline, captured.fundFlow,
+                captured.newsCalcs, com.skapp.app.data.CentralAnalysis.newsAvailable(captured.news),
+                liveFlow = captured.fundFlowLive, minute = captured.minuteTrend, minuteDate = captured.minuteDate)
+        }.getOrNull() ?: return
+        if (centralRevision.get() != revision || _state.value.detail?.code != code) return
+        val engine = _state.value.localEngine ?: return
+        val central = centralEngine(engine, chain)
+        _state.update { current ->
+            if (current.detail?.code != code || centralRevision.get() != revision) current else current.copy(
+                centralEngineSummary = central.summary, centralEngineScore = central.score,
+                centralEngineResonance = central.resonance, centralEngineStatus = central.status,
+                canonicalScore = chain.canonicalScore, canonicalResonance = chain.canonical?.resonance,
+                engineSpecVersion = chain.specVersion, engineSpecDrift = chain.specDrift,
+                chainDegraded = chain.degraded, chainStatus = chain.status,
+            )
+        }
     }
 
     fun refreshDetailLive() {
@@ -918,37 +887,38 @@ internal class MarketStateHolder(shared: SharedVm) : StateHolder(shared) {
     }
 
     private suspend fun refreshDetailLiveNow(code: String) {
+        val generation = detailGeneration.get()
+        val adjust = _state.value.detailAdjust
         // 报价拿不到就别动已上屏的详情（否则旧价会被当成现价），但缺口必须留下
         val quote = gap("最新报价($code)", { null }) { MarketDataClient.quote(code) } ?: return
-        val minute = gap("分时($code)", { emptyList() }) { MarketDataClient.minuteTrend(code) }
+        val minuteRich = gap("分时($code)", { null }) { MarketDataClient.minuteTrendRich(code) }
+        val minute = minuteRich?.points.orEmpty()
         // 东财/腾讯日K本身包含今日未收盘实时K；拉不到时才用分时+实时价合成。
         val fetched = gap("日K($code)", { emptyList() }) {
-            MarketDataClient.dayKline(code, 250, _state.value.detailAdjust)
+            MarketDataClient.dayKline(code, 250, adjust)
         }
-        val base = fetched.ifEmpty { _state.value.kline }
+        val base = fetched.ifEmpty { _state.value.detailDailyKline }
         val bars = mergeLiveBar(base, quote, minute)
         val engine = if (bars.size >= 30) gap("本地引擎($code)", { null }) { LocalEngine.analyze(bars) } else null
-        val central = engine?.let { centralEngine(it) }
         val liveFlow = if (MarketHours.isTrading() || MarketHours.isAuction()) {
             gap("资金流($code)", { emptyList() }) { MarketDataClient.fundFlowIntraday(code) }
         } else emptyList()
-        _state.update { it.copy(
+        _state.update { if (it.detail?.code != code || it.detailAdjust != adjust || detailGeneration.get() != generation) it else it.copy(
             liveQuote = quote,
-            kline = bars,
-            minuteTrend = minute.ifEmpty { _state.value.minuteTrend },
-            fundFlowLive = liveFlow.ifEmpty { _state.value.fundFlowLive },
-            localEngine = engine ?: _state.value.localEngine,
-            centralEngineScore = central?.score ?: _state.value.centralEngineScore,
-            centralEngineResonance = central?.resonance ?: _state.value.centralEngineResonance,
-            centralEngineSummary = central?.summary ?: _state.value.centralEngineSummary,
-            centralEngineStatus = central?.status ?: _state.value.centralEngineStatus,
+            detailDailyKline = bars,
+            kline = aggregateKline(bars, it.kPeriod),
+            minuteTrend = minute.ifEmpty { it.minuteTrend },
+            minuteDate = minuteRich?.date ?: it.minuteDate,
+            fundFlowLive = liveFlow.ifEmpty { it.fundFlowLive },
+            localEngine = engine ?: it.localEngine,
         ) }
+        if (_state.value.detail?.code == code && _state.value.detailAdjust == adjust && detailGeneration.get() == generation) refreshDetailCentral()
     }
 
     /** 用当日分时与实时价补齐/替换今天这根日K，避免日K停在历史收盘。 */
     private fun mergeLiveBar(bars: List<KBar>, quote: Quote, minute: List<Map<String, Any?>>): List<KBar> {
         val price = quote.price ?: return bars
-        val today = java.time.LocalDate.now().toString()
+        val today = java.time.LocalDate.now(com.skapp.app.data.AnalysisSessionPolicy.zone).toString()
         val prices = minute.mapNotNull { (it["price"] as? Number)?.toDouble() }
         val volSum = minute.sumOf { (it["vol"] as? Number)?.toDouble() ?: 0.0 }
         val lastClose = bars.lastOrNull { it.date != today }?.close
@@ -969,8 +939,7 @@ internal class MarketStateHolder(shared: SharedVm) : StateHolder(shared) {
     /** 切换 K 线周期（日/周/月由日 K 本地聚合，不重新请求） */
     fun switchPeriod(p: KPeriod) {
         if (_state.value.kPeriod == p) return
-        val daily = _state.value.kline
-        _state.update { it.copy(kPeriod = p, kline = aggregateKline(daily, p)) }
+        _state.update { it.copy(kPeriod = p, kline = aggregateKline(it.detailDailyKline, p)) }
     }
 
     private data class CentralEngine(
@@ -982,7 +951,7 @@ internal class MarketStateHolder(shared: SharedVm) : StateHolder(shared) {
 
     /**
      * 中枢引擎展示口径：**优先规格聚合分**（[EngineChain] canonical，与云端 engine_v5 同构），
-     * 规格分不可得才回落到老 12 引擎加权分，并在文案里标明用的是哪一套。
+     * 旧12引擎仅供技术对照，不能替代最终审核。
      *
      * 两个分数长得一样、名字都叫「中枢」，混着显示过一次就再也查不清某天推荐用的是谁。
      */
@@ -991,11 +960,10 @@ internal class MarketStateHolder(shared: SharedVm) : StateHolder(shared) {
         chain: com.skapp.app.data.EngineChain.ChainResult? = null,
     ): CentralEngine {
         val valid = engine.engines.filter { it.score != null }
-        val legacy = engine.centralScore ?: engine.weightedComposite ?: engine.composite
         val canonical = chain?.canonicalScore
-        val score = canonical ?: legacy
+        val score = canonical
         if (valid.isEmpty() || score == null) {
-            return CentralEngine(engine.summary ?: "中枢引擎：数据不足，无法形成有效总结。", null, null, "insufficient")
+            return CentralEngine("中枢规格链路数据不足；旧12引擎结果只作技术对照，不替代最终审核。", null, null, "insufficient")
         }
         val resonance = chain?.canonical?.resonance ?: engine.resonanceRatio
         val summary = when {
@@ -1004,7 +972,10 @@ internal class MarketStateHolder(shared: SharedVm) : StateHolder(shared) {
                 append("%.1f".format(canonical))
                 append("，共振 %.0f%%".format((resonance ?: 0.0) * 100))
                 append("，票数 多 ${chain?.canonical?.bull ?: 0}/空 ${chain?.canonical?.bear ?: 0}/中 ${chain?.canonical?.neutral ?: 0}")
-                append("，外部票 ${chain?.votes?.size ?: 0} 张")
+                append("，外部计分票 ${chain?.votes?.size ?: 0} 张")
+                append("；权重 ${chain?.weightsSource ?: "未知"}")
+                append("；消息审核 ${chain?.news?.usable ?: 0}/${chain?.news?.matched ?: 0} 条（来源/时间/个股匹配过检）")
+                chain?.provenance?.takeIf { it.isNotEmpty() }?.let { append("；输入说明：").append(it.joinToString("；")) }
                 val bad = chain?.degraded.orEmpty()
                 if (bad.isNotEmpty()) append("；降级 ").append(bad.joinToString("、"))
                 if (chain?.specDrift == true) append("；**规格漂移**")

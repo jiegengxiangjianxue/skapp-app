@@ -15,29 +15,17 @@ object ExtendedIndicators {
 
     // ── 基础 ──────────────────────────────────────────────
 
-    fun sma(values: List<Double>, n: Int): List<Double?> {
-        if (values.size < n) return List(values.size) { null }
-        val out = ArrayList<Double?>(values.size)
-        var sum = 0.0
-        for (i in values.indices) {
-            sum += values[i]
-            if (i >= n) sum -= values[i - n]
-            out += if (i >= n - 1) sum / n else null
-        }
-        return out
-    }
+    /**
+     * 基础指标一律委托 [CanonicalIndicators]（云端 `engine_v5` 的逐位移植）。
+     *
+     * 之前这里各有一份手写实现，与 [CanonicalIndicators] 并存：SMA 等价，但 EMA 种子
+     * 不同（本文件原用「种子=首值」，Canonical 用「前 n 均值」），ATR 的 TR 起点也差一根。
+     * 结果是同一只票在详情页（走本文件）与推股主链（走 Canonical）拿到不同的 EMA/MACD/ATR，
+     * 止损位与 MACD 金叉时点都可能不一致。收敛成单一实现后两边天然相等。
+     */
+    fun sma(values: List<Double>, n: Int): List<Double?> = CanonicalIndicators.sma(values, n)
 
-    fun ema(values: List<Double>, n: Int): List<Double?> {
-        if (values.isEmpty()) return emptyList()
-        val k = 2.0 / (n + 1)
-        val out = ArrayList<Double?>(values.size)
-        var prev: Double? = null
-        values.forEachIndexed { i, v ->
-            prev = if (prev == null) v else v * k + prev!! * (1 - k)
-            out += prev
-        }
-        return out
-    }
+    fun ema(values: List<Double>, n: Int): List<Double?> = CanonicalIndicators.ema(values, n)
 
     /** Wilder 平滑（RSI/ATR 用） */
     private fun wilder(values: List<Double>, n: Int): List<Double?> {
@@ -116,8 +104,15 @@ object ExtendedIndicators {
             }
         }
 
+    /**
+     * ATR(n)：Wilder 平滑，与 [CanonicalIndicators.atr] 同一实现。
+     *
+     * 旧实现在 [LocalEngine.atr] 与 [BookSignalEngine.atr] 里各有一份「末 n 根 TR 简单平均」
+     * 的变体，同一根 K 线能算出差 5%~10% 的波幅，止损位与仓位随之不同。全部收敛到此处。
+     */
     fun atr(bars: List<KBar>, n: Int = 14): Double? =
-        wilder(trueRange(bars), n).lastOrNull()
+        CanonicalIndicators.atr(bars.map { it.high }, bars.map { it.low }, bars.map { it.close }, n)
+            .lastOrNull()
 
     /** Keltner Channel(20, 2)：中轨 SMA20，上下轨 ± 2×ATR(20) */
     fun keltner(bars: List<KBar>, n: Int = 20, mult: Double = 2.0): Triple<Double?, Double?, Double?> {

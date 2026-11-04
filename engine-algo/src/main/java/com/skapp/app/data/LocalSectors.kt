@@ -151,8 +151,8 @@ object LocalSectors {
                 "涨停" to pulse.limitUp,
                 "跌停" to pulse.limitDown,
                 "中位涨幅" to pulse.medianPct,
-                "成交额(亿)" to (pulse.totalAmount ?: 0.0) / 1e8,
-                "主力净额(亿)" to (pulse.mainNetTotal ?: 0.0) / 1e8,
+                "成交额(亿)" to pulse.totalAmount?.let { it / 1e8 },
+                "主力净额(亿)" to pulse.mainNetTotal?.let { it / 1e8 },
             ),
             "phase" to mapOf("label" to pulse.label, "score" to pulse.phaseScore),
             "indices" to emptyList<Map<String, Any?>>(),   // 指数另走 MarketDataClient，不在这里编

@@ -29,9 +29,8 @@ fun RealtimeSummaryScreen(vm: SkappViewModel, state: UiState) {
     val today = java.time.LocalDate.now().toString()
     // 进页即拉一次本地深算与异动，避免“打开就是空页”
     LaunchedEffect(Unit) {
-        if (state.screened.isEmpty() && !state.screening) vm.runScreen("all")
         if (state.marketPulse.isEmpty()) vm.refreshPulse()
-        vm.refreshLocalAnalytics()
+        vm.loadSummary()
     }
     LazyColumn(
         modifier = Modifier.fillMaxWidth(),
@@ -41,7 +40,7 @@ fun RealtimeSummaryScreen(vm: SkappViewModel, state: UiState) {
         item {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
-                    Text("实时总结", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    Text("市场复盘", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                     Text("${state.marketPhase} · ${state.quoteTs ?: "时点暂无"}", style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
                 }
                 if (state.summaryRefreshing) CircularProgressIndicator(modifier = Modifier.padding(8.dp), strokeWidth = 2.dp)
@@ -53,14 +52,13 @@ fun RealtimeSummaryScreen(vm: SkappViewModel, state: UiState) {
         }
         // 本页只做总结：推股名单已拆成「盘前推股名单 / 实时推股名单」两个独立入口，
         // 名单是执行用的，总结是复盘用的，节奏不同，混在一页两边都看不清。
-        item(key = "sec_summary") { SectionTitle("① 盘中总结", "当下市场在讲什么，来自 AI 二次总结") }
+        item(key = "sec_summary") { SectionTitle("① 盘中总结", "当下市场在讲什么，来自标明来源的市场证据") }
         item { SummaryTextCard(state.summary) }
 
         item(key = "sec_close") { SectionTitle("② 盘后复盘", "收盘后各阶段实际跑出了什么") }
         item { CloseReviewCard(state.closeReview, today) }
 
-        item(key = "sec_winrate") { SectionTitle("③ 命中率", "历史推股兑现情况，用来判断该信多少") }
-        item { WinrateCard(state) }
+
     }
 }
 
@@ -90,7 +88,7 @@ private fun SummaryTextCard(summary: Map<String, Any?>) {
     SkCard(contentPadding = PaddingValues(0.dp)) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("实时总结", fontWeight = FontWeight.SemiBold)
+                Text("市场复盘", fontWeight = FontWeight.SemiBold)
                 Text(
                     when {
                         isLocal -> "本地实时计算"

@@ -344,7 +344,7 @@ class ScreenDataContractTest {
             cst(10, 29, 10, 0) to "上午交易中",
             cst(10, 29, 12, 0) to "午间休市",
             cst(10, 29, 14, 0) to "下午交易中",
-            cst(10, 29, 15, 2) to "收盘竞价",
+            cst(10, 29, 14, 59) to "收盘竞价",
             cst(10, 29, 16, 0) to "已收盘",
         )
         for ((at, label) in phases) {
@@ -366,7 +366,7 @@ class ScreenDataContractTest {
             "收盘后应等到次日 09:15",
         )
         assertEquals(0L, MarketHours.msUntilAutoRefresh(cst(10, 29, 10, 0)), "交易中不该再计时")
-        assertEquals(0L, MarketHours.msUntilAutoRefresh(cst(10, 29, 15, 2)), "收盘竞价必须算需要刷新")
+        assertEquals(0L, MarketHours.msUntilAutoRefresh(cst(10, 29, 14, 59)), "收盘竞价（14:57-15:00）必须算需要刷新")
     }
 
     // ── 9. 搜索框（MarketScreen）───────────────────────────────

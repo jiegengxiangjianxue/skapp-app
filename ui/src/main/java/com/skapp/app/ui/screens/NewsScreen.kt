@@ -96,11 +96,12 @@ fun NewsScreen(vm: SkappViewModel, state: UiState) {
             if (state.news.sourceErrors.isNotEmpty()) {
                 Text("部分源失败：${state.news.sourceErrors.joinToString("；")}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
             }
-            if (state.newsCalcLoading) CircularProgressIndicator(modifier = Modifier.height(20.dp), strokeWidth = 2.dp)
+            if ("消息事件" in state.loadingSections) CircularProgressIndicator(modifier = Modifier.height(20.dp), strokeWidth = 2.dp)
             else Text("刷新", Modifier.clickable { vm.loadNewsCalcs() }, color = MaterialTheme.colorScheme.primary,
                 style = MaterialTheme.typography.bodySmall)
         }
 
+        state.dataGaps["消息事件"]?.let { Text(it, Modifier.padding(12.dp), style = MaterialTheme.typography.bodySmall, color = SkColors.warn) }
         if (onlyPulse) {
             LazyColumn(
                 Modifier.fillMaxWidth().padding(horizontal = 12.dp),
@@ -327,9 +328,9 @@ private fun NewsCalcInline(n: NewsCalc, vm: SkappViewModel) {
     // 消息面只保留「异动」一个口径：利好/利空只是方向的两种叫法，与异动重复，
     // 真正有信息量的是「因为什么、朝哪个方向、动了多少」，因此合并成一行结论 + 一行依据。
     val moveTag = when (n.direction) {
-        "pos" -> "异动偏强"
-        "neg" -> "异动偏弱"
-        else -> "无明确异动"
+        "pos" -> "事件偏多"
+        "neg" -> "事件偏空"
+        else -> "事件方向待核实"
     }
     Text(
         "$moveTag · ${n.verdict.takeIf { it.isNotBlank() && it != "insufficient" } ?: "方向待确认"}",
@@ -351,8 +352,10 @@ private fun NewsCalcInline(n: NewsCalc, vm: SkappViewModel) {
     }
     // 数据层给出的正/负理由往往是最具体的一条，不能被 reasoning 挤掉
     if (moveBasis.isNotBlank()) {
-        Text("依据：$moveBasis", style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
+        Text("多空证据：$moveBasis", style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
     }
+    Text("规则式解读，不等于事实核验或已发生的价格异动；需核对公告、兑现条件和持续性。",
+        style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
     if (n.sentimentHits.isNotEmpty()) {
         Text("命中依据：${n.sentimentHits.joinToString("、")}", style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
     }
@@ -444,6 +447,7 @@ private fun pctColor(pct: Double?): Color = when {
 }
 
 private fun signalText(signal: String?): String = when (signal) {
+    "risk_review" -> "最终审核：风险待核验"
     "bullish" -> "偏多"
     "bearish" -> "偏空"
     "neutral" -> "中性"

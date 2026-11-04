@@ -35,8 +35,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.skapp.app.ui.components.SkTabBar
 import com.skapp.app.ui.screens.CredentialsScreen
 import com.skapp.app.ui.screens.DashboardHubScreen
-import com.skapp.app.ui.screens.TodayBoardScreen
-import com.skapp.app.ui.screens.NewsHubScreen
 import com.skapp.app.ui.screens.PicksHubScreen
 import com.skapp.app.ui.screens.StockDetailSheet
 import com.skapp.app.ui.screens.SummaryHubScreen
@@ -62,12 +60,11 @@ import com.skapp.app.ui.theme.SkColors
  * 于是「看板 / 行情」这类同属看板的子页在返回时无处可去，直接退出 App。
  */
 private enum class MainTab(val label: String, val subtitle: String) {
-    TODAY_BOARD("今日看盘", "今日实时盘面数据"),
     DASHBOARD("看板", "今天市场是什么状态"),
-    SUMMARY("总结", "结论、AI 复盘与决策"),
-    NEWS("消息", "新闻与题材"),
+    SUMMARY("解读", "市场复盘、消息事件与决策"),
+    NEWS("研究", "板块动量与历史推股验证"),
     PICKS("选股", "候选名单、板块与中枢结论"),
-    CREDENTIALS("凭据", "AI 双源配置与自检"),
+    CREDENTIALS("设置", "凭据与数据诊断"),
 }
 
 /** 底部悬浮栏容器，半透明圆角背景（不含 blur：API < 31 设备上会闪退）。 */
@@ -183,10 +180,11 @@ fun MainScreen(vm: SkappViewModel, initialTab: Int = 0) {
             }
             Box(Modifier.weight(1f).padding(bottom = 76.dp)) {
                 when (tab) {
-                    MainTab.TODAY_BOARD -> TodayBoardScreen(vm, state)
-                    MainTab.DASHBOARD -> DashboardHubScreen(vm, state, sub, ::selectSub)
+                    MainTab.DASHBOARD -> DashboardHubScreen(vm, state, sub, ::selectSub,
+                        onResearch = { index -> tab = MainTab.NEWS; subTabs[MainTab.NEWS] = index },
+                        onInterpret = { tab = MainTab.SUMMARY; subTabs[MainTab.SUMMARY] = 1 })
                     MainTab.SUMMARY -> SummaryHubScreen(vm, state, sub, ::selectSub)
-                    MainTab.NEWS -> NewsHubScreen(vm, state, sub, ::selectSub)
+                    MainTab.NEWS -> com.skapp.app.ui.screens.ResearchHubScreen(vm, state, sub, ::selectSub)
                     MainTab.PICKS -> PicksHubScreen(vm, state, sub, ::selectSub)
                     MainTab.CREDENTIALS -> CredentialsScreen(vm, state, sub, ::selectSub)
                 }

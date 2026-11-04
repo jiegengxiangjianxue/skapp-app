@@ -46,7 +46,7 @@ private val UP = SkColors.marketUp
 private val DOWN = SkColors.marketDown
 
 @Composable
-fun DashboardScreen(vm: SkappViewModel, state: UiState) {
+fun DashboardScreen(vm: SkappViewModel, state: UiState, onResearch: (Int) -> Unit = {}, onInterpret: () -> Unit = {}) {
     val b = state.board
     val market = b["market"] as? Map<*, *> ?: emptyMap<String, Any?>()
 
@@ -77,6 +77,28 @@ fun DashboardScreen(vm: SkappViewModel, state: UiState) {
                 Text("刷新", Modifier.clickable { vm.loadBoard(force = true) },
                     color = MaterialTheme.colorScheme.primary,
                     style = MaterialTheme.typography.bodySmall)
+            }
+        }
+
+        item {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                androidx.compose.material3.TextButton(onClick = { onResearch(0) }, modifier = Modifier.weight(1f)) { Text("板块动量") }
+                androidx.compose.material3.TextButton(onClick = { onResearch(1) }, modifier = Modifier.weight(1f)) { Text("历史回测") }
+                androidx.compose.material3.TextButton(onClick = onInterpret, modifier = Modifier.weight(1f)) { Text("事件解读") }
+            }
+        }
+        item {
+            SkCard {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("自选行情", fontWeight = FontWeight.SemiBold)
+                    if (state.quotes.isEmpty()) Text(if ("自选报价" in state.loadingSections) "正在获取报价…" else "暂无报价，刷新可重试。", style = MaterialTheme.typography.bodySmall)
+                    state.quotes.forEach { q ->
+                        Row(Modifier.fillMaxWidth().clickable { vm.openDetail(q.code) }, horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text(q.name ?: q.code)
+                            Text("${q.price ?: "暂无"} · ${q.pctChg?.let { "%+.2f%%".format(it) } ?: "暂无"}${if (q.stale) " · 陈旧或时点未知" else ""}")
+                        }
+                    }
+                }
             }
         }
 
@@ -122,8 +144,15 @@ fun DashboardScreen(vm: SkappViewModel, state: UiState) {
             }
         }
 
-        // 盘面解读只保留看板这一处；实时总结复用同一份 summary，不再重复展示正文。
-        item { CommentaryCard(state.summary) }
+        item {
+            if (state.loadingSections.isNotEmpty()) Text(
+                "正在获取：${state.loadingSections.joinToString("、")}",
+                style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
+            state.dataGaps.entries.take(6).forEach { (label, reason) ->
+                Text("$label：$reason", style = MaterialTheme.typography.bodySmall, color = SkColors.warn)
+            }
+            if (b["status"] == "insufficient") Text(b["reason"]?.toString() ?: "行情证据不足", color = SkColors.warn)
+        }
 
         // ── 个股查（panel-stock）：搜索入口 ──
         item { StockSearchCard(vm, state) }
@@ -166,25 +195,6 @@ private fun KpiCard(label: String, value: String?, color: Color, modifier: Modif
             Text(label, style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
             Spacer(Modifier.height(2.dp))
             Text(value ?: "—", fontWeight = FontWeight.Bold, color = color, fontSize = 18.sp)
-        }
-    }
-}
-
-@Composable
-private fun CommentaryCard(summary: Map<String, Any?>) {
-    val t = (summary["premarket"] ?: summary["text"])?.toString()?.takeIf { it.isNotBlank() } ?: return
-    SkCard(contentPadding = PaddingValues(0.dp)) {
-        Column(Modifier.padding(12.dp)) {
-            Text("盘前分析", fontWeight = FontWeight.SemiBold,
-                style = MaterialTheme.typography.bodySmall)
-            Spacer(Modifier.height(4.dp))
-            t.split("\n").map { it.trim() }
-                .filter { it.isNotEmpty() && !it.startsWith(">") }
-                .take(18)
-                .forEach {
-                    Text(it.trimStart('#').trim(),
-                        style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
-                }
         }
     }
 }

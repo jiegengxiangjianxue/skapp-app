@@ -146,6 +146,49 @@ class BookSignalEngineTest {
     }
 
     @Test
+    fun `同层首板组合只取最佳证据且保留各角度标签`() {
+        val bars = series(List(80) { 10.0 } + listOf(10.0, 11.0)).toMutableList()
+        bars[bars.lastIndex] = bar(10.0, 11.0, 11.0, 10.0, 3000.0)
+        val r = BookSignalEngine.compute(bars, "600000")
+
+        assertTrue(r.layers.getValue(BookSignalEngine.LAYER_REVERSAL).isEmpty())
+        assertTrue(r.tags.containsAll(listOf("limit:first_board", "limit:strong_seal", "limit:active_5d")))
+        assertEquals("limit:first_board & limit:active_5d", r.basis)
+        assertEquals(1.62, r.expected5d!!, 1e-9)
+        assertEquals(77.0, r.score!!, 1e-9)
+    }
+
+    @Test
+    fun `同层卖压与失衡是多角度证据而非三张独立票`() {
+        val bars = List(80) { bar(10.0, 10.0, 10.5, 9.5) } +
+            List(5) { bar(10.5, 10.0, 11.0, 10.0) }
+        val r = BookSignalEngine.compute(bars, "600000")
+
+        assertTrue(r.layers.getValue(BookSignalEngine.LAYER_REVERSAL).isEmpty())
+        assertTrue(r.layers.getValue(BookSignalEngine.LAYER_LIMIT).isEmpty())
+        assertTrue(r.tags.containsAll(listOf("flow:delta_down", "flow:imbalance_down")))
+        assertEquals("flow:delta_down", r.basis)
+        assertEquals(0.53, r.expected5d!!, 1e-9)
+    }
+
+    @Test
+    fun `不同层仍各贡献一次且未校准形态不稀释分母`() {
+        val bars = List(80) { bar(10.0, 10.0, 10.5, 9.5) } +
+            List(4) { bar(10.5, 10.0, 11.0, 10.0) } +
+            bar(11.1, 11.0, 12.0, 11.0)
+        val r = BookSignalEngine.compute(bars, "600000")
+
+        assertTrue(r.layers.getValue(BookSignalEngine.LAYER_REVERSAL).isEmpty())
+        assertTrue(r.layers.getValue(BookSignalEngine.LAYER_LIMIT).contains("limit:first_board"))
+        assertTrue(r.layers.getValue(BookSignalEngine.LAYER_FLOW).contains("flow:delta_down"))
+        assertEquals(listOf("pat:inv_hammer"), r.layers.getValue(BookSignalEngine.LAYER_PATTERN))
+        assertTrue(r.tags.contains("pat:inv_hammer"))
+        val expected = (1.62 * 0.532 + 0.53) / 1.532
+        assertEquals(expected, r.expected5d!!, 1e-9)
+        assertEquals(50.0 + 50.0 * expected / 3.0, r.score!!, 1e-9)
+    }
+
+    @Test
     fun `K 线不足时降级可见`() {
         val r = BookSignalEngine.compute(series(List(10) { 10.0 }), "600000")
         assertNull(r.score)

@@ -37,7 +37,7 @@ internal class NewsSummaryHolder(
                     delay(5_000)
                     continue
                 }
-                runCatching { refreshNewsCalcs() }
+                loadNewsCalcs().join()
                 val wait = if (MarketHours.isTrading() || MarketHours.isAuction()) 30_000L else 180_000L
                 delay(wait)
             }
@@ -45,9 +45,9 @@ internal class NewsSummaryHolder(
     }
 
     /** 快讯 + 主线：逐条标题下实时算（标题命中的股票 → 实时行情 + 中枢引擎） */
-    fun loadNewsCalcs(): Job = viewModelScope.launch {
-        requestResult { refreshNewsCalcs() }
-    }
+    fun loadNewsCalcs(): Job = shared.sections.load("消息事件", timeoutMs = 45_000,
+        fetch = { refreshNewsCalcs() }) { s, _ -> s }
+
 
     suspend fun refreshNewsCalcs() {
         _state.value = _state.value.copy(newsCalcLoading = true)
@@ -125,6 +125,8 @@ internal class NewsSummaryHolder(
                     dedupCount = (items.size - merged.size).coerceAtLeast(0),
                 ),
             )
+            com.skapp.app.data.CentralAnalysis.recordNews(_state.value.news, symbols)
+            viewModelScope.launch { market.refreshDetailCentral() }
             // 板块上下文：消息分析需要结合板块动量与板块内个股
             val sec = _state.value.sectors
             val boardList = (sec.industries + sec.concepts)
@@ -149,6 +151,7 @@ internal class NewsSummaryHolder(
                 )
             }
             _state.value = _state.value.copy(newsCalcs = calcs)
+            market.refreshDetailCentral()
             // 即采即传：不管开 App 是几点，算好的消息都进归档队列；flush 由启动/定时触发
             picks.archiveNewsCalcs(calcs)
             // 消息变了早盘名单也要跟着变（09:00-09:30 可变，冻结后内部直接跳过）
@@ -209,7 +212,6 @@ internal class NewsSummaryHolder(
     fun refreshLocalAnalytics() {
         viewModelScope.launch {
             runCatching { computeLocalCloseReview() }
-            runCatching { computeLocalWinrate() }
         }
     }
 
@@ -260,67 +262,10 @@ internal class NewsSummaryHolder(
     }
 
     /** 推股胜率：本地回测（MA5 上穿 MA20 信号，统计未来 5/10/20 日胜率）。 */
-    private suspend fun computeLocalWinrate() {
-        val codes = analyticsCodes(12)
-        if (codes.isEmpty()) return
-        val horizons = listOf(5, 10, 20)
-        val buckets = horizons.associateWith { ArrayList<Double>() }
-        var signals = 0
-        for (code in codes) {
-            val bars = runCatching { DataCache.kline(code, "qfq", 250) }.getOrNull() ?: continue
-            if (bars.size < 60) continue
-            val closes = bars.map { it.close }
-            for (i in 20 until closes.size) {
-                val ma5 = closes.subList(i - 4, i + 1).average()
-                val ma5p = closes.subList(i - 5, i).average()
-                val ma20 = closes.subList(i - 19, i + 1).average()
-                val ma20p = closes.subList(i - 20, i).average()
-                if (ma5p <= ma20p && ma5 > ma20) {
-                    signals++
-                    for (h in horizons) {
-                        val fwd = closes.getOrNull(i + h) ?: continue
-                        buckets.getValue(h).add((fwd / closes[i] - 1.0) * 100.0)
-                    }
-                }
-            }
-        }
-        if (signals == 0) return
-        val horizonsMap = horizons.associate { h ->
-            val list = buckets.getValue(h)
-            h.toString() to mapOf<String, Any?>(
-                "overall" to if (list.isEmpty()) null else "%.1f".format(list.count { it > 0 } * 100.0 / list.size),
-                "avg_ret_pct" to if (list.isEmpty()) null else "%.2f".format(list.average()),
-                "n" to list.size,
-            )
-        }
-        val today = java.time.LocalDate.now().toString()
-        _state.value = _state.value.copy(
-            winrateMatrix = com.skapp.app.data.WinrateMatrix(
-                ts = java.time.OffsetDateTime.now().toString(),
-                sourceTs = today,
-                source = "本地回测：MA5 上穿 MA20（样本 ${codes.size} 只 / 信号 $signals 次）",
-                horizons = horizonsMap,
-            )
-        )
-    }
-
     /** 看板 */
     fun loadBoard(force: Boolean = false) {
-        // 去重：启动预热与页面 LaunchedEffect 会各叫一次，同一份数据没必要拉两遍；
-        // 手动刷新必须真重拉：先取消在途任务，否则会被旧任务挡住拿不到新数据
-        if (force) boardJob?.cancel()
-        else if (boardJob?.isActive == true) return
-        boardJob = viewModelScope.launch {
-            // 看板与宽度都走本地实时：全市场快照 × 板块映射现算，不再读云端 latest.json
-            val boardD = async { runCatching { localBoardMap(force) }.getOrDefault(localBoardUnavailable()) }
-            val breadthD = async {
-                runCatching {
-                    com.skapp.app.data.LocalSectors.breadth(
-                        com.skapp.app.data.LivePulse.of(com.skapp.app.data.LiveMarket.snapshot()),
-                    )
-                }.getOrDefault(mapOf("status" to "unavailable", "source" to "local"))
-            }
-            _state.value = _state.value.copy(board = boardD.await(), marketBreadth = breadthD.await())
+        shared.sections.load("看板", force = force, fetch = { localBoardMap(force) }) { s, v ->
+            s.copy(board = v)
         }
     }
 
@@ -377,9 +322,7 @@ internal class NewsSummaryHolder(
                     else "；本地深算失败：${_state.value.screenMsg ?: "行情接口不可达"}"
                 }
                 // 盘前/午盘本地推股：已有当日存档就复用，不重复拉 11 页快照
-                com.skapp.app.data.LocalPicks.sessionFor(MarketHours.phase())?.let { session ->
-                    runCatching { picks.rebuildLocalPicks(session, force = false) }
-                }
+                picks.ensureLocalPicks()
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -391,13 +334,17 @@ internal class NewsSummaryHolder(
     }
 
     /** 实时总结正文：加载失败时保留明确的 insufficient 状态。 */
-    fun loadSummary(): Job = viewModelScope.launch {
-        requestResult { refreshSummary() }
-    }
+    fun loadSummary(): Job = shared.sections.load("市场解读", fetch = {
+        val cloud = requestResult { DbTables.summary() }.getOrNull()
+        val date = cloud?.get("date")?.toString()?.take(10)
+        if (cloud?.get("status") == "ok" && date == MarketHours.todayKey()) cloud
+        else buildLocalSummary()
+    }) { s, v -> s.copy(summary = v) }
 
     suspend fun refreshSummary() {
         val cloud = requestResult { DbTables.summary() }.getOrNull()
-        val cloudOk = cloud != null && cloud["status"]?.toString() !in setOf("insufficient", "unknown", "error")
+        val cloudOk = cloud != null && cloud["status"]?.toString() == "ok" &&
+            cloud["date"]?.toString()?.take(10) == MarketHours.todayKey()
         if (cloudOk) {
             _state.value = _state.value.copy(summary = cloud!!)
             return

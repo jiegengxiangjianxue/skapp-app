@@ -382,11 +382,13 @@ object MarketDataClient {
                             if (p.size < 6) null
                             else mapOf<String, Any?>(
                                 "date" to p[0],
+                                "source" to "eastmoney_fflow_daily",
                                 "main" to p[1].toDoubleOrNull(),
                                 "small" to p[2].toDoubleOrNull(),
                                 "medium" to p[3].toDoubleOrNull(),
                                 "large" to p[4].toDoubleOrNull(),
                                 "super" to p[5].toDoubleOrNull(),
+                                "main_ratio" to p.getOrNull(6)?.toDoubleOrNull()?.let { it / 100.0 },
                             )
                         }
                     }
@@ -413,6 +415,8 @@ object MarketDataClient {
                 val p = arr.optString(i).split(",")
                 if (p.size < 6) null else mapOf<String, Any?>(
                     "time" to p[0],
+                    "code" to code,
+                    "source" to "eastmoney_fflow_intraday",
                     "main_net" to p[1].toDoubleOrNull(),
                     "small_net" to p[2].toDoubleOrNull(),
                     "mid_net" to p[3].toDoubleOrNull(),
@@ -422,9 +426,9 @@ object MarketDataClient {
             }
         }
         val q = "fields1=f1,f2,f3,f7&fields2=f51,f52,f53,f54,f55,f56&klt=1&lmt=0&ut=f057cbcbce2a86e2866ab8877db1d059"
-        parse(getEm("https://push2.eastmoney.com/api/qt/stock/fflow/kline/get?secid=$sid&$q"))
-            ?: parse(getEm("https://push2delay.eastmoney.com/api/qt/stock/fflow/kline/get?secid=$sid&$q"))
-            ?: emptyList()
+        parse(getEm("https://push2.eastmoney.com/api/qt/stock/fflow/kline/get?secid=$sid&$q")).ifEmpty {
+            parse(getEm("https://push2delay.eastmoney.com/api/qt/stock/fflow/kline/get?secid=$sid&$q"))
+        }
     }
 
     // ── 分时走势（腾讯 minute 主源，东财 trends2 兜底）──────

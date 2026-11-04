@@ -56,10 +56,10 @@ enum class PickListSession(
     MIDDAY(title = "午盘推股名单", fixed = LocalPicks.Session.MIDDAY),
 
     /** 实时：跟随当前交易时段出卡；非交易时段退回午盘存档，不留白屏。 */
-    REALTIME(title = "实时推股名单", fixed = null);
+    REALTIME(title = "实时推股名单", fixed = LocalPicks.Session.REALTIME);
 
     val session: LocalPicks.Session
-        get() = fixed ?: LocalPicks.sessionFor(MarketHours.phase()) ?: LocalPicks.Session.MIDDAY
+        get() = requireNotNull(fixed)
 
     /** 口径说明直接取数据层常量，避免 UI 另写一套导致口径漂移。 */
     val basis: String get() = session.basis
@@ -94,11 +94,13 @@ fun PicksListScreen(vm: SkappViewModel, state: UiState, mode: PickListSession) {
         return
     }
     val artifact: StructuredPickArtifact = when (mode.session) {
+        LocalPicks.Session.REALTIME -> state.localRealtimePicks
         LocalPicks.Session.PREMARKET -> state.localPremarketPicks
         LocalPicks.Session.MORNING -> state.localMorningPicks
         LocalPicks.Session.MIDDAY -> state.localMiddayPicks
     }
-    // 已有当日存档就直接复用，不重复拉行情；没有才首次计算
+    val window = com.skapp.app.data.AnalysisSessionPolicy.window(mode.session.key,
+        System.currentTimeMillis(), !MarketHours.isClosedDay())
     LaunchedEffect(mode) { vm.ensurePicksFor(mode.session) }
     // 池由 rebuildLocalPicks 在算名单时同步取过（算法层要用它加权），这里不再另抓一遍：
     // 两条协程各拉 18 个池文件既是重复请求，也可能让后到的空结果覆盖掉已有池。
@@ -130,30 +132,6 @@ fun PicksListScreen(vm: SkappViewModel, state: UiState, mode: PickListSession) {
                         color = SkColors.textSecondary,
                     )
                 }
-                // 验证入口：断网 / 限流空态需要让真实请求失败，而切系统网络会把 AI 通道一起切断。
-                // 注入点只有一个 HTTP 出口，上层走的是真实失败分支。验证完连同 Http.Fault 一起删。
-                val faultState = remember { mutableStateOf(com.skapp.app.data.Http.fault) }
-                Text(
-                    text = when (faultState.value) {
-                        null -> "注入断网"
-                        com.skapp.app.data.Http.Fault.OFFLINE -> "注入限流"
-                        else -> "取消注入"
-                    },
-                    modifier = Modifier
-                        .clickable {
-                            val next = when (faultState.value) {
-                                null -> com.skapp.app.data.Http.Fault.OFFLINE
-                                com.skapp.app.data.Http.Fault.OFFLINE -> com.skapp.app.data.Http.Fault.RATE_LIMIT
-                                else -> null
-                            }
-                            faultState.value = next
-                            com.skapp.app.data.Http.fault = next
-                            vm.refreshLocalPicks(mode.session)
-                        }
-                        .padding(10.dp),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = if (faultState.value == null) SkColors.textSecondary else SkColors.warn,
-                )
                 if (mode == PickListSession.PREMARKET || mode == PickListSession.REALTIME) {
                     Text(
                         "历史",
@@ -178,7 +156,16 @@ fun PicksListScreen(vm: SkappViewModel, state: UiState, mode: PickListSession) {
             }
         }
 
-        val regime = state.decision.marketRegime?.takeIf { it.isNotBlank() }
+        item(key = "window") {
+            Text(when {
+                window.updating -> "本时段持续更新；数据与消息按当次计算时间留存。"
+                window.frozen -> "时段已冻结；以下是当时记录，不事后补算。"
+                else -> "本时段尚未开始，不借用其他名单。"
+            }, style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
+            Text("记录日期 ${artifact.date ?: "暂无"} · 时点 ${artifact.calculationTime ?: "暂无"}",
+                style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
+        }
+        val regime = state.decision.marketRegime?.takeIf { it.isNotBlank() && window.updating }
         if (regime != null) {
             item(key = "decision_brief") {
                 SkCard {
@@ -215,6 +202,22 @@ fun PicksListScreen(vm: SkappViewModel, state: UiState, mode: PickListSession) {
             }
         }
 
+        val observed = artifact.metadata["observed"] as? List<*>
+        if (!observed.isNullOrEmpty()) {
+            item(key = "observed") {
+                SkCard {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("候选分析 · 非推荐", fontWeight = FontWeight.SemiBold)
+                        observed.forEach { raw ->
+                            val row = raw as? Map<*, *> ?: return@forEach
+                            Text("${row["name"] ?: row["code"]} · 链路分 ${row["score"] ?: "未知"}")
+                            Text(row["reason"]?.toString() ?: "证据不足，不能推荐", style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
+                        }
+                    }
+                }
+            }
+        }
+
         // 顺序以算法产物为准（LocalPicks 已按可买/池命中/评分做过排序与板块上限），
         // 界面不再二次排序，否则「显示的名单」和「算出来的名单」会各说一套。
         val picks = artifact.picks
@@ -245,7 +248,7 @@ fun PicksListScreen(vm: SkappViewModel, state: UiState, mode: PickListSession) {
                     vm,
                     state.picksTrend[pick.code],
                     trendAttempted = state.picksTrendAttempted.contains(pick.code),
-                    decision = decisionCards[pick.code],
+                    decision = if (window.updating) decisionCards[pick.code] else null,
                 )
             }
         }
@@ -273,15 +276,15 @@ private fun EmptyPickList(artifact: StructuredPickArtifact, mode: PickListSessio
                     PickListSession.MORNING ->
                         "早盘名单取上午盘中快照；未到交易时段或当日还没生成过快照时留空，不做降级填充。"
                     PickListSession.MIDDAY ->
-                        "午盘名单取下午盘中快照；未到交易时段或当日还没生成过快照时留空。"
+                        "午盘窗口为11:30至15:00；只保留本窗口生成的判断。"
                     PickListSession.REALTIME ->
-                        "实时名单随当日行情变化；开盘前没有盘中数据，留空是正常的。"
+                        "实时分析覆盖盘后至开盘前；数据不足会列出缺口，不把早盘或午盘记录冒充实时。"
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = SkColors.textSecondary,
             )
             Text(
-                "点右上角「重算」可强制重跑本地深算。",
+                "窗口内可重新计算；已结束窗口只读，不事后重写。",
                 style = MaterialTheme.typography.bodySmall,
                 color = SkColors.textSecondary,
             )

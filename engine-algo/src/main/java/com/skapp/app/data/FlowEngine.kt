@@ -80,6 +80,14 @@ object FlowEngine {
         else -> "neutral"
     }
 
+    fun fromMainRatio(code: String, ratio: Double, source: String, p: Params = Params()): Result? {
+        if (!ratio.isFinite() || kotlin.math.abs(ratio) > 1.0) return null
+        val score = 50.0 + 50.0 * tanh(ratio / p.mainUnit)
+        return Result(code, score, signalOf(score, p), "observed_main", null, null, null,
+            ratio, null, null, 1.0, 1.0, 0.85,
+            listOf(source, "只使用真实主力净占比；无代理量、横截面排名或5日累计"))
+    }
+
     /** 单票（无横截面）：只能出绝对强度档，`tier` 恒为 local_abs。 */
     fun compute(
         row: LiveMarket.Row,

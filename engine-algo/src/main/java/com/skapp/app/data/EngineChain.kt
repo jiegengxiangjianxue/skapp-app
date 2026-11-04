@@ -44,6 +44,14 @@ object EngineChain {
      *  规格没有给 flow/tape 单独的弱分界，取 aggregation.signalBearish（看空阈值）作为唯一可用口径。 */
     private const val RISK_WEAK_SCORE = 35.0
 
+    data class NewsEvidence(
+        val code: String, val id: String, val title: String, val direction: String,
+        val positiveReason: String?, val negativeReason: String?, val publishedAtMs: Long?, val source: String?,
+    )
+
+    data class NewsReview(val matched: Int, val usable: Int, val rejected: Int,
+                          val evidence: List<NewsEvidence>, val status: String)
+
     data class Inputs(
         val bars: List<KBar>,
         /** 实时快照；详情页拿不到时为空，资金流会降成「无横截面样本」 */
@@ -67,6 +75,9 @@ object EngineChain {
         val sectors: LocalSectors.Result? = null,
         val turnScale: Double? = null,
         val nowMs: Long = System.currentTimeMillis(),
+        val code: String? = null,
+        val news: List<NewsEvidence> = emptyList(),
+        val newsAvailable: Boolean = false,
     )
 
     data class ChainResult(
@@ -95,6 +106,8 @@ object EngineChain {
         val book: BookSignalEngine.Result? = null,
         /** 权重来源（规格 `weights_source`）：`equal` 表示未校准、按等权跑，界面必须标出来。 */
         val weightsSource: String? = null,
+        val news: NewsReview? = null,
+        val provenance: List<String> = emptyList(),
     )
 
     private val lastRegime = java.util.concurrent.atomic.AtomicReference<Pair<List<Double>, RegimeGate.Result?>>()
@@ -110,6 +123,7 @@ object EngineChain {
 
     fun analyze(inputs: Inputs, specOverride: EngineSpec? = null): ChainResult {
         val degraded = ArrayList<String>()
+        val provenance = ArrayList<String>()
 
         // 调用方已传规格时不再读资源——它已是进程内缓存，但跳过一层调用也省一次分支
         val loaded = if (specOverride == null) {
@@ -129,32 +143,41 @@ object EngineChain {
             return ChainResult(null, null, null, null, null, emptyList(), spec.specVersion, loaded?.drift ?: false, degraded, null, "insufficient")
         }
 
-        val code = inputs.row?.code ?: ""
+        val code = inputs.code ?: inputs.row?.code ?: ""
+        val matched = inputs.news.filter { it.code == code }.distinctBy { it.id }
+        val newsEvidence = matched.filter {
+            !it.source.isNullOrBlank() && it.publishedAtMs != null &&
+                inputs.nowMs - it.publishedAtMs in 0..86_400_000L
+        }
+        val newsReview = NewsReview(matched.size, newsEvidence.size, matched.size - newsEvidence.size,
+            newsEvidence, if (!inputs.newsAvailable) "missing" else if (matched.size > newsEvidence.size) "partial" else "ok")
+        if (!inputs.newsAvailable) degraded += "消息：未接入可用消息源"
+        if (newsReview.rejected > 0) degraded += "消息：${newsReview.rejected}条过期/未来/缺来源时间证据，未参与审核"
+        if (newsEvidence.isNotEmpty()) provenance += "消息：${newsEvidence.size}条已进入审核；无已校准消息权重，不加分"
 
-        // ── 资金流：优先复用，其次现算；都拿不到就是缺席（不插值） ──
-        val flow = inputs.precomputedFlow
-            ?: inputs.row?.let { row ->
-                runCatching {
-                    FlowEngine.compute(
-                        row = row,
-                        turnScale = inputs.turnScale ?: 1.0,
-                        p = flowParams(spec),
-                    )
-                }.getOrNull()
-            }
-        if (flow?.score == null) degraded += "资金流：无横截面样本"
 
-        // ── 盘口：只需日 K，拿不到就缺席 ──
-        val tape = runCatching {
-            TapeEngine.compute(inputs.bars, inputs.row, inputs.nowMs, tapeParams(spec))
-        }.getOrNull()
+        val freshRow = inputs.row?.takeIf {
+            it.code == code && it.ts > 0 && inputs.nowMs - it.ts in 0..spec.runtime.snapshotStaleMs
+        }
+        if (inputs.row != null && freshRow == null) degraded += "行情：代码不匹配、过期或未来快照，未参与资金/盘口"
+        val suppliedFlow = inputs.precomputedFlow?.takeIf {
+            it.code == code && it.score?.let { score -> score.isFinite() && score in 0.0..100.0 } == true
+        }
+        if (inputs.precomputedFlow != null && suppliedFlow == null) degraded += "资金流：预计算结果代码或分值非法，未参与"
+        val flow = suppliedFlow ?: freshRow?.let { row ->
+            runCatching { FlowEngine.compute(row = row, turnScale = inputs.turnScale ?: 1.0, p = flowParams(spec)) }.getOrNull()
+        }
+        if (flow?.score == null) degraded += "资金流：" + (flow?.reasons?.joinToString("；") ?: "未传入有效行情行或资金计算结果")
+        else if (flow.fsiPct == null) provenance += "资金流：${flow.tier}，未取得全市场横截面分位（有资金分，不等于有横截面排名）"
+
+        val tape = runCatching { TapeEngine.compute(inputs.bars, freshRow, inputs.nowMs, tapeParams(spec)) }.getOrNull()
         if (tape?.score == null) degraded += "盘口：${tape?.status ?: "计算失败"}"
 
         // ── 三层书籍信号（反转 MTR / 涨停结构 / 订单流近似）──
         // 只影响中枢外部票，不进 blend：blend 三路是不同数据源，book 与中枢同源于日 K。
         val book = runCatching { BookSignalEngine.compute(inputs.bars, code) }.getOrNull()
         if (book == null) degraded += "书籍信号：计算失败"
-        else if (!book.hasEvidence) degraded += "书籍信号：三层无过检标签"
+        else if (!book.hasEvidence) degraded += "书籍信号：三层无过检标签（无信号不补票；权重为0时不计分）"
 
         // ── 外部票注入后重算中枢 ──
         // 书籍层权重显式写入（含 0.0）：省键会让 CanonicalEngine fallback 到 1.0。
@@ -163,7 +186,7 @@ object EngineChain {
         val weights = HashMap(spec.weights)
         weights["book"] = bookWeight
         if (book?.hasEvidence == true && bookWeight <= 0.0) {
-            degraded += "书籍层：规格将 book 权重设为 0（未校准），已停用不计票"
+            provenance += "书籍层：规格将 book 权重设为 0（未校准），已停用不计票"
         }
         val canonical = runCatching {
             CanonicalEngine.score(code, inputs.bars, spec, weights = weights, externalVotes = externals)
@@ -185,7 +208,10 @@ object EngineChain {
             }
         }
 
-        val blended = blend(canonical?.score, flow?.score, tape?.score, spec.blend)
+        val doubleCount = ((spec.weights["flow"] ?: 0.0) > 0 && spec.blend.flow > 0) ||
+            ((spec.weights["tape"] ?: 0.0) > 0 && spec.blend.tape > 0)
+        if (doubleCount) degraded += "参数拒收：资金/盘口同时进入中枢投票和blend，存在重复计权"
+        val blended = if (doubleCount) null else blend(canonical?.score, flow?.score, tape?.score, spec.blend)
         if (spec.blend.central <= 0.0 && spec.blend.flow <= 0.0 && spec.blend.tape <= 0.0) {
             degraded += "规格 blend 权重全为 0，合成层无输入"
         }
@@ -198,7 +224,11 @@ object EngineChain {
             val t = tape?.score
             if (f != null && t != null && f < RISK_WEAK_SCORE && t < RISK_WEAK_SCORE) {
                 "资金与盘口双弱（资金流 ${fmt1(f)} / 盘口 ${fmt1(t)}）"
-            } else null
+            } else newsEvidence.firstOrNull { it.direction == "neg" && it.negativeReason?.trim()?.let { reason ->
+                reason.isNotEmpty() && !reason.startsWith("unknown", true) &&
+                    !reason.startsWith("insufficient", true) && !reason.equals("null", true)
+            } == true }
+                ?.let { "消息风险待核验：${it.title}；${it.negativeReason}" }
         }
 
         val status = when {
@@ -220,6 +250,8 @@ object EngineChain {
             status = status,
             book = book,
             weightsSource = spec.weightsSource,
+            news = newsReview,
+            provenance = provenance,
         )
     }
 
@@ -257,10 +289,27 @@ object EngineChain {
     fun flowParams(spec: EngineSpec): FlowEngine.Params {
         val d = FlowEngine.Params()
         return d.copy(
-            pctSd = spec.param("flow", "pct_sd", d.pctSd),
-            minPeerN = spec.intParam("flow", "min_peer_n", d.minPeerN),
-            bullThreshold = spec.aggregation.signalBullish,
-            bearThreshold = spec.aggregation.signalBearish,
+            pctSd = spec.param("flow", "pct_sd", spec.stateParam("flow", "pctSd", d.pctSd)),
+            tanhK = spec.stateParam("flow", "tanhK", d.tanhK),
+            turnoverFloor = spec.stateParam("flow", "turnoverFloor", d.turnoverFloor),
+            turnoverHigh = spec.stateParam("flow", "turnoverHigh", d.turnoverHigh),
+            lowTurnWeight = spec.stateParam("flow", "lowTurnWeight", d.lowTurnWeight),
+            highTurnWeight = spec.stateParam("flow", "highTurnWeight", d.highTurnWeight),
+            volRatioK = spec.stateParam("flow", "volRatioK", d.volRatioK),
+            volRatioCap = spec.stateParam("flow", "volRatioCap", d.volRatioCap),
+            wCross = spec.stateParam("flow", "wCross", d.wCross),
+            wAbs = spec.stateParam("flow", "wAbs", d.wAbs),
+            gatedWCross = spec.stateParam("flow", "gatedWCross", d.gatedWCross),
+            minPeerN = spec.intParam("flow", "min_peer_n", spec.stateParam("flow", "minPeerN", d.minPeerN.toDouble()).toInt()),
+            limitAmountRatio = spec.stateParam("flow", "limitAmountRatio", d.limitAmountRatio),
+            limitWeight = spec.stateParam("flow", "limitWeight", d.limitWeight),
+            mainUnit = spec.stateParam("flow", "mainUnit", d.mainUnit),
+            bullThreshold = spec.stateParam("flow", "bullThreshold", d.bullThreshold),
+            bearThreshold = spec.stateParam("flow", "bearThreshold", d.bearThreshold),
+            bullBreadthGate = spec.stateParam("flow", "bullBreadthGate", d.bullBreadthGate),
+            bearBreadthGate = spec.stateParam("flow", "bearBreadthGate", d.bearBreadthGate),
+            minCloudN = spec.stateParam("flow", "minCloudN", d.minCloudN.toDouble()).toInt(),
+            minAmountYuan = spec.stateParam("flow", "minAmountYuan", d.minAmountYuan),
         )
     }
 
@@ -268,8 +317,26 @@ object EngineChain {
     fun tapeParams(spec: EngineSpec): TapeEngine.Params {
         val d = TapeEngine.Params()
         return d.copy(
-            bullThreshold = spec.aggregation.signalBullish,
-            bearThreshold = spec.aggregation.signalBearish,
+            ampK = spec.stateParam("tape", "ampK", d.ampK),
+            divergePerVr = spec.stateParam("tape", "divergePerVr", d.divergePerVr),
+            divergeScale = spec.stateParam("tape", "divergeScale", d.divergeScale),
+            wBuy = spec.stateParam("tape", "wBuy", d.wBuy),
+            wDiverge = spec.stateParam("tape", "wDiverge", d.wDiverge),
+            wShadow = spec.stateParam("tape", "wShadow", d.wShadow),
+            wGap = spec.stateParam("tape", "wGap", d.wGap),
+            wPos = spec.stateParam("tape", "wPos", d.wPos),
+            bullThreshold = spec.stateParam("tape", "bullThreshold", d.bullThreshold),
+            bearThreshold = spec.stateParam("tape", "bearThreshold", d.bearThreshold),
+            gapMinPct = spec.stateParam("tape", "gapMinPct", d.gapMinPct),
+            shadowLong = spec.stateParam("tape", "shadowLong", d.shadowLong),
+            abnormalGapPct = spec.stateParam("tape", "abnormalGapPct", d.abnormalGapPct),
+            posBars = spec.stateParam("tape", "posBars", d.posBars.toDouble()).toInt(),
+            minBars = spec.stateParam("tape", "minBars", d.minBars.toDouble()).toInt(),
+            minAmountYuan = spec.stateParam("tape", "minAmountYuan", d.minAmountYuan),
+            openMinute = spec.stateParam("tape", "openMinute", d.openMinute.toDouble()).toInt(),
+            closeAuctionMinute = spec.stateParam("tape", "closeAuctionMinute", d.closeAuctionMinute.toDouble()).toInt(),
+            closeConfidence = spec.stateParam("tape", "closeConfidence", d.closeConfidence),
+            minUsedWeight = spec.stateParam("tape", "minUsedWeight", d.minUsedWeight.toDouble()).toInt(),
         )
     }
 
@@ -288,7 +355,7 @@ object EngineChain {
         val agg = spec.aggregation
 
         fun voteOf(indicator: String, score: Double?, why: String): CanonicalEngine.Vote? {
-            if (score == null) return null
+            if (score == null || !score.isFinite() || score !in 0.0..100.0) return null
             val strength = ((score - agg.scoreCenter) / agg.scoreScale).coerceIn(-1.0, 1.0)
             val vote = when {
                 score >= agg.signalBullish -> 1
@@ -298,10 +365,10 @@ object EngineChain {
             return CanonicalEngine.Vote(indicator, vote, kotlin.math.abs(strength), why)
         }
 
-        if (spec.deviceCanVote("flow")) {
+        if ((spec.weights["flow"] ?: 0.0).let { it.isFinite() && it > 0.0 }) {
             voteOf("flow", flow?.score, "资金流 ${"%.1f".format(flow?.score ?: 0.0)}（${flow?.signal ?: "?"}）")?.let { out += it }
         }
-        if (spec.deviceCanVote("tape")) {
+        if ((spec.weights["tape"] ?: 0.0).let { it.isFinite() && it > 0.0 }) {
             voteOf("tape", tape?.score, "盘口 ${"%.1f".format(tape?.score ?: 0.0)}（${tape?.signal ?: "?"}）")?.let { out += it }
         }
 

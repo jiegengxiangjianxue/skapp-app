@@ -1,6 +1,5 @@
 package com.skapp.app.data
 
-import kotlin.math.abs
 import kotlin.math.max
 
 /**
@@ -68,21 +67,13 @@ object TechnicalCalc {
         )
     }
 
-    /** ATR(n) 平均真实波幅 */
-    private fun atr(bars: List<KBar>, n: Int): Double? {
-        if (bars.size <= n) return null
-        val trs = ArrayList<Double>()
-        for (i in 1 until bars.size) {
-            val c = bars[i - 1].close
-            val tr = maxOf(
-                bars[i].high - bars[i].low,
-                abs(bars[i].high - c),
-                abs(bars[i].low - c),
-            )
-            trs += tr
-        }
-        return trs.takeLast(n).average()
-    }
+    /**
+     * ATR(n)：直接派 [ExtendedIndicators.atr]（Wilder 平滑）。
+     *
+     * 这里曾经是「末 n 根 TR 简单平均」，与 [CanonicalIndicators] 的 Wilder 口径不同：
+     * 同一根 K 线两处算出不同波幅，详情页的 ATR14 与主链的止损距离对不上。
+     */
+    private fun atr(bars: List<KBar>, n: Int): Double? = ExtendedIndicators.atr(bars, n)
 }
 
 /** 单个引擎的评分结果 */

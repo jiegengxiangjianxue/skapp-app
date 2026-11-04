@@ -35,6 +35,8 @@ android {
 
 dependencies {
     implementation(project(":engine"))
+    implementation(project(":engine-runtime"))
+    implementation(project(":engine-algo"))
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.lifecycle.runtime.compose)

@@ -73,6 +73,9 @@ data class QuoteRow(
 data class UiState(
     val loading: Boolean = true,
     val error: String? = null,
+    val loadingSections: Set<String> = emptySet(),
+    val momentum: com.skapp.app.data.SectorMomentum.Result? = null,
+    val backtest: com.skapp.app.data.PickBacktest.Result? = null,
     /**
      * 取数缺口：label →「原因 @HH:mm:ss」。
      *
@@ -98,6 +101,8 @@ data class UiState(
     /** 本地午盘推股（本地深算产出，下午盘中快照，含当日未完成日 K） */
     val localMiddayPicks: com.skapp.app.data.StructuredPickArtifact =
         com.skapp.app.data.StructuredPickArtifact(session = "midday"),
+    val localRealtimePicks: com.skapp.app.data.StructuredPickArtifact =
+        com.skapp.app.data.StructuredPickArtifact(session = "realtime"),
     val localPicksLoading: Boolean = false,
     val localPicksMsg: String? = null,
     /** 早盘推股草稿（09:00-09:30 随消息可变，09:30 后冻结） */
@@ -132,6 +137,7 @@ data class UiState(
     val detail: StockDetail? = null,
     val detailLoading: Boolean = false,
     val kline: List<KBar> = emptyList(),
+    val detailDailyKline: List<KBar> = emptyList(),
     val klineLoading: Boolean = false,
     /** 十关键位（端侧引擎 KeyLevels）与实时回本率（RecoupCalc），随 K 线一起算 */
     val keyLevels: com.skapp.app.data.KeyLevels.Levels? = null,

@@ -1,5 +1,7 @@
 package com.skapp.app.data
 
+import kotlinx.coroutines.CancellationException
+
 /**
  * 本地盘前/午盘推股产出层。
  *
@@ -8,9 +10,9 @@ package com.skapp.app.data
  *   快照（东财 clist） + 日 K（腾讯→东财） → 本地 12 引擎 / 因子库全量因子打分
  *
  * 口径红线（两条必须守住，否则就是拿未来数据编结论）：
- *   1) 盘前口径：日 K 必须剔除最后一根（dropLastBar=true），只能看截至上一交易日收盘的指标；
+ *   1) 旧盘前口径：只排除CST当日bar（dropLastBar=true），保留昨日已完成bar；
  *      盘中打开也不会把当日未完成 bar 混进「盘前」这张卡。
- *   2) 达标才出：只有 detailStatus=ok 且 centralScore >= minScore 且可买（未涨停）才进 picks。
+ *   2) 达标才出：只有 detailStatus=ok 且 canonicalScore >= minScore 且可买（未涨停）才进 picks。
  *      不达标的票只以 metadata 的「观察」形式出现，并显式标注未达标 —— 不把 insufficient 伪装成推荐。
  */
 object LocalPicks {
@@ -21,6 +23,11 @@ object LocalPicks {
         val label: String,
         val basis: String,
     ) {
+        REALTIME(
+            key = "realtime",
+            label = "实时推股",
+            basis = "多输入链路 · 盘后至开盘前持续修订，独立实时会话；K线复权证据未核验",
+        ),
         PREMARKET(
             key = "premarket",
             label = "盘前推股",
@@ -79,7 +86,13 @@ object LocalPicks {
                 else "板块 $name（强度数据不足，未参与排序）",
             )
         }
+        s.chain?.let { chain ->
+            add("主评分来自多输入链路：${chain.specVersion ?: "版本未知"}；${chain.weightsSource ?: "权重来源未知"}")
+            addAll(chain.degraded)
+        }
+        add("K线复权证据未核验，技术指标不作可信长期结论")
         val eng = s.engine ?: return@buildList
+        add("以下12引擎为旧口径对照，不参与主评分")
         if (eng.bullCount > 0) add("12 引擎看多 ${eng.bullCount} 个")
         if (eng.bearCount > 0) add("看空 ${eng.bearCount} 个")
         if (eng.nValid > 0) add("有效引擎 ${eng.nValid}/${eng.engines.size}")
@@ -105,12 +118,12 @@ object LocalPicks {
         name = s.name,
         price = s.price,
         pctChg = s.pctChg,
-        score = s.centralScore,
+        score = s.canonicalScore,
         buyable = s.buyable,
         snapshotStatus = s.snapshotStatus,
-        engine = "本地中枢引擎 · 12 引擎 / ${ExtendedIndicators.factorCount} 因子",
-        resonance = s.resonanceRatio,
-        reason = s.centralSummary ?: s.reason,
+        engine = "多输入链路 · K线/资金/盘口",
+        resonance = null, // 旧12引擎共振不冒充新链统计
+        reason = s.reason ?: s.chain?.degraded?.joinToString("；"),
         calculationTime = calcTime,
         why = buildWhy(s),
     )
@@ -147,8 +160,9 @@ object LocalPicks {
         val regime = runCatching {
             val closes = IndexDaily.closes(indexCode)
             if (closes.size < 21) null else RegimeGate.judge(closes)
-        }.getOrNull()
-        val cloud = runCatching { CloudParams.fromCloud() }.getOrNull()
+        }.getOrElse { if (it is CancellationException) throw it; null }
+        val cloud = runCatching { CloudParams.fromCloud() }
+            .getOrElse { if (it is CancellationException) throw it; null }
         // 云端若已发布 gate 就用它（同一系数，避免两套），没发布才用端上自算。
         val gate = cloud?.regimeGate ?: regime?.gate ?: 1.0
         val label = when {
@@ -189,34 +203,36 @@ object LocalPicks {
         /** 同一板块最多几只；[MAX_PER_SECTOR] 为默认。 */
         maxPerSector: Int = MAX_PER_SECTOR,
     ): StructuredPickArtifact {
-        val usable = screened.filter { it.detailStatus == "ok" && it.centralScore != null }
-        // 跨引擎权重：云端 17 项里只有 8 项能在端上 12 引擎找到对应实现，其余不参与集成
-        // （见 [PickScoring.CLOUD_TO_LOCAL]），未对齐的键如实写进 metadata。
-        val aligned = PickScoring.alignWeights(cloud?.weights ?: emptyMap())
+        val calculatedAt = try { java.time.OffsetDateTime.parse(calcTime).toInstant().toEpochMilli() }
+            catch (_: Exception) { System.currentTimeMillis() }
+        val usable = screened.filter {
+            it.detailStatus == "ok" && it.canonicalScore?.isFinite() == true &&
+                it.snapshotStatus == "live" && Code.isMainBoard(it.code) &&
+                it.dataEvidence?.validAt(calculatedAt) == true
+        }
+        // 主链已做规格集成，旧12引擎权重不能再混入新评分。
+        val aligned = PickScoring.alignWeights(emptyMap())
         val weights = aligned.first
         val scored = PickScoring.score(
             rows = usable.map { s ->
                 PickScoring.Row(
                     code = s.code,
-                    central = s.centralScore,
+                    central = s.canonicalScore,
                     buyable = s.buyable,
                     pctChg = s.pctChg,
-                    engineScores = s.engine?.engines
-                        ?.mapNotNull { e -> e.score?.let { e.engine to it } }
-                        ?.toMap()
-                        ?: emptyMap(),
+                    engineScores = emptyMap(),
                     effective = s.effectiveScore,
                 )
             },
             weights = weights,
-            gate = gate,
+            // ChainResult 已过市况闸门，不能二次折价。
+            gate = 1.0,
             minScore = MIN_SCORE,
             maxChgPct = MAX_CHG_PCT,
         )
         val byCode = usable.associateBy { it.code }
         val scoredByCode = scored.associateBy { it.code }
-        // 达标用 gated（gate 折价后的终审分），排序用 rankScore（effective 也折价）。
-        // gate=1.0 且无权重时两者分别等于 centralScore / effectiveScore，与旧行为逐位一致。
+        // 包装层gate固定1.0；链路主评分已过闸门，排序偏移不改变达标门槛。
         fun rankOf(code: String): Double {
             val base = scoredByCode[code]?.rankScore ?: 0.0
             val hits = (poolHits[code] ?: 0).coerceAtMost(POOL_HIT_CAP)
@@ -231,7 +247,7 @@ object LocalPicks {
             .filter { it.qualified && it.code !in vetoedCodes }
             .mapNotNull { byCode[it.code] }
             .sortedByDescending { rankOf(it.code) }
-        val observed = usable
+        val observed = screened.filter { Code.isMainBoard(it.code) && (it.pctChg ?: Double.POSITIVE_INFINITY) < MAX_CHG_PCT }
             .filter { it.code !in qualified.map { q -> q.code }.toSet() }
             .sortedByDescending { rankOf(it.code) }
             .take(MAX_OBSERVED)
@@ -263,6 +279,8 @@ object LocalPicks {
 
         val metadata = buildMap<String, Any?> {
             put("session", session.key)
+            put("engineVersion", screened.mapNotNull { it.chain?.specVersion }.distinct().singleOrNull())
+            put("engineVersions", screened.mapNotNull { it.chain?.specVersion }.distinct())
             put("basis", session.basis)
             put("scanMode", scanMode)
             put("droppedLastBar", droppedLastBar)
@@ -276,9 +294,17 @@ object LocalPicks {
             put("sectorSkipped", sectorSkipped)
             put("riskVetoed", riskVetoed)
             put("source", "local")
-            put("gate", gate)
-            put("gateLabel", gateLabel ?: "gate 1.0（无指数数据，不折价）")
-            put("weightSource", cloud?.source ?: CloudParams.SOURCE_COLD_START)
+            put("gate", 1.0)
+            put("observedExternalGate", gate)
+            put("externalCloudWeightsApplied", false)
+            put("gateLabel", "链路内部已过市况闸门；包装层不二次折价")
+            put("observedExternalGateLabel", gateLabel)
+            put("evidenceGate", "EPS/DPS/reportPeriod/cnfin adjustment/source/expiry all required")
+            put("scoreSource", "EngineChain.canonicalScore (already regime-gated)")
+            put("legacyCentral", "旧口径仅供历史对照，不参与主评分")
+            put("chainDegraded", usable.associate { it.code to it.chain?.degraded.orEmpty() })
+            put("adjustment", "unverified：请求qfq不等于验证cnfin hfq_factor")
+            put("weightSource", usable.mapNotNull { it.chain?.weightsSource }.distinct())
             put("coldStart", cloud?.coldStart ?: true)
             put("weightApplied", weights.isNotEmpty())
             put("weightUnmapped", aligned.second)
@@ -317,8 +343,9 @@ object LocalPicks {
                         mapOf(
                             "code" to it.code,
                             "name" to it.name,
-                            "score" to it.centralScore,
+                            "score" to it.canonicalScore,
                             "snapshotStatus" to it.snapshotStatus,
+                            "reason" to (it.reason ?: it.riskFlag ?: "未满足推荐条件"),
                         )
                     },
                 )
@@ -329,7 +356,9 @@ object LocalPicks {
             val reason = when {
                 totalSnapshot == 0 -> "本地行情快照为空（接口不可达或非交易时段无返回），不编造推股。"
                 screened.isEmpty() -> "本地预筛命中 0 只，无候选可算。"
-                usable.isEmpty() -> "候选池 ${screened.size} 只，但 K 线不足 30 根，无法本地算指标。"
+                usable.isEmpty() -> "候选池 ${screened.size} 只，证据不足：" +
+                    screened.mapNotNull { it.reason?.replace("K线", "K 线") }.distinct().take(3).joinToString("；")
+                        .ifBlank { "多输入链路或EPS/DPS/报告期/同源复权/来源时效证据缺失" } + "，不编造推荐。"
                 else -> "本地深算 ${usable.size} 只，达标（评分≥${MIN_SCORE.toInt()} 且未涨停）0 只：" +
                     "弱市不凑数，下方观察名单仅作跟踪，建议轻仓或空仓。"
             }
@@ -341,9 +370,9 @@ object LocalPicks {
             return StructuredPickArtifact(
                 generatedAt = calcTime,
                 calculationTime = calcTime,
-                date = calcTime.take(10),
+                date = java.time.OffsetDateTime.parse(calcTime).atZoneSameInstant(AnalysisSessionPolicy.zone).toLocalDate().toString(),
                 session = session.key,
-                engine = "本地中枢引擎 · 12 引擎 / ${ExtendedIndicators.factorCount} 因子",
+                engine = "多输入链路 · K线/资金/盘口",
                 status = status,
                 reason = reason,
                 picks = emptyList(),
@@ -354,9 +383,9 @@ object LocalPicks {
         return StructuredPickArtifact(
             generatedAt = calcTime,
             calculationTime = calcTime,
-            date = calcTime.take(10),
+            date = java.time.OffsetDateTime.parse(calcTime).atZoneSameInstant(AnalysisSessionPolicy.zone).toLocalDate().toString(),
             session = session.key,
-            engine = "本地中枢引擎 · 12 引擎 / ${ExtendedIndicators.factorCount} 因子",
+            engine = "多输入链路 · K线/资金/盘口",
             status = "ok",
             reason = "本地深算 ${usable.size} 只，达标 ${qualified.size} 只，展示前 ${picks.size} 只。",
             picks = picks,
@@ -364,11 +393,16 @@ object LocalPicks {
         )
     }
 
-    /** 当前时段该出哪张卡：盘前/竞价 → 盘前推股；午间/下午 → 午盘推股。 */
+    /** 精确入口：09:00/11:30/15:00 CST边界，未知交易日不猜。 */
+    fun sessionAt(nowMs: Long, tradingDay: Boolean? = null): Session? =
+        AnalysisSessionPolicy.activeSession(nowMs, tradingDay)?.let { key -> Session.entries.firstOrNull { it.key == key } }
+
+    /** 旧Phase不能区分09:00前后；仅兼容既有调用，调度必须使用sessionAt/window。 */
+    @Deprecated("Use sessionAt(nowMs, verifiedTradingDay) for exact CST boundaries")
     fun sessionFor(phase: MarketHours.Phase): Session? = when (phase) {
-        MarketHours.Phase.PRE_OPEN, MarketHours.Phase.AUCTION_OPEN -> Session.PREMARKET
-        MarketHours.Phase.MORNING, MarketHours.Phase.LUNCH_BREAK -> Session.MORNING
-        MarketHours.Phase.AFTERNOON, MarketHours.Phase.CLOSING -> Session.MIDDAY
-        MarketHours.Phase.AFTER_HOURS, MarketHours.Phase.CLOSED_DAY -> null
+        MarketHours.Phase.PRE_OPEN, MarketHours.Phase.AUCTION_OPEN -> Session.MORNING
+        MarketHours.Phase.MORNING -> Session.MORNING
+        MarketHours.Phase.LUNCH_BREAK, MarketHours.Phase.AFTERNOON -> Session.MIDDAY
+        MarketHours.Phase.CLOSING, MarketHours.Phase.AFTER_HOURS, MarketHours.Phase.CLOSED_DAY -> Session.REALTIME
     }
 }

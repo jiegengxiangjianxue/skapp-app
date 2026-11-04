@@ -1,5 +1,7 @@
 package com.skapp.app.data
 
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -132,24 +134,24 @@ object IndexDaily {
      * 拉指数日 K。先腾讯后东财；两源都空则返回 null（调用方必须如实降级，
      * 不许拿 0 根或个股 K 线顶替）。
      */
-    suspend fun fetch(code: String = DEFAULT_INDEX, count: Int = 320): Result? {
+    suspend fun fetch(code: String = DEFAULT_INDEX, count: Int = 320): Result? = withContext(Dispatchers.IO) {
         val c = if (code.isBlank()) DEFAULT_INDEX else code
         val key = "$c:$count"
         val now = System.currentTimeMillis()
-        cache[key]?.let { (ts, hit) -> if (now - ts < CACHE_TTL_MS) return hit }
+        cache[key]?.let { (ts, hit) -> if (now - ts < CACHE_TTL_MS) return@withContext hit }
         val tx = runCatching { tencent(c, count) }.getOrDefault(emptyList())
         if (tx.size >= 2) {
             val r = Result(c, tx.sortedBy { it.date }, "腾讯 fqkline day（指数不复权）")
             cache[key] = now to r
-            return r
+            return@withContext r
         }
         val em = runCatching { eastmoney(c, count) }.getOrDefault(emptyList())
         if (em.size >= 2) {
             val r = Result(c, em.sortedBy { it.date }, "东财 push2his fqt=1（指数不复权）")
             cache[key] = now to r
-            return r
+            return@withContext r
         }
-        return null
+        null
     }
 
     /** 只要收盘序列（regime 判定输入）。 */

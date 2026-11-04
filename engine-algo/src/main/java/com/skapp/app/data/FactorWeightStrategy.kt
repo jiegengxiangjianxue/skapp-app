@@ -1,7 +1,6 @@
 package com.skapp.app.data
 
 import kotlin.math.abs
-import kotlin.math.max
 import kotlin.math.min
 import org.json.JSONObject
 
@@ -565,25 +564,17 @@ object FactorWeightStrategy {
         return (bars.last().close - ll) / (hh - ll) * 100
     }
 
-    /** Wilder RSI */
-    private fun rsi(values: List<Double>, n: Int = 14): Double? {
-        if (values.size <= n) return null
-        var gain = 0.0
-        var loss = 0.0
-        for (i in 1..n) {
-            val d = values[i] - values[i - 1]
-            if (d >= 0) gain += d else loss -= d
-        }
-        var ag = gain / n
-        var al = loss / n
-        for (i in n + 1 until values.size) {
-            val d = values[i] - values[i - 1]
-            ag = (ag * (n - 1) + max(d, 0.0)) / n
-            al = (al * (n - 1) + max(-d, 0.0)) / n
-        }
-        if (ag + al <= 0) return 50.0
-        return 100 - 100 / (1 + ag / al.coerceAtLeast(1e-9))
-    }
+    /**
+     * Wilder RSI：委托 [CanonicalIndicators.rsi]（与推股主链同口径）。
+     *
+     * 旧实现在全平/无跌序列上返 50.0（中性），而 Canonical 返 100.0（超买），
+     * 同一根 K 线两处判读相反。统一按 Canonical 口径，只取末值。
+     *
+     * `internal` 而非 `private`：供 [IndicatorSingleSourceTest] 直接比对，
+     * 防止以后再被手写副本替掉。
+     */
+    internal fun rsi(values: List<Double>, n: Int = 14): Double? =
+        CanonicalIndicators.rsi(values, n).lastOrNull()
 
     /** MACD(12,26,9) → (DIF, DEA) */
     private fun macd(bars: List<KBar>): Pair<Double?, Double?>? {

@@ -104,4 +104,35 @@ class NewsCalcResolveTest {
         assertEquals("no_stock", out[0].status)
         assertTrue(out[0].reasoning.any { it.startsWith("判定") }, "没有个股也要给出文字层面的判定与依据")
     }
+
+    @Test
+    fun `否认减持与风险改善不误判利空`() {
+        for (text in listOf("公司否认减持计划", "风险下降", "亏损收窄")) {
+            val senti = NewsCalcEngine.sentiment(text)
+            assertTrue(senti.neg.isEmpty(), text)
+            assertTrue(NewsCalcEngine.verdictOf(senti.senti, senti.hits, text, null) != "利空", text)
+        }
+    }
+
+    @Test
+    fun `未否定立案风险仍优先`() {
+        val text = "公司否认减持计划，但被立案调查，同时签约大额订单"
+        val senti = NewsCalcEngine.sentiment(text)
+        assertTrue("减持" !in senti.neg)
+        assertTrue("立案" in senti.neg)
+        assertEquals("利空", NewsCalcEngine.verdictOf(senti.senti, senti.hits, text, null))
+    }
+
+    @Test
+    fun `多代码去重保留`() {
+        assertEquals(listOf("600519", "000001", "002131"),
+            NewsCalcEngine.resolveStocks("600519、000001、002131及600519", emptyList()))
+    }
+
+    @Test
+    fun `混合语境保留双向理由`() = runBlocking {
+        val result = NewsCalcEngine.compute(listOf(mapOf("title" to "行业订单增长但利润下滑")), emptyList()).single()
+        assertTrue(!result.positiveReason.isNullOrBlank())
+        assertTrue(!result.negativeReason.isNullOrBlank())
+    }
 }

@@ -148,7 +148,7 @@ object CloudFeed {
         if (!force) {
             synchronized(cache) {
                 cache[doc]?.let { e ->
-                    if (e.expiresAt > now()) return e.doc.copy(fromCache = true)
+                    if (e.expiresAt > now()) return cached(e.doc)
                 }
             }
         }
@@ -158,11 +158,16 @@ object CloudFeed {
         } else {
             // 拉失败时退回旧缓存（哪怕过期），让 UI 还能显示上次的数据并标陈旧
             synchronized(cache) { cache[doc] }?.let { old ->
-                return old.doc.copy(fromCache = true, error = fetched.error)
+                return cached(old.doc).copy(error = fetched.error)
             }
         }
         return fetched
     }
+
+    private fun cached(doc: CloudDoc): CloudDoc = doc.copy(
+        fromCache = true,
+        ageHours = doc.ageHours?.let { it + maxOf(0L, now() - doc.fetchedAt) / 3_600_000.0 },
+    )
 
     /** 判断类拒供判定（纯函数，[load] 与测试共用；不触网）。 */
     internal fun shouldRefuseJudgement(doc: Doc, allowJudgement: Boolean): Boolean =
@@ -181,28 +186,28 @@ object CloudFeed {
     const val ERROR_JUDGEMENT_REFUSED = "judgement-refused：端上自算，仅对照面板可读"
 
     private fun fetch(doc: Doc): CloudDoc {
-        val at = now()
         val probe = Http.probe("$BASE/${doc.file}", timeoutMs = TIMEOUT)
+        val at = now()
         if (!probe.ok) {
             // 保留具体原因：连接层失败给类名，HTTP 失败给状态码，诊断页才分得清「没网」与「404」
             return CloudDoc(doc, null, at, null, error = probe.error ?: "HTTP ${probe.code}")
         }
         return try {
             val json = JSONObject(probe.text)
-            CloudDoc(doc, json, at, ageHoursOf(json))
+            CloudDoc(doc, json, at, ageHoursOf(json, at))
         } catch (e: Exception) {
             CloudDoc(doc, null, at, null, error = e.message ?: e.javaClass.simpleName)
         }
     }
 
     /** 各文件的 ts 字段格式不一致，逐个试；都失败返回 null（宁可不判新鲜，也不假定新鲜）。 */
-    private fun ageHoursOf(json: JSONObject): Double? {
+    private fun ageHoursOf(json: JSONObject, at: Long): Double? {
         val raw = json.optString("ts").takeIf { it.isNotBlank() }
             ?: json.optString("recorded_at").takeIf { it.isNotBlank() }
             ?: json.optString("generated_at").takeIf { it.isNotBlank() }
             ?: return null
         val ms = parseStamp(raw) ?: return null
-        val diff = now() - ms
+        val diff = at - ms
         return if (diff < 0) 0.0 else diff / 3_600_000.0
     }
 

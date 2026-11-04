@@ -1,5 +1,6 @@
 package com.skapp.app.data
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -43,6 +44,7 @@ data class NewsCalc(
     val note: String? = null,
     /** 分析思路：逐行说明识股、判定依据、行情与缺口，界面按行展示 */
     val reasoning: List<String> = emptyList(),
+    val directCodes: List<String> = emptyList(),
 )
 
 data class NewsStockCalc(
@@ -74,7 +76,7 @@ private val NEG_WORDS = listOf(
     "利空", "下滑", "下降", "亏损", "下跌", "破发", "跌停", "处罚", "违规", "退市",
     "减持", "解禁", "下调", "风险", "爆雷", "造假", "问询", "停产", "裁员", "疲软",
     "预亏", "首亏", "计提", "商誉减值", "诉讼", "冻结", "承压", "破净", "退市风险",
-    "miss", "downgrade",
+    "立案", "风险警示", "破产", "终止", "miss", "downgrade",
 )
 
 private val TRUE_POS_WORDS = listOf(
@@ -100,6 +102,14 @@ object NewsCalcEngine {
 
     private const val INSUFFICIENT = "insufficient"
 
+    private inline fun <T> cancellable(block: () -> T): Result<T> = try {
+        Result.success(block())
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        Result.failure(e)
+    }
+
     /** 数据层的 "insufficient" 是「没算」占位符，不是结论，不能当 verdict/direction 覆盖本地判定。 */
     private fun Map<String, Any?>.meaningful(key: String): String? =
         this[key]?.toString()?.trim()?.takeIf { it.isNotEmpty() && it != INSUFFICIENT }
@@ -110,10 +120,9 @@ object NewsCalcEngine {
      */
     fun verdictDetailed(senti: String, hits: List<String>, title: String,
                         maxPct: Double?): Pair<String, String> {
-        val t = title.lowercase()
-        val risk = (hits.filter { h -> RISK_NEG_WORDS.any { it.equals(h, ignoreCase = true) } } +
-            RISK_NEG_WORDS.filter { w -> t.contains(w.lowercase()) && hits.none { it.equals(w, true) } })
-            .distinct()
+        // 风险也必须经过语境判断，不能从原文重新捞回已否定的词。
+        val contextual = sentiment(title)
+        val risk = contextual.neg.filter { h -> RISK_NEG_WORDS.any { it.equals(h, true) } }
         if (risk.isNotEmpty()) return "利空" to "命中风险事件词「${risk.joinToString("、")}」"
         if (senti == "neg") {
             return "利空" to if (hits.isNotEmpty()) "命中偏空词「${hits.joinToString("、")}」" else "规则判定偏空"
@@ -122,7 +131,7 @@ object NewsCalcEngine {
             return "中性" to if (hits.isEmpty()) "未见多空词，按中性处理"
             else "多空词同时出现（「${hits.joinToString("、")}」），净方向不明"
         }
-        val solid = TRUE_POS_WORDS.filter { t.contains(it.lowercase()) }
+        val solid = TRUE_POS_WORDS.filter { it in contextual.pos }
         if (maxPct != null && maxPct >= 8.0) {
             return "利好·但标的已大涨${
                 "%.1f".format(maxPct)
@@ -137,10 +146,26 @@ object NewsCalcEngine {
                   maxPct: Double?): String =
         verdictDetailed(senti, hits, title, maxPct).first
 
+    private val improvements = listOf("风险下降", "风险降低", "风险解除", "亏损收窄", "亏损减少", "减亏")
+    private val clauseBreak = Regex("[，,。；;！!？?\\n]|但是|但|然而|不过")
+    private val denial = Regex("(?:否认|否决|并无|没有|不存在|不涉及|未有|未|无|不)(?:[^，,。；;！!？?]{0,12})$")
+
+    private fun activeWord(text: String, word: String): Boolean =
+        clauseBreak.split(text).any { clause ->
+            Regex(Regex.escape(word), RegexOption.IGNORE_CASE).findAll(clause).any { hit ->
+                val before = clause.substring(0, hit.range.first)
+                val after = clause.substring(hit.range.last + 1)
+                !denial.containsMatchIn(before) &&
+                    !Regex("^(?:计划)?(?:不属实|不存在|未发生|已取消|已终止|系谣言)").containsMatchIn(after)
+            }
+        }
+
     fun sentiment(text: String): NewsSentiment {
         val t = text.lowercase()
-        val pos = POS_WORDS.filter { t.contains(it.lowercase()) }
-        val neg = NEG_WORDS.filter { t.contains(it.lowercase()) }
+        val improved = improvements.filter { t.contains(it) }
+        val clean = improved.fold(t) { acc, phrase -> acc.replace(phrase, " ") }
+        val pos = (POS_WORDS.filter { activeWord(clean, it.lowercase()) } + improved).distinct()
+        val neg = NEG_WORDS.filter { activeWord(clean, it.lowercase()) }
         val senti = when {
             pos.size > neg.size -> "pos"
             neg.size > pos.size -> "neg"
@@ -165,8 +190,8 @@ object NewsCalcEngine {
         // 而 Code.normalize 会把 4~5 位数字 padStart 成 6 位——「2026 年」变成 002026，
         // 于是一条与股票无关的快讯被凭空挂上一只票的实时行情（编造关联）。
         CODE_RE.findAll(title).forEach { m -> Code.normalize(m.value)?.let { hits.add(it) } }
-        // 代码优先：一条快讯出现多个代码时只认第一个，避免同一条挂上两只无关票
-        if (hits.isNotEmpty()) return hits.take(1).toList()
+        // 显式代码优先，去重后最多12只，不能漏掉同条新闻的第二只。
+        if (hits.isNotEmpty()) return hits.take(12).toList()
         val lowered = title.lowercase()
         symbols.asSequence()
             // 跨模块 public 属性无法智能转换，先取局部值（与 AskEngine 同构，待合并）
@@ -175,8 +200,8 @@ object NewsCalcEngine {
             .forEach { (entry, name) ->
                 if (title.contains(name, ignoreCase = true)) Code.normalize(entry.code)?.let { hits.add(it) }
             }
-        // 3 只上限：再多就不是「这条消息关联的个股」，多挂票会稀释可信度
-        return hits.take(3).toList()
+        // 名称路径与显式代码使用相同上限。
+        return hits.take(12).toList()
     }
 
     /**
@@ -205,6 +230,8 @@ object NewsCalcEngine {
         boards: List<Pair<String, Double?>> = emptyList(),
         boardMembers: Map<String, List<String>> = emptyMap(),
     ): List<NewsCalc> = coroutineScope {
+        val parameters by lazy { async(Dispatchers.IO) { CentralAnalysis.loadParameters() } }
+        val index by lazy { async(Dispatchers.IO) { IndexDaily.fetch() } }
         items.map { item ->
             async(Dispatchers.IO) {
                 val title = (item["title"] ?: item["digest"])?.toString() ?: ""
@@ -227,9 +254,9 @@ object NewsCalcEngine {
                     else -> emptyList()
                 }
                 val localPositiveReason = item["positive_reason"]?.toString()
-                    ?: if (senti.senti == "pos" && hits.isNotEmpty()) "消息命中偏多词：${hits.joinToString("、")}" else null
+                    ?: if (senti.pos.isNotEmpty()) "消息偏多证据：${senti.pos.joinToString("、")}" else null
                 val localNegativeReason = item["negative_reason"]?.toString()
-                    ?: if (senti.senti == "neg" && hits.isNotEmpty()) "消息命中偏空词：${hits.joinToString("、")}" else null
+                    ?: if (senti.neg.isNotEmpty()) "消息偏空证据：${senti.neg.joinToString("、")}" else null
                 val storedCodes = (item["codes"] as? List<*>)?.mapNotNull { value ->
                     when (value) {
                         is Map<*, *> -> (value["code"] ?: value["symbol"] ?: value["stock_code"])?.toString()
@@ -267,6 +294,7 @@ object NewsCalcEngine {
                         .filter { it.length == 6 }
                         .distinct()
                 }
+                val directCodes = resolveStocks(analysisText, symbols).map { Code.digits6(it) }.distinct()
                 val codesAll = (codes + boardCodes).distinct()
                 val nameOf = { code: String ->
                     symbols.firstOrNull { Code.normalize(it.code) == code }?.name
@@ -275,7 +303,7 @@ object NewsCalcEngine {
                 // 代码表与候选代码都为空：识股彻底失效，必须说清原因，
                 // 否则界面只显示「未提及具体股票」，用户会误以为消息里真没股票。
                 if (symbols.isEmpty() && codesAll.isEmpty()) {
-                    val (verdict, why) = verdictDetailed(senti.senti, hits, title, null)
+                    val (verdict, why) = verdictDetailed(senti.senti, hits, analysisText, null)
                     val verdictLine = if (storedVerdict != null) "判定（数据层）：$storedVerdict"
                     else "判定：$verdict —— $why"
                     return@async NewsCalc(
@@ -290,7 +318,7 @@ object NewsCalcEngine {
                         boardChg = boardChg,
                         boardMomentum = boardMomentum,
                         verdict = storedVerdict ?: verdict,
-                        direction = storedDirection ?: senti.senti,
+                        direction = if (senti.neg.any { it in RISK_NEG_WORDS }) "neg" else storedDirection ?: senti.senti,
                         positiveReason = localPositiveReason,
                         negativeReason = localNegativeReason,
                         imageUrl = imageUrlOf(item),
@@ -308,7 +336,7 @@ object NewsCalcEngine {
                 }
 
                 if (codesAll.isEmpty()) {
-                    val (verdict, why) = verdictDetailed(senti.senti, hits, title, null)
+                    val (verdict, why) = verdictDetailed(senti.senti, hits, analysisText, null)
                     val verdictLine = if (storedVerdict != null) "判定（数据层）：$storedVerdict"
                     else "判定：$verdict —— $why"
                     return@async NewsCalc(
@@ -323,7 +351,7 @@ object NewsCalcEngine {
                         boardChg = boardChg,
                         boardMomentum = boardMomentum,
                         verdict = storedVerdict ?: verdict,
-                        direction = storedDirection ?: senti.senti,
+                        direction = if (senti.neg.any { it in RISK_NEG_WORDS }) "neg" else storedDirection ?: senti.senti,
                         positiveReason = localPositiveReason,
                         negativeReason = localNegativeReason,
                         imageUrl = imageUrlOf(item),
@@ -346,27 +374,29 @@ object NewsCalcEngine {
                 }
                 val stocks = codesAll.map { code ->
                     // 实时报价 + 本地引擎（不用云端快照）
-                    val q = runCatching { DataCache.quote(code) }.getOrNull()
-                    val bars = runCatching { DataCache.kline(code, "qfq", klineCount) }.getOrDefault(emptyList())
+                    val q = cancellable { DataCache.quote(code) }.getOrNull()
+                    val bars = cancellable { DataCache.kline(code, "qfq", klineCount) }.getOrDefault(emptyList())
                     val eng = if (bars.size >= 30) {
-                        runCatching { DataCache.engine(code, "qfq", bars) }.getOrNull()
+                        cancellable { DataCache.engine(code, "qfq", bars) }.getOrNull()
                     } else null
+                    val event = EngineChain.NewsEvidence(code, "$title:${item["source"]}", title,
+                        if (code !in directCodes) "neu" else if (senti.neg.isNotEmpty()) "neg" else storedDirection ?: senti.senti,
+                        localPositiveReason, localNegativeReason,
+                        CentralAnalysis.timeOf((item["updated"] ?: item["ctime"] ?: item["time"])?.toString()),
+                        (item["source_name"] ?: item["source"])?.toString())
+                    val chain = if (bars.size >= 30) CentralAnalysis.compute(code, bars,
+                        LiveMarket.lastSnapshot(), news = listOf(event), newsAvailable = true,
+                        index = index.await(), params = parameters.await()) else null
                     NewsStockCalc(
                         code = code,
                         name = q?.name ?: nameOf(code),
                         price = q?.price ?: bars.lastOrNull()?.close,
                         pctChg = q?.pctChg,
                         volRatio = (eng?.factors?.volRatio),
-                        localScore = eng?.centralScore ?: eng?.weightedComposite ?: eng?.composite,
-                        resonanceRatio = eng?.resonanceRatio,
-                        centralSummary = eng?.summary,
-                        signal = when {
-                            eng == null -> "insufficient"
-                            (eng.centralScore ?: eng.weightedComposite ?: eng.composite) == null -> "insufficient"
-                            (eng.centralScore ?: eng.weightedComposite ?: eng.composite)!! >= 65 -> "bullish"
-                            (eng.centralScore ?: eng.weightedComposite ?: eng.composite)!! <= 35 -> "bearish"
-                            else -> "neutral"
-                        },
+                        localScore = chain?.canonicalScore,
+                        resonanceRatio = chain?.canonical?.resonance,
+                        centralSummary = chain?.let { "规格 V${it.specVersion}；权重 ${it.weightsSource}；消息审核 ${it.news?.usable ?: 0} 条；${it.riskFlag?.let { risk -> "最终审核：$risk；" } ?: ""}${it.degraded.joinToString("；")}" },
+                        signal = if (chain?.riskFlag != null) "risk_review" else chain?.canonical?.signal ?: "insufficient",
                         topReasons = eng?.engines
                             ?.filter { it.score != null }
                             ?.sortedByDescending { it.score }
@@ -377,7 +407,7 @@ object NewsCalcEngine {
                     )
                 }
                 val maxPct = stocks.mapNotNull { it.pctChg }.maxOrNull()
-                val (verdict, verdictWhy) = verdictDetailed(senti.senti, hits, title, maxPct)
+                val (verdict, verdictWhy) = verdictDetailed(senti.senti, hits, analysisText, maxPct)
                 // 数据层给了判定就以它为准，理由行也按数据层口径写，避免「显示利好、理由写中性」
                 val verdictLine = if (storedVerdict != null) "判定（数据层）：$storedVerdict"
                 else "判定：$verdict —— $verdictWhy"
@@ -386,6 +416,7 @@ object NewsCalcEngine {
                     source = (item["source_name"] ?: item["source"])?.toString(),
                     ts = (item["updated"] ?: item["ctime"])?.toString(),
                     stocks = stocks,
+                    directCodes = directCodes,
                     sentiment = senti.senti,
                     sentimentHits = hits,
                     impactCodes = storedCodes,
@@ -394,7 +425,7 @@ object NewsCalcEngine {
                     boardChg = boardChg,
                     boardMomentum = boardMomentum,
                     verdict = storedVerdict ?: verdict,
-                    direction = storedDirection ?: senti.senti,
+                    direction = if (senti.neg.any { it in RISK_NEG_WORDS }) "neg" else storedDirection ?: senti.senti,
                     positiveReason = localPositiveReason,
                     negativeReason = localNegativeReason,
                     imageUrl = imageUrlOf(item),
@@ -415,7 +446,7 @@ object NewsCalcEngine {
                     },
                 )
             }
-        }.mapNotNull { runCatching { it.await() }.getOrNull() }
+        }.mapNotNull { cancellable { it.await() }.getOrNull() }
     }
 
     private fun imageUrlOf(item: Map<String, Any?>): String? {

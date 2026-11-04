@@ -146,7 +146,7 @@ object BookSignalEngine {
             LAYER_PATTERN to pattern,
         )
         val tags = (reversal + limit + flow + pattern).distinct()
-        val scored = scoreOf(tags)
+        val scored = scoreOf(layers)
 
         val reason = when {
             scored.first == null -> "各层皆无过检信号（不给分）"
@@ -170,28 +170,27 @@ object BookSignalEngine {
         )
     }
 
-    /**
-     * 标签 → 合成分。组合键优先（单独一个标签的信息量明显低于组合）。
-     *
-     * 返回 (score, exp5, 最佳标签)；无过检标签时 score 为 null。
-     */
-    private fun scoreOf(tags: List<String>): Triple<Double?, Double?, Calib?> {
-        val hits = ArrayList<Calib>()
-        // 组合键：标签两两拼接，与云端 signal_hub.layer_expectancy 的取键方式一致
-        for (i in tags.indices) {
-            for (j in i + 1 until tags.size) {
-                CALIB["${tags[i]} & ${tags[j]}"]?.let { hits += it }
-                CALIB["${tags[j]} & ${tags[i]}"]?.let { hits += it }
+    // 同层标签共享样本，不能按独立证据重复加权；与云端一样每层只取最佳净 t。
+    private fun scoreOf(layers: Map<String, List<String>>): Triple<Double?, Double?, Calib?> {
+        val valid = layers.values.mapNotNull { layerTags ->
+            val tags = layerTags.distinct()
+            val hits = ArrayList<Calib>()
+            for (i in tags.indices) {
+                for (j in i + 1 until tags.size) {
+                    CALIB["${tags[i]} & ${tags[j]}"]?.let { hits += it }
+                    CALIB["${tags[j]} & ${tags[i]}"]?.let { hits += it }
+                }
             }
+            for (t in tags) CALIB[t]?.let { hits += it }
+            hits.filter { it.n >= MIN_N && kotlin.math.abs(it.netT) >= MIN_T }
+                .maxByOrNull { kotlin.math.abs(it.netT) }
         }
-        for (t in tags) CALIB[t]?.let { hits += it }
-        val valid = hits.filter { it.n >= MIN_N && kotlin.math.abs(it.netT) >= MIN_T }
         if (valid.isEmpty()) return Triple(null, null, null)
 
         var num = 0.0
         var den = 0.0
         for (c in valid) {
-            val w = kotlin.math.min(kotlin.math.abs(c.netT), 4.0) / 4.0
+            val w = kotlin.math.round(kotlin.math.min(kotlin.math.abs(c.netT), 4.0) / 4.0 * 1000.0) / 1000.0
             num += c.netFwd5 * w
             den += w
         }
@@ -367,16 +366,13 @@ object BookSignalEngine {
     private const val PULLBACK_HI = 0.70
     private const val BREAK_LOOKBACK = 60
 
-    private fun atr(bars: List<KBar>, n: Int = 14): Double {
-        if (bars.size < n + 1) return 1e-9
-        var sum = 0.0
-        for (i in bars.size - n until bars.size) {
-            val b = bars[i]
-            val p = bars[i - 1]
-            sum += maxOf(b.high - b.low, kotlin.math.abs(b.high - p.close), kotlin.math.abs(b.low - p.close))
-        }
-        return (sum / n).takeIf { it > 0 } ?: 1e-9
-    }
+    /**
+     * ATR(n)：派 [ExtendedIndicators.atr]（Wilder 平滑），不足或为 0 时返回 1e-9 防除零。
+     *
+     * 旧实现是「末 n 根 TR 简单平均」，与全仓其余 ATR 口径不同。
+     */
+    internal fun atr(bars: List<KBar>, n: Int = 14): Double =
+        (ExtendedIndicators.atr(bars, n) ?: 1e-9).takeIf { it > 0 } ?: 1e-9
 
     private fun swingHighs(bars: List<KBar>, k: Int = SWING_K): List<Int> {
         val out = ArrayList<Int>()

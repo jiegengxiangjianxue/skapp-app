@@ -19,6 +19,10 @@ object IntradayPicks {
     ): JSONObject = JSONObject().apply {
         put("ts", ts)
         put("session", session)
+        put("schemaVersion", "analysis-archive-1")
+        artifact.metadata["engineVersion"]?.let { put("version", it) }
+        put("dataAsOf", artifact.metadata["snapshotAt"])
+        put("scoreSource", artifact.metadata["scoreSource"] ?: "unknown")
         put("status", artifact.status)
         artifact.reason?.let { put("reason", it) }
         artifact.engine?.let { put("engine", it) }

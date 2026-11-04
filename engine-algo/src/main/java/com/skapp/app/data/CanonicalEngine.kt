@@ -71,17 +71,20 @@ object CanonicalEngine {
         // 约定行为（与 engine_v5 的 w.get(ind, 1.0) 对齐），但权重文件少一票与
         // 「这一票本来就该权 1.0」看起来一样，得记下是哪几票。
         val missingWeights = ArrayList<String>()
-        for (v in votes) {
+        val activeVotes = votes.filter { (w[it.indicator] ?: 1.0).let { weight -> weight.isFinite() && weight > 0.0 } }
+        for (v in activeVotes) {
             val declared = w[v.indicator]
             if (declared == null) missingWeights += v.indicator
             val weight = declared ?: 1.0
+            if (!weight.isFinite() || weight <= 0.0) continue
             num += weight * v.vote * v.strength
             den += weight
             if (v.vote > 0) bull++ else if (v.vote < 0) bear++
         }
         val directional = bull + bear
         val resonance = if (directional > 0) max(bull, bear).toDouble() / directional else 0.0
-        val base = if (den != 0.0) num / den else 0.0
+        if (den <= 0.0) return null
+        val base = num / den
         val score = CanonicalIndicators.pyRound(agg.score(base, resonance), agg.roundScore)
         return Result(
             code = code,
@@ -90,8 +93,8 @@ object CanonicalEngine {
             resonance = CanonicalIndicators.pyRound(resonance, agg.roundResonance),
             bull = bull,
             bear = bear,
-            neutral = votes.size - directional,
-            votes = votes,
+            neutral = activeVotes.size - directional,
+            votes = activeVotes,
             signal = agg.signalOf(score),
             specVersion = spec.specVersion,
             missing = missingWeights,

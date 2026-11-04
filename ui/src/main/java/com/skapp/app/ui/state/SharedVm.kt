@@ -23,6 +23,8 @@ internal class SharedVm(
     val scope: CoroutineScope,
 ) {
     /** 代码→名称（DbTables.stockNames 结果），搜索与详情名称兜底用 */
+    val sections = SectionLoader(flow, scope)
+
     var stockNames: Map<String, String> = emptyMap()
 
     /** 最近一次搜索词：names/symbols 异步到位后要按它重放一次 search */

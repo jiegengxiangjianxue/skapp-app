@@ -42,6 +42,7 @@ data class EngineSpec(
     val deviceEngines: List<String>,
     val cloudOnlyEngines: List<String>,
     val pipeline: List<PipelineStage>,
+    val stateParams: Map<String, Map<String, Double>> = emptyMap(),
 ) {
     private val byId: Map<String, VoteEngine> = engines.associateBy { it.id }
 
@@ -53,6 +54,9 @@ data class EngineSpec(
 
     fun intParam(engineId: String, key: String, default: Int): Int =
         param(engineId, key, default.toDouble()).toInt()
+
+    fun stateParam(engineId: String, key: String, default: Double): Double =
+        stateParams[engineId]?.get(key)?.takeIf { it.isFinite() } ?: default
 
     /** 该票在端上是否可算（云端独有的外部票不算）。 */
     fun deviceCanVote(engineId: String): Boolean = deviceEngines.contains(engineId)
@@ -124,7 +128,7 @@ object EngineSpecLoader {
     const val RESOURCE = "/engine_spec.json"
 
     /** 编译进资源包的那份规格版本；与云端产物比对用。 */
-    const val BUNDLED_VERSION = "3.2.1"
+    const val BUNDLED_VERSION = "3.2.2"
 
     class Loaded(val spec: EngineSpec, val drift: Boolean, val reason: String)
 
@@ -249,6 +253,15 @@ object EngineSpecLoader {
                 (0 until a.length()).map { a.optString(it, "") }
             } ?: emptyList(),
             pipeline = pipeline,
+            stateParams = root.optJSONArray("state_engines")?.let { array ->
+                (0 until array.length()).mapNotNull { i ->
+                    val engine = array.optJSONObject(i) ?: return@mapNotNull null
+                    val params = engine.optJSONObject("params") ?: return@mapNotNull null
+                    engine.optString("id") to params.keys().asSequence().mapNotNull { key ->
+                        params.optDouble(key, Double.NaN).takeIf { it.isFinite() }?.let { key to it }
+                    }.toMap()
+                }.toMap()
+            } ?: emptyMap(),
         )
     }
 

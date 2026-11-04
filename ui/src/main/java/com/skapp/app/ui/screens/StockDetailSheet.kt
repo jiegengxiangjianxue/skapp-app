@@ -367,7 +367,7 @@ fun StockDetailSheet(vm: SkappViewModel, state: UiState) {
                 }
                 Text("中枢总结：${state.centralEngineSummary?.takeIf { it.isNotBlank() } ?: "暂无数据：中枢总结未返回。"}",
                     style = MaterialTheme.typography.bodySmall)
-                Text("族级共振：${state.centralEngineResonance?.let { String.format("%.0f%%", it * 100) } ?: "insufficient"}（趋势/动量/通道/量能/波动/位置 6 族，同族不重复计票）· 状态：${state.centralEngineStatus}",
+                Text("规格投票共振：${state.centralEngineResonance?.let { String.format("%.0f%%", it * 100) } ?: "insufficient"}（按实际启用规格票计算；不是旧12引擎族级共振）· 状态：${state.centralEngineStatus}",
                     style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
                 // 形态标签（#1 日本蜡烛图）：引擎只认锤子/倒锤子，无命中时整行不出现，不占位
                 val patternTags = remember(d.code, state.kline.size) {
@@ -387,7 +387,7 @@ fun StockDetailSheet(vm: SkappViewModel, state: UiState) {
                     )
                 }
                 Text(
-                    "基于 ${eng?.barsUsed ?: 0} 根日 K，有效引擎 ${eng?.nValid ?: 0}/${eng?.engines?.size ?: 0}",
+                    "技术对照：基于 ${eng?.barsUsed ?: 0} 根日 K，旧12引擎有效 ${eng?.nValid ?: 0}/${eng?.engines?.size ?: 0}；不代表资金、消息或市况输入完整",
                     style = MaterialTheme.typography.bodySmall,
                     color = SkColors.textSecondary,
                 )

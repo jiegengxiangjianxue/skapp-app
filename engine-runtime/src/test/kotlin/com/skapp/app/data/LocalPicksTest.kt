@@ -34,6 +34,7 @@ class LocalPicksTest {
         mv = 5.0e10,
         engine = null,
         centralScore = score,
+        canonicalScore = score,
         resonanceRatio = 0.6,
         centralSummary = null,
         detailStatus = status,
@@ -41,6 +42,7 @@ class LocalPicksTest {
         buyable = buyable,
         sector = sector,
         riskFlag = riskFlag,
+        dataEvidence = LocalScreener.DataEvidence(1.0, 0.1, "2026-06-30", "cnfin:hfq_factor:fixture", "synthetic_fixture", 1L, Long.MAX_VALUE),
     )
 
     @Test
@@ -132,15 +134,15 @@ class LocalPicksTest {
 
     @Test
     fun `会话归属按交易时段划分`() {
-        assertEquals(LocalPicks.Session.PREMARKET, LocalPicks.sessionFor(MarketHours.Phase.PRE_OPEN))
-        assertEquals(LocalPicks.Session.PREMARKET, LocalPicks.sessionFor(MarketHours.Phase.AUCTION_OPEN))
+        assertEquals(LocalPicks.Session.MORNING, LocalPicks.sessionFor(MarketHours.Phase.PRE_OPEN))
+        assertEquals(LocalPicks.Session.MORNING, LocalPicks.sessionFor(MarketHours.Phase.AUCTION_OPEN))
         assertEquals(LocalPicks.Session.MORNING, LocalPicks.sessionFor(MarketHours.Phase.MORNING))
-        assertEquals(LocalPicks.Session.MORNING, LocalPicks.sessionFor(MarketHours.Phase.LUNCH_BREAK))
+        assertEquals(LocalPicks.Session.MIDDAY, LocalPicks.sessionFor(MarketHours.Phase.LUNCH_BREAK))
         assertEquals(LocalPicks.Session.MIDDAY, LocalPicks.sessionFor(MarketHours.Phase.AFTERNOON))
-        assertEquals(LocalPicks.Session.MIDDAY, LocalPicks.sessionFor(MarketHours.Phase.CLOSING))
-        // 收盘后/休市不生成新卡（存档仍可看）
-        assertEquals(null, LocalPicks.sessionFor(MarketHours.Phase.AFTER_HOURS))
-        assertEquals(null, LocalPicks.sessionFor(MarketHours.Phase.CLOSED_DAY))
+        assertEquals(LocalPicks.Session.REALTIME, LocalPicks.sessionFor(MarketHours.Phase.CLOSING))
+        // 收盘后/休市进入独立实时会话，不复用早午盘。
+        assertEquals(LocalPicks.Session.REALTIME, LocalPicks.sessionFor(MarketHours.Phase.AFTER_HOURS))
+        assertEquals(LocalPicks.Session.REALTIME, LocalPicks.sessionFor(MarketHours.Phase.CLOSED_DAY))
     }
 
     @Test
@@ -258,5 +260,35 @@ class LocalPicksTest {
         assertEquals(listOf("600002"), artifact.picks.map { it.code })
         val vetoed = artifact.metadata["riskVetoed"] as List<*>
         assertTrue(vetoed.any { it.toString().contains("600001") })
+    }
+
+    @Test
+    fun `旧中枢高分不能填补缺失链路`() {
+        val result = LocalPicks.build(listOf(row("600001", 99.0).copy(canonicalScore = null)),
+            LocalPicks.Session.REALTIME, "2026-11-02T20:00:00+08:00")
+        assertTrue(result.picks.isEmpty())
+        assertEquals("insufficient", result.status)
+    }
+
+    @Test
+    fun `链路分优先且不再过第二次市况闸门`() {
+        val result = LocalPicks.build(listOf(row("600001", 1.0).copy(canonicalScore = 66.0)),
+            LocalPicks.Session.REALTIME, "2026-11-02T20:00:00+08:00", gate = 0.5)
+        assertEquals(66.0, result.picks.single().score)
+        assertEquals("realtime", result.session)
+    }
+
+    @Test
+    fun `旧快照与非主板不能推荐`() {
+        val result = LocalPicks.build(listOf(row("600001", 99.0).copy(snapshotStatus = "stale"), row("300001", 99.0)),
+            LocalPicks.Session.MIDDAY, "2026-11-02T13:00:00+08:00")
+        assertTrue(result.picks.isEmpty())
+    }
+
+    @Test fun `财报复权来源证据缺失不得进入推荐`() {
+        val result = LocalPicks.build(listOf(row("600001", 99.0).copy(dataEvidence = null)),
+            LocalPicks.Session.REALTIME, "2026-11-02T20:00:00+08:00")
+        assertTrue(result.picks.isEmpty())
+        assertEquals("insufficient", result.status)
     }
 }

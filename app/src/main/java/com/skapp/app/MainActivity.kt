@@ -5,24 +5,16 @@ import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.lightColorScheme
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.skapp.app.ui.MainScreen
 import com.skapp.app.ui.SkappViewModel
-import com.skapp.app.ui.screens.Session
-import com.skapp.app.ui.screens.SessionDetailScreen
-import com.skapp.app.ui.screens.SessionListScreen
 import com.skapp.app.ui.theme.SkColors
 
 private val SkappLightColors = lightColorScheme(
@@ -43,12 +35,6 @@ private val SkappLightColors = lightColorScheme(
     errorContainer = SkColors.errorContainer,
     onErrorContainer = SkColors.errorText,
 )
-
-/** 启动页状态机：会话列表 → 会话详情 / 主界面。 */
-private enum class StartPage { LIST, MAIN, DETAIL }
-
-/** 主界面默认 tab；会话"今日实时看盘" 进 MAIN 时预选今日看盘。 */
-private var initialMainTab: Int = 0  // 0 = DASHBOARD（默认）
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -76,37 +62,9 @@ class MainActivity : ComponentActivity() {
                     LaunchedEffect(Unit) {
                         vm.loadSavedToken(applicationContext)
                         vm.load()
-                        vm.warmUpAll()
                     }
 
-                    // 启动顺序：先会话列表页 → 选择会话进会话页 / 新建进主界面
-                    var page by remember { mutableStateOf(StartPage.LIST) }
-                    var currentSession by remember { mutableStateOf<Session?>(null) }
-
-                    // 会话详情页的返回键 → 回会话列表
-                    BackHandler(enabled = page == StartPage.DETAIL) {
-                        page = StartPage.LIST
-                    }
-
-                    when (page) {
-                        StartPage.LIST -> SessionListScreen(
-                            onNewSession = {
-                                initialMainTab = 1  // DASHBOARD
-                                page = StartPage.MAIN
-                            },
-                            onSelectSession = { session ->
-                                if (session.id == "today_board") {
-                                    initialMainTab = 0  // TODAY_BOARD
-                                    page = StartPage.MAIN
-                                } else {
-                                    currentSession = session
-                                    page = StartPage.DETAIL
-                                }
-                            },
-                        )
-                        StartPage.MAIN -> MainScreen(vm, initialTab = initialMainTab)
-                        StartPage.DETAIL -> currentSession?.let { SessionDetailScreen(it) }
-                    }
+                    MainScreen(vm)
                 }
             }
         }
