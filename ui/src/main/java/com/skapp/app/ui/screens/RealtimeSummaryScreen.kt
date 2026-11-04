@@ -40,7 +40,7 @@ fun RealtimeSummaryScreen(vm: SkappViewModel, state: UiState) {
         item {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
-                    Text("市场复盘", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    Text("实时总结 · 市场复盘", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                     Text("${state.marketPhase} · ${state.quoteTs ?: "时点暂无"}", style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
                 }
                 if (state.summaryRefreshing) CircularProgressIndicator(modifier = Modifier.padding(8.dp), strokeWidth = 2.dp)

@@ -564,17 +564,11 @@ object FactorWeightStrategy {
         return (bars.last().close - ll) / (hh - ll) * 100
     }
 
-    /**
-     * Wilder RSI：委托 [CanonicalIndicators.rsi]（与推股主链同口径）。
-     *
-     * 旧实现在全平/无跌序列上返 50.0（中性），而 Canonical 返 100.0（超买），
-     * 同一根 K 线两处判读相反。统一按 Canonical 口径，只取末值。
-     *
-     * `internal` 而非 `private`：供 [IndicatorSingleSourceTest] 直接比对，
-     * 防止以后再被手写副本替掉。
-     */
-    internal fun rsi(values: List<Double>, n: Int = 14): Double? =
-        CanonicalIndicators.rsi(values, n).lastOrNull()
+    internal fun rsi(values: List<Double>, n: Int = 14): Double? {
+        val value = CanonicalIndicators.rsi(values, n).lastOrNull() ?: return null
+        // 因子票把 RSI > 55 判为看多；全平必须中性，不沿用云端的无跌幅=100 契约。
+        return if (values.all { it == values.first() }) 50.0 else value
+    }
 
     /** MACD(12,26,9) → (DIF, DEA) */
     private fun macd(bars: List<KBar>): Pair<Double?, Double?>? {

@@ -11,7 +11,7 @@ import kotlin.test.assertTrue
  * 背景：同一批指标曾经在四处各写一遍，公式分两派——
  *  - EMA 种子：`ExtendedIndicators` / `TrendForecast` 用「首值」，`CanonicalIndicators` 用「前 n 均值」；
  *  - ATR：`ExtendedIndicators` / `CanonicalIndicators` 用 Wilder，`LocalEngine` / `BookSignalEngine` 用「末 n 根简单平均」；
- *  - RSI 退化态：`FactorWeightStrategy` 返 50.0，`CanonicalIndicators` 返 100.0。
+ *  - RSI 全平序列：因子票保持 50.0 中性；Canonical 保留云端 100.0 契约。
  * 结果同一根 K 线在详情页与推股主链拿到不同波幅/不同指标读数。
  *
  * 收敛后：[ExtendedIndicators] 的基础指标一律委托 [CanonicalIndicators]；
@@ -102,12 +102,22 @@ class IndicatorSingleSourceTest {
     }
 
     @Test
-    fun `因子打分的 RSI 退化态与标准实现一致`() {
-        // 全平序列：旧实现返 50.0（中性），标准实现返 100.0（无跌幅=超买）
-        val flat = List(30) { 10.0 }
-        val expected = CanonicalIndicators.rsi(flat, 14).lastOrNull()
+    fun `因子打分的横盘 RSI 保持中性且与行情展示一致`() {
+        val flat = List(60) { 10.0 }
+        val flatBars = List(60) { bars.first().copy(close = 10.0) }
         val actual = FactorWeightStrategy.rsi(flat, 14)
-        assertEquals(expected!!, actual!!, "FactorWeightStrategy.rsi 退化态必须与标准实现一致")
-        assertEquals(100.0, actual, "全平序列的 RSI 应为 100.0（标准口径）")
+        assertEquals(50.0, actual, "横盘不应产生满强度看多票")
+        assertEquals(MarketDataClient.rsi(flatBars, 14), actual)
+    }
+
+    @Test
+    fun `因子打分的非横盘 RSI 仍委托标准实现`() {
+        for (values in listOf(closes, List(60) { 10.0 + it }, List(60) { 100.0 - it })) {
+            assertEquals(CanonicalIndicators.rsi(values, 14).lastOrNull(), FactorWeightStrategy.rsi(values, 14))
+        }
+        assertEquals(100.0, FactorWeightStrategy.rsi(List(60) { 10.0 + it }, 14))
+        assertEquals(0.0, FactorWeightStrategy.rsi(List(60) { 100.0 - it }, 14))
+        assertEquals(100.0, CanonicalIndicators.rsi(List(60) { 10.0 }, 14).lastOrNull())
+        assertEquals(null, FactorWeightStrategy.rsi(List(14) { 10.0 }, 14))
     }
 }
