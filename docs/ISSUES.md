@@ -10,6 +10,9 @@
 - 已发现并修复：此前云端 stocks/daily_series 三日资金适配只在脏树，未发布；本次隔离移植并先复现失败。历史数据来源/日期/有限值校验与元→万元换算保留，不补造缺日。
 - 未声称完成：族划分的统计独立性、真实收益提升、IC/ICIR/purged CV/容量冲击模型、真实持仓组合接线及真机网络性能。既有 FactorRankEngine/PortfolioRiskEngine 未擅自接成交易决策；缺真实输入与校准证据时不得以合成数据宣称这些研究目标达成。
 - 独立审查补修：决策卡 buy 必须通过财务证据/安全输入/行情时点/主板涨停/风险门禁；归档传递行情实际时点和来源，缺失明确 null，计算时间与行情时间分开。高分缺证据测试先红后绿。
+- 发布验收：App `8f45a890015ec7bec2288a369a4248f1fe144d83` 的 [android-build 41844803843](https://github.com/jiegengxiangjianxue/skapp-app/actions/runs/41844803843) 23/23 jobs成功，含新增Robolectric评分隔离测试与release。[v2.5.0-engine.2](https://github.com/jiegengxiangjianxue/skapp-app/releases/tag/v2.5.0-engine.2) 标签核对同提交；APK 18,371,228字节，SHA-256 `89e602df89c93b3acecc84ea918fb7a698ad7e4837cac21a0b2bd3bce6e358ac`，包名/版本/arm64-only/ZIP完整性与Java apksigner v2强验通过，未真机安装。
+- 云端 `050297bb320468d99de22fae0489e6741d384e02` 的 [engine-contract 41844783612](https://github.com/qwerzxcva/stocks-ai-view/actions/runs/41844783612)、manifest-heal、gitcode-sync、Pages全部成功；远端规格实读3.3.0/family_weighted_vote。
+- 研究输入实核：600519的6096条、002242的2626条基准因子逐日匹配CSV，8722条差异0，末日均2026-10-16；全市场合并因子表声明来源baostock，不可替代项目指定基准。证据 `tmpwork/p123-research-input-evidence.json`。这不构成全市场样本外、真实收益提升或容量验证。
 - 全库行情新鲜度审计与实际行情质量独立于构建结果；历史黄金向量重算只验证公式，不代表今日行情。
 
 ## 2026-11-04：2.5.0-engine.1 / vc45 发布修复
