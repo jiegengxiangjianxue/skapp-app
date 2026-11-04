@@ -92,6 +92,76 @@ class PortfolioRiskEngineTest {
     }
 
     @Test
+    fun disjointDatesCannotProduceCompletePortfolioRisk() {
+        val first = holding(closes = List(40) { 100.0 + it + (it % 3) * 3.0 })
+        val second = first.copy(code = "600001", bars = first.bars.map {
+            it.copy(date = LocalDate.parse(it.date).plusDays(100).toString())
+        })
+        val result = PortfolioRiskEngine.assess(listOf(first, second))
+        assertNull(result.volPct)
+        assertNull(result.maxDrawdownPct)
+        assertNull(result.avgCorr)
+        assertEquals("未知", result.level)
+        assertTrue(result.missing.any { it.contains("共同收益区间") })
+    }
+
+    @Test
+    fun sufficientCommonIntervalsMatchTheirOwnPortfolio() {
+        val closes = List(55) { 100.0 + it + (it % 3) * 3.0 }
+        val all = holding(closes = closes)
+        val first = all.copy(bars = all.bars.take(45))
+        val second = all.copy(code = "600001", bars = all.bars.drop(10).map {
+            it.copy(close = it.close * 2.0)
+        })
+        val expected = PortfolioRiskEngine.assess(listOf(all.copy(bars = all.bars.subList(10, 45))))
+        val result = PortfolioRiskEngine.assess(listOf(first, second))
+        assertEquals(1.0, assertNotNull(result.avgCorr), 1e-9)
+        assertEquals(assertNotNull(expected.volPct), assertNotNull(result.volPct), 1e-9)
+        assertEquals(assertNotNull(expected.maxDrawdownPct), assertNotNull(result.maxDrawdownPct), 1e-9)
+        assertTrue(result.missing.isEmpty())
+    }
+
+    @Test
+    fun missingDateDoesNotMatchCrossPeriodReturnToSingleDayReturn() {
+        val first = holding(closes = List(31) { 100.0 + it + (it % 3) * 3.0 })
+        val second = first.copy(code = "600001", bars = first.bars.filterIndexed { i, _ -> i != 15 })
+        val result = PortfolioRiskEngine.assess(listOf(first, second))
+        assertNull(result.volPct)
+        assertNull(result.maxDrawdownPct)
+        assertNull(result.avgCorr)
+        assertEquals("未知", result.level)
+        assertTrue(result.missing.any { it.contains("共同收益区间") })
+    }
+
+    @Test
+    fun duplicateDescendingAndInvalidDatesInvalidateWholePortfolio() {
+        val valid = holding(closes = List(40) { 100.0 + it + (it % 3) * 3.0 })
+        for (date in listOf(valid.bars[19].date, valid.bars[18].date, "2026-02-30", "2026-1-21", "")) {
+            val invalid = valid.copy(code = "600001", bars = valid.bars.mapIndexed { i, bar ->
+                if (i == 20) bar.copy(date = date) else bar
+            })
+            val result = PortfolioRiskEngine.assess(listOf(valid, invalid))
+            assertNull(result.volPct, "date=$date")
+            assertNull(result.maxDrawdownPct, "date=$date")
+            assertNull(result.avgCorr, "date=$date")
+            assertNull(result.maxPair, "date=$date")
+            assertEquals("未知", result.level, "date=$date")
+            assertTrue(result.missing.any { it.contains("600001") && it.contains("日期") })
+            assertTrue(result.advices.none { it.contains("未触发风险阈值") })
+        }
+    }
+
+    @Test
+    fun identicalDatesPreserveExistingPortfolioMath() {
+        val result = PortfolioRiskEngine.assess(listOf(holding(), holding(code = "600001")))
+        assertEquals(1.0, assertNotNull(result.avgCorr), 1e-9)
+        assertEquals(20.0, assertNotNull(result.maxDrawdownPct), 1e-9)
+        assertEquals(0.2 / kotlin.math.sqrt(29.0) * kotlin.math.sqrt(250.0) * 100.0,
+            assertNotNull(result.volPct), 1e-9)
+        assertTrue(result.missing.isEmpty())
+    }
+
+    @Test
     fun validPricesStillProduceFiniteRisk() {
         val closes = List(60) { i -> 100.0 + i + (i % 3) * 0.5 }
         val result = PortfolioRiskEngine.assess(listOf(holding(closes = closes)))

@@ -1,5 +1,22 @@
 # 用户问题追踪（每次交付必须更新完成状态）
 
+## 2026-11-04：剩余股票研究与篮子诊断 / 2.5.0-engine.3 vc47
+
+- 已纳入日期对齐修复：PortfolioRiskEngine 使用共同(startDate,endDate)收益区间，完整篮子任一成员失效返回未知/null，不把缺失成员剔除后重归一冒充完整持仓。
+- 已接线：LocalPicks 在推荐名单确定后实际调用 FactorRankEngine 与 PortfolioRiskEngine，追加 researchDiagnostics；PicksListScreen 展示“推荐篮子诊断 · 非真实持仓”和等权历史情景、覆盖、缺口、来源。诊断不改推荐分数、顺序、门槛、名单或仓位；缺bars/可信证据、错日或非法价格时不展示伪造风险数值。
+- 已补研究执行链：云端 scripts/research_evaluation.py 与 research-evaluation Actions 对固定批准的两份历史基准运行过去120bar信号、下一交易行开盘入场、22/60观察期回本(max high)及净收益、每边0/10/30bps假设成本敏感性；按日期分组purge与calendar embargo，固定规则验证分段不做训练拟合。新旧聚合均用固定等权，避免拿当前校准权重回测历史。
+- 基准准入：只允许指定代码与原始附件SHA256，保留每日期的 api/csv_legacy/cnfin 原始来源；不得把整份CSV谎称cnfin。未知来源、无效OHLC/因子/日期拒收且打断窗口，不混入baostock全表。原始CRLF按两文件精确.gitattributes保存字节与哈希。
+- IC使用每日横截面Spearman，默认至少20股；不足覆盖与零方差ICIR明确null。族内历史相关仅为诊断；成本假设不是实测滑点，未提供真实成交与实仓的容量/持仓结论保持insufficient。本研究不等于全市场、独立模型选择留出或实际组合绩效。
+- 本地已验：engine-core36、engine-net44、engine-algo230、engine-runtime178，共488项无失败；UI及新增Robolectric测试源码编译通过。Python16项回归、改动文件语法、Ruff、import与数据分层守卫通过。真实云端研究产物和本次release以随后核验记录为准。
+
+## 2026-11-04：后续整改 / 组合风控收益区间对齐（未发布）
+
+- 修复 `PortfolioRiskEngine.assess` 按序列末尾位置对齐而混算不同交易日期的问题；现在只对齐所有持仓起止日期均一致的收益区间，不将缺日跨期收益与单日收益混配，不填造缺失收益。
+- 当前计算窗口内日期必须为规范 ISO 日期且严格递增；任一持仓样本不足、日期/价格无效，或共同收益区间少于29个，完整组合返回 `null` / “未知”并说明缺口，不剔除失效持仓后冒充完整组合。
+- 新增5组日期回归：不相交日期、共同区间数值对齐、缺日跨期、重复/倒序/非法日期、同日期算术回归。修复前13项测试4项失败（`../logs/portfolio-risk-date-red.log:37–61`）；修复后13/13通过、0失败/错误/跳过，日志 `../logs/portfolio-risk-date-final.log`，XML `engine-algo/build/test-results/test/TEST-com.skapp.app.data.PortfolioRiskEngineTest.xml:2`。
+- 独立静态代码审查及证据复核未发现正确性阻断；主会话复核diff与XML，两个Kotlin文件词法检查通过（lexer-only，不替代编译）。Ruff模块缺失，本轮未安装、未运行全局Python闸门；没有改Python代码。
+- 仅修复组合风控及测试，未接入真实持仓或交易决策、未修改评分规格与版本、未提交/推送/发布。合成用例只证明日期对齐行为，不证明真实收益提升；全市场同口径cnfin因子、样本外IC/ICIR、purged CV及容量验证仍受此前数据缺口约束。
+
 ## 2026-11-04：P1–P3 持续整改 / 2.5.0-engine.2 vc46
 
 - P1 一致性：规格 3.3.0 双端按 weight_key→family 聚合，族内加权净值、族权取最大成员权重、族共振；重复指标 first-wins，非法票/权重拒收，中性族保留分母。旧 weighted_vote 有效输入回放保留。默认非校准权重逐键列入 default_weight_keys，不宣称校准或盈利改善。

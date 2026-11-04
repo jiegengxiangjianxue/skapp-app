@@ -276,6 +276,7 @@ object LocalPicks {
             selected.add(q)
         }
         val picks = selected.map { toSignal(it, calcTime, session) }
+        val diagnostics = researchDiagnostics(selected, calculatedAt, calcTime)
         val earlySession = session == Session.REALTIME || session == Session.MORNING
 
         // 横截面分位（口径同云端 rank_score.quantile_score）：只在**本轮深算池**内算，
@@ -285,6 +286,7 @@ object LocalPicks {
 
         val metadata = buildMap<String, Any?> {
             put("session", session.key)
+            put("researchDiagnostics", diagnostics)
             val snapshotTimes = selected.mapNotNull { it.snapshotAtMs }
             put("snapshotAt", snapshotTimes.minOrNull()?.takeIf { snapshotTimes.size == selected.size }
                 ?.let { java.time.Instant.ofEpochMilli(it).atZone(AnalysisSessionPolicy.zone).toOffsetDateTime().toString() })
@@ -415,6 +417,63 @@ object LocalPicks {
             reason = "本地深算 ${usable.size} 只，达标 ${qualified.size} 只，展示前 ${picks.size} 只。",
             picks = picks,
             metadata = metadata,
+        )
+    }
+
+    /** 只诊断已选名单；不能删掉缺数据成员后把剩余子集伪装成整个篮子。 */
+    private fun researchDiagnostics(
+        selected: List<LocalScreener.Screened>,
+        calculatedAt: Long,
+        calcTime: String,
+    ): Map<String, Any?> {
+        val today = java.time.Instant.ofEpochMilli(calculatedAt).atZone(AnalysisSessionPolicy.zone).toLocalDate()
+        val gaps = selected.mapNotNull { s ->
+            val dates = s.bars.map { runCatching { java.time.LocalDate.parse(it.date) }.getOrNull() }
+            val reason = when {
+                s.dataEvidence?.validAt(calculatedAt) != true -> "缺有效cnfin复权/来源证据"
+                s.bars.size < 30 -> "K线${s.bars.size}根，风险诊断需至少30根"
+                dates.indices.any { dates[it]?.toString() != s.bars[it].date || dates[it]!! > today } ||
+                    dates.zipWithNext().any { (a, b) -> a == null || b == null || a >= b } -> "K线日期无效、重复、乱序或晚于计算日"
+                s.bars.any { b ->
+                    listOf(b.open, b.close, b.high, b.low, b.vol).any { !it.isFinite() || it <= 0.0 } ||
+                        b.high < maxOf(b.open, b.close) || b.low > minOf(b.open, b.close)
+                } -> "K线OHLC或成交量无效"
+                else -> null
+            }
+            reason?.let { s.code to it }
+        }.toMap()
+        val trusted = selected.filter { it.code !in gaps }
+        val factors = FactorRankEngine.rank(trusted.map { FactorRankEngine.Input(it.code, it.bars, it.name) })
+        val basketComplete = selected.isNotEmpty() && gaps.isEmpty()
+        val risk = if (basketComplete) PortfolioRiskEngine.assess(selected.map {
+            PortfolioRiskEngine.Holding(it.code, it.bars, weight = 1.0, sector = it.sector)
+        }) else null
+        val riskMissing = risk?.missing ?: if (selected.isEmpty()) listOf("推荐篮子为空，风险未知")
+            else gaps.map { (code, reason) -> "$code $reason" }
+        return mapOf(
+            "scope" to "selected_recommendation_basket",
+            "actualHoldings" to false,
+            "weightAssumption" to "equal_weight_scenario",
+            "calculatedAt" to calcTime,
+            "historyOnly" to true,
+            "coverage" to mapOf("original" to selected.size, "usable" to trusted.size,
+                "missingCodes" to gaps.keys.toList(), "missing" to gaps),
+            "factor" to mapOf("rows" to factors.rows.map { row -> mapOf(
+                "code" to row.code, "score" to row.score, "rank" to row.rank,
+                "factors" to row.factors, "missing" to row.missing,
+            ) }, "missing" to (factors.missing + gaps.map { (code, reason) -> "$code $reason" }), "note" to factors.note),
+            "risk" to mapOf(
+                "volPct" to risk?.volPct, "maxDrawdownPct" to risk?.maxDrawdownPct,
+                "avgCorr" to risk?.avgCorr, "sectorHhi" to risk?.sectorHhi,
+                "level" to (risk?.level ?: "未知"), "missing" to riskMissing,
+            ),
+            "adjustmentEvidence" to selected.associate { it.code to it.dataEvidence?.adjustmentEvidence },
+            "snapshot" to selected.associate { s -> s.code to mapOf(
+                "source" to s.snapshotSource, "atMs" to s.snapshotAtMs,
+                "evidenceSource" to s.dataEvidence?.source, "evidenceAtMs" to s.dataEvidence?.snapshotAtMs,
+                "expiresAtMs" to s.dataEvidence?.expiresAtMs,
+                "barStart" to s.bars.firstOrNull()?.date, "barEnd" to s.bars.lastOrNull()?.date,
+            ) },
         )
     }
 

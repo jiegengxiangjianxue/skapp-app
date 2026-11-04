@@ -18,6 +18,7 @@ import com.skapp.app.ui.screens.NewsHubScreen
 import com.skapp.app.ui.screens.NewsScreen
 import com.skapp.app.ui.screens.PremarketPicksScreen
 import com.skapp.app.ui.screens.RealtimePicksScreen
+import com.skapp.app.ui.screens.ResearchDiagnosticsCard
 import com.skapp.app.ui.screens.RealtimeSummaryScreen
 import com.skapp.app.ui.screens.SectorsScreen
 import com.skapp.app.ui.screens.PicksHubScreen
@@ -129,6 +130,26 @@ class ScreenRenderRobolectricTest {
 
     @Test(timeout = 120_000)
     fun `详情 中枢无穷值显示数据不足`() = assertDetailCentralScore(Double.POSITIVE_INFINITY, null)
+
+    @Test(timeout = 120_000)
+    fun `篮子诊断 空值不冒充低风险或真实持仓`() {
+        compose.setContent { ResearchDiagnosticsCard(null) }
+        val texts = textNodes().flatMap { it.config.getOrNull(SemanticsProperties.Text).orEmpty().map { t -> t.text } }
+        assertTrue(texts.contains("推荐篮子诊断 · 非真实持仓"))
+        assertTrue(texts.contains("风险级别：未知"))
+        assertTrue(texts.any { it.contains("年化波动 未知") && it.contains("最大回撤 未知") })
+    }
+
+    @Test(timeout = 120_000)
+    fun `篮子诊断 恢复数据中的字符串数值不伪装有效数字`() {
+        val diagnostics = mapOf("coverage" to mapOf("original" to 1, "usable" to 1),
+            "adjustmentEvidence" to mapOf("600001" to "cnfin:hfq_factor:synthetic_fixture"),
+            "risk" to mapOf("level" to "未知", "volPct" to "12.3", "maxDrawdownPct" to Double.NaN))
+        compose.setContent { ResearchDiagnosticsCard(diagnostics) }
+        val texts = textNodes().flatMap { it.config.getOrNull(SemanticsProperties.Text).orEmpty().map { t -> t.text } }
+        assertTrue(texts.any { it.contains("年化波动 未知") && it.contains("最大回撤 未知") })
+        assertTrue(texts.none { it.contains("12.30%") || it.contains("NaN") })
+    }
 
     // ── 有静态文案的屏：文案 + 不白屏 ────────────────────────────────────
 

@@ -1,5 +1,6 @@
 package com.skapp.app.data
 
+import java.time.LocalDate
 import kotlin.math.sqrt
 
 /**
@@ -84,10 +85,33 @@ object PortfolioRiskEngine {
             usable.associate { it.code to it.weight.coerceAtLeast(0.0) / total }
         }
 
-        // ── 收益率序列（按各自最后 lookback 根对齐；两端长度可能不等，取短的一致部分） ──
-        val rets = usable.associate { h -> h.code to dailyReturns(h.bars, lookback) }
-        rets.filterValues { it == null }.keys.forEach { code ->
-            missing += "$code 收益率序列不可用（样本不足或收盘价无效），未能完整计算组合风险"
+        // ── 收益率序列：仅对齐所有持仓起止日期均相同的收益区间 ──
+        val intervalReturns = usable.associate { h ->
+            val bars = h.bars.takeLast(lookback + 1)
+            val dates = bars.map { runCatching { LocalDate.parse(it.date) }.getOrNull() }
+            val validDates = dates.indices.all { dates[it]?.toString() == bars[it].date } &&
+                dates.zipWithNext().all { (a, b) -> a != null && b != null && a.isBefore(b) }
+            h.code to if (validDates) dailyReturns(bars, lookback)?.let { returns ->
+                bars.zipWithNext().mapIndexed { i, (start, end) ->
+                    (start.date to end.date) to returns[i]
+                }.toMap()
+            } else null
+        }
+        intervalReturns.filterValues { it == null }.keys.forEach { code ->
+            missing += "$code 收益率序列不可用（样本不足、收盘价或日期无效），未能完整计算组合风险"
+        }
+        if (usable.size != holdings.size || intervalReturns.values.any { it == null }) {
+            return Result(null, null, null, null, null, null, null, "未知",
+                listOf("收益率数据不完整，无法完整评估组合风险"), missing)
+        }
+        val commonIntervals = intervalReturns.values.map { it!!.keys }
+            .reduce { common, intervals -> common.intersect(intervals) }
+        if (commonIntervals.size < MIN_BARS - 1) {
+            return Result(null, null, null, null, null, null, null, "未知", emptyList(),
+                missing + "共同收益区间只有 ${commonIntervals.size} 个（需 ≥${MIN_BARS - 1}），无法完整评估组合风险")
+        }
+        val rets = intervalReturns.mapValues { (_, returns) ->
+            commonIntervals.map { returns!!.getValue(it) }.toDoubleArray()
         }
         val pairs = ArrayList<PairCorr>()
         for (i in usable.indices) {

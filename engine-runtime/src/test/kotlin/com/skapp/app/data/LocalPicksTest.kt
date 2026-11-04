@@ -377,6 +377,117 @@ class LocalPicksTest {
         assertTrue(result.picks.isEmpty())
     }
 
+    private fun diagnosticBars(start: String = "2026-06-01", slope: Double = 0.08): List<KBar> =
+        (0 until 120).map { i ->
+            val close = 10.0 + slope * i + kotlin.math.sin(i * 0.7) * 0.15
+            KBar(java.time.LocalDate.parse(start).plusDays(i.toLong()).toString(),
+                close - 0.03, close, close + 0.1, close - 0.1, 1000.0 + i * 20)
+        }
+
+    private fun diagnostics(artifact: StructuredPickArtifact): Map<*, *> =
+        artifact.metadata["researchDiagnostics"] as Map<*, *>
+
+    @Test
+    fun `因子和等权风险诊断不修改推荐名单顺序和主评分`() {
+        val original = listOf(row("600001", 91.0, sector = "银行"), row("000002", 87.0, sector = "消费"))
+        val plain = LocalPicks.build(original, LocalPicks.Session.MIDDAY, "2026-11-02T13:00:00+08:00")
+        val withBars = LocalPicks.build(original.mapIndexed { i, s -> s.copy(bars = diagnosticBars(slope = 0.08 + i * 0.03)) },
+            LocalPicks.Session.MIDDAY, "2026-11-02T13:00:00+08:00")
+        assertEquals(plain.picks, withBars.picks)
+        assertEquals(listOf("600001", "000002"), withBars.picks.map { it.code })
+        assertEquals(listOf(91.0, 87.0), withBars.picks.map { it.score })
+        val d = diagnostics(withBars)
+        assertEquals("selected_recommendation_basket", d["scope"])
+        assertEquals(false, d["actualHoldings"])
+        assertEquals("equal_weight_scenario", d["weightAssumption"])
+        val coverage = d["coverage"] as Map<*, *>
+        assertEquals(2, coverage["original"])
+        assertEquals(2, coverage["usable"])
+        val factor = d["factor"] as Map<*, *>
+        assertEquals(2, (factor["rows"] as List<*>).size)
+        val expected = PortfolioRiskEngine.assess(original.mapIndexed { i, s ->
+            PortfolioRiskEngine.Holding(s.code, diagnosticBars(slope = 0.08 + i * 0.03), 1.0, s.sector)
+        })
+        val risk = d["risk"] as Map<*, *>
+        assertEquals(expected.volPct, risk["volPct"])
+        assertEquals(expected.maxDrawdownPct, risk["maxDrawdownPct"])
+        assertEquals(expected.avgCorr, risk["avgCorr"])
+        assertEquals(expected.sectorHhi, risk["sectorHhi"])
+    }
+
+    @Test
+    fun `一个已选成员缺bars整篮子风险未知不得对子集归一`() {
+        val result = LocalPicks.build(listOf(row("600001", 91.0).copy(bars = diagnosticBars()), row("000002", 87.0)),
+            LocalPicks.Session.MIDDAY, "2026-11-02T13:00:00+08:00")
+        assertEquals(2, result.picks.size)
+        val d = diagnostics(result)
+        val coverage = d["coverage"] as Map<*, *>
+        assertEquals(2, coverage["original"])
+        assertEquals(1, coverage["usable"])
+        assertEquals(listOf("000002"), coverage["missingCodes"])
+        val risk = d["risk"] as Map<*, *>
+        assertEquals("未知", risk["level"])
+        for (key in listOf("volPct", "maxDrawdownPct", "avgCorr", "sectorHhi")) assertEquals(null, risk[key])
+        assertTrue((risk["missing"] as List<*>).any { it.toString().contains("000002") })
+    }
+
+    @Test
+    fun `空篮子不能显示低风险`() {
+        val d = diagnostics(LocalPicks.build(emptyList(), LocalPicks.Session.MIDDAY, "2026-11-02T13:00:00+08:00"))
+        assertEquals(0, (d["coverage"] as Map<*, *>)["original"])
+        val risk = d["risk"] as Map<*, *>
+        assertEquals("未知", risk["level"])
+        assertEquals(null, risk["volPct"])
+        assertTrue((risk["missing"] as List<*>).isNotEmpty())
+    }
+
+    @Test
+    fun `已选成员历史日期不交叠不能算全篮子风险`() {
+        val result = LocalPicks.build(listOf(row("600001", 91.0).copy(bars = diagnosticBars("2026-01-01")),
+            row("000002", 87.0).copy(bars = diagnosticBars("2026-06-01"))),
+            LocalPicks.Session.MIDDAY, "2026-11-02T13:00:00+08:00")
+        val risk = diagnostics(result)["risk"] as Map<*, *>
+        assertEquals("未知", risk["level"])
+        assertEquals(null, risk["volPct"])
+        assertEquals(null, risk["maxDrawdownPct"])
+        assertTrue((risk["missing"] as List<*>).any { it.toString().contains("共同收益区间") })
+    }
+
+    @Test
+    fun `缺失过期或非cnfin证据不能偷入诊断`() {
+        val good = row("600001", 91.0).copy(bars = diagnosticBars())
+        val bad = row("000002", 99.0).copy(bars = diagnosticBars())
+        for (evidence in listOf(null, bad.dataEvidence?.copy(expiresAtMs = 1L),
+            bad.dataEvidence?.copy(adjustmentEvidence = "qfq:unverified"))) {
+            val result = LocalPicks.build(listOf(good, bad.copy(dataEvidence = evidence)),
+                LocalPicks.Session.MIDDAY, "2026-11-02T13:00:00+08:00")
+            assertEquals(listOf("600001"), result.picks.map { it.code })
+            val d = diagnostics(result)
+            assertEquals(1, (d["coverage"] as Map<*, *>)["original"])
+            assertEquals(setOf("600001"), (d["adjustmentEvidence"] as Map<*, *>).keys)
+            assertEquals(setOf("600001"), (d["snapshot"] as Map<*, *>).keys)
+        }
+    }
+
+    @Test
+    fun `非法OHLC未来或重复日期隐藏数值并保留缺口`() {
+        val bars = diagnosticBars()
+        val invalid = listOf(bars.dropLast(1) + bars.last().copy(close = Double.NaN),
+            bars.dropLast(1) + bars.last().copy(date = "2026-11-03"),
+            bars.dropLast(1) + bars.last().copy(date = bars[bars.lastIndex - 1].date),
+            bars.dropLast(1) + bars.last().copy(high = 1.0))
+        for (input in invalid) {
+            val result = LocalPicks.build(listOf(row("600001", 91.0).copy(bars = input)),
+                LocalPicks.Session.MIDDAY, "2026-11-02T13:00:00+08:00")
+            assertEquals(1, result.picks.size)
+            val d = diagnostics(result)
+            assertEquals(0, (d["coverage"] as Map<*, *>)["usable"])
+            assertTrue(((d["factor"] as Map<*, *>)["rows"] as List<*>).isEmpty())
+            assertEquals(null, (d["risk"] as Map<*, *>)["volPct"])
+            assertEquals("未知", (d["risk"] as Map<*, *>)["level"])
+        }
+    }
+
     @Test fun `财报复权来源证据缺失不得进入推荐`() {
         val result = LocalPicks.build(listOf(row("600001", 99.0).copy(dataEvidence = null)),
             LocalPicks.Session.REALTIME, "2026-11-02T20:00:00+08:00")

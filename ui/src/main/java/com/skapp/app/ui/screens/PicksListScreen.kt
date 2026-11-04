@@ -202,6 +202,10 @@ fun PicksListScreen(vm: SkappViewModel, state: UiState, mode: PickListSession) {
             }
         }
 
+        item(key = "research_diagnostics") {
+            ResearchDiagnosticsCard(artifact.metadata["researchDiagnostics"] as? Map<*, *>)
+        }
+
         val observed = artifact.metadata["observed"] as? List<*>
         if (!observed.isNullOrEmpty()) {
             item(key = "observed") {
@@ -250,6 +254,62 @@ fun PicksListScreen(vm: SkappViewModel, state: UiState, mode: PickListSession) {
                     trendAttempted = state.picksTrendAttempted.contains(pick.code),
                     decision = if (window.updating) decisionCards[pick.code] else null,
                 )
+            }
+        }
+    }
+}
+
+@Composable
+internal fun ResearchDiagnosticsCard(diagnostics: Map<*, *>?) {
+    fun number(value: Any?): Double? = (value as? Number)?.toDouble()?.takeIf { it.isFinite() }
+    fun value(value: Any?, suffix: String = ""): String = number(value)?.let { "%.2f".format(it) + suffix } ?: "未知"
+    fun missing(value: Any?): String = (value as? List<*>)?.mapNotNull { it as? String }
+        ?.joinToString("；").orEmpty()
+    val coverage = diagnostics?.get("coverage") as? Map<*, *>
+    val factor = diagnostics?.get("factor") as? Map<*, *>
+    val risk = diagnostics?.get("risk") as? Map<*, *>
+    val evidence = diagnostics?.get("adjustmentEvidence") as? Map<*, *>
+    val original = number(coverage?.get("original"))
+    val usable = number(coverage?.get("usable"))
+    val complete = original != null && original > 0 && original == usable &&
+        evidence != null && evidence.size.toDouble() == original && evidence.values.all { (it as? String)?.startsWith("cnfin:hfq_factor:") == true }
+    SkCard {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("推荐篮子诊断 · 非真实持仓", fontWeight = FontWeight.SemiBold)
+            Text("等权情景/基于历史，不代表未来收益", style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
+            Text("计算时点 ${diagnostics?.get("calculatedAt") ?: "未知"} · 非实时风险预测", style = MaterialTheme.typography.bodySmall)
+            Text("历史覆盖 ${usable?.toInt() ?: "未知"}/${original?.toInt() ?: "未知"}；缺代码 " +
+                ((coverage?.get("missingCodes") as? List<*>)?.joinToString("/")?.ifBlank { "无" } ?: "未知"),
+                style = MaterialTheme.typography.bodySmall)
+            Text("风险级别：${if (complete) risk?.get("level") ?: "未知" else "未知"}")
+            Text("年化波动 ${value(if (complete) risk?.get("volPct") else null, "%")} · " +
+                "最大回撤 ${value(if (complete) risk?.get("maxDrawdownPct") else null, "%")}", style = MaterialTheme.typography.bodySmall)
+            Text("平均相关 ${value(if (complete) risk?.get("avgCorr") else null)} · " +
+                "行业HHI ${value(if (complete) risk?.get("sectorHhi") else null)}", style = MaterialTheme.typography.bodySmall)
+            Text("风险缺口：" + missing(risk?.get("missing")).ifBlank { if (complete) "无已记录缺口" else "缺完整篮子或可信复权证据" },
+                style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
+            (factor?.get("rows") as? List<*>)?.forEach { raw ->
+                val row = raw as? Map<*, *> ?: return@forEach
+                val code = row["code"] as? String ?: return@forEach
+                val verified = (evidence?.get(code) as? String)?.startsWith("cnfin:hfq_factor:") == true
+                val factors = (row["factors"] as? Map<*, *>)?.entries?.joinToString(" / ") {
+                    "${it.key}=${value(if (verified) it.value else null)}"
+                } ?: "未知"
+                Text("$code · 因子分 ${value(if (verified) row["score"] else null)} · " +
+                    "诊断排名 ${number(if (verified) row["rank"] else null)?.toInt() ?: "未知"}", style = MaterialTheme.typography.bodySmall)
+                Text(factors, style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
+                missing(row["missing"]).takeIf { it.isNotBlank() }?.let { Text("$code 缺口：$it", style = MaterialTheme.typography.bodySmall) }
+            }
+            Text("因子缺口：" + missing(factor?.get("missing")).ifBlank { if (factor == null) "暂无诊断数据" else "无已记录缺口" },
+                style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
+            (diagnostics?.get("snapshot") as? Map<*, *>)?.forEach { (code, raw) ->
+                val source = raw as? Map<*, *> ?: return@forEach
+                Text("$code · 历史 ${source["barStart"] ?: "未知"}—${source["barEnd"] ?: "未知"} · " +
+                    "快照 ${source["source"] ?: "未知"}@${number(source["atMs"])?.toLong() ?: "未知"} · " +
+                    "证据 ${source["evidenceSource"] ?: "未知"}@${number(source["evidenceAtMs"])?.toLong() ?: "未知"}",
+                    style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
+                Text("复权证据 ${evidence?.get(code) ?: "未知"} · 有效至 ${number(source["expiresAtMs"])?.toLong() ?: "未知"}",
+                    style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
             }
         }
     }
