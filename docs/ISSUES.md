@@ -7,15 +7,20 @@
 - 已补研究执行链：云端 scripts/research_evaluation.py 与 research-evaluation Actions 对固定批准的两份历史基准运行过去120bar信号、下一交易行开盘入场、22/60观察期回本(max high)及净收益、每边0/10/30bps假设成本敏感性；按日期分组purge与calendar embargo，固定规则验证分段不做训练拟合。新旧聚合均用固定等权，避免拿当前校准权重回测历史。
 - 基准准入：只允许指定代码与原始附件SHA256，保留每日期的 api/csv_legacy/cnfin 原始来源；不得把整份CSV谎称cnfin。未知来源、无效OHLC/因子/日期拒收且打断窗口，不混入baostock全表。原始CRLF按两文件精确.gitattributes保存字节与哈希。
 - IC使用每日横截面Spearman，默认至少20股；不足覆盖与零方差ICIR明确null。族内历史相关仅为诊断；成本假设不是实测滑点，未提供真实成交与实仓的容量/持仓结论保持insufficient。本研究不等于全市场、独立模型选择留出或实际组合绩效。
-- 本地已验：engine-core36、engine-net44、engine-algo230、engine-runtime178，共488项无失败；UI及新增Robolectric测试源码编译通过。Python16项回归、改动文件语法、Ruff、import与数据分层守卫通过。真实云端研究产物和本次release以随后核验记录为准。
+- 本地已验：engine-core36、engine-net44、engine-algo230、engine-runtime178，共488项无失败；UI及新增Robolectric测试源码编译通过。Python16项回归、改动文件语法、Ruff、import与数据分层守卫通过。
+- 发布已验：App提交 `b1db349e1825ed9aa9cf81c6e8f124e565879601` 的 [android-build 41860155831](https://github.com/jiegengxiangjianxue/skapp-app/actions/runs/41860155831) 23/23 jobs成功，含新增诊断卡Robolectric与组合日期回归；[v2.5.0-engine.3](https://github.com/jiegengxiangjianxue/skapp-app/releases/tag/v2.5.0-engine.3) 标签核对同提交。APK 18,387,612字节，SHA-256 `82284c2c4c81be76ea58ca041c5e23ab40d5b4a78a58772cb6275d0c0b6effa7`，包名/版本47/arm64-only/ZIP与Java apksigner v2强验通过，未真机安装。
+- 真实研究首跑：[research-evaluation 41860153250](https://github.com/qwerzxcva/stocks-ai-view/actions/runs/41860153250) 成功；原始基准6096+2626行，接受6022+2626行、拒收74行，产生12952条代码/日期/周期标签记录，65段中64段通过历史训练日期覆盖检查。重复周期、相邻日期与不同成本不是独立样本；仅技术OHLCV重放，未重放完整资金/消息/财务链路，不证明实际交易绩效。
+- 实跑发现：零成本且入场日high纳入回本观察，使recoup必然成立，无判别力，不能当方向胜率或收益提升；保留原数学口径并补recoup_caveat/recoup_informative，正成本也仅是假设。最后云端口径标注提交 `8b7d21a48ff1089e595cfc40f814afd9528f97e4`，对应 [research-evaluation 41861603662](https://github.com/qwerzxcva/stocks-ai-view/actions/runs/41861603662) 的单测、真实计算、上传及收尾steps全部success，但API汇总仍为in_progress/conclusion=null，未宣称整条workflow成功。
+- 最终产物已独立下载核验：artifact13339129641，报告SHA-256 `cb1a78a7c4554323bc1bbe0d27c99733f3054f1a74e657642493b16f7112980d`；新增口径警告未改变原数值。6476个有效信号、12952个期限标签记录、12209个完整标签；独立CSV算法复现全部有效索引、74个拒收及计数，4个成本标签抽核最大净收益偏差0。有效IC日期0，不报告全市场IC/ICIR或策略收益提升。证据摘要 `tmpwork/stock-research-v47-final-summary.json`。
+- 仍未达成：全市场同口径基准覆盖、真实持仓/成交/冲击容量证据及完整实时多输入链路的样本外有效性。已有purge/embargo执行框架与两股技术历史回放，不等于这些研究结论成立；GitHub最终研究汇总状态也需另核，未用App发版成功顶替。
 
-## 2026-11-04：后续整改 / 组合风控收益区间对齐（未发布）
+## 2026-11-04：后续整改 / 组合风控收益区间对齐（已纳入vc47）
 
 - 修复 `PortfolioRiskEngine.assess` 按序列末尾位置对齐而混算不同交易日期的问题；现在只对齐所有持仓起止日期均一致的收益区间，不将缺日跨期收益与单日收益混配，不填造缺失收益。
 - 当前计算窗口内日期必须为规范 ISO 日期且严格递增；任一持仓样本不足、日期/价格无效，或共同收益区间少于29个，完整组合返回 `null` / “未知”并说明缺口，不剔除失效持仓后冒充完整组合。
 - 新增5组日期回归：不相交日期、共同区间数值对齐、缺日跨期、重复/倒序/非法日期、同日期算术回归。修复前13项测试4项失败（`../logs/portfolio-risk-date-red.log:37–61`）；修复后13/13通过、0失败/错误/跳过，日志 `../logs/portfolio-risk-date-final.log`，XML `engine-algo/build/test-results/test/TEST-com.skapp.app.data.PortfolioRiskEngineTest.xml:2`。
 - 独立静态代码审查及证据复核未发现正确性阻断；主会话复核diff与XML，两个Kotlin文件词法检查通过（lexer-only，不替代编译）。Ruff模块缺失，本轮未安装、未运行全局Python闸门；没有改Python代码。
-- 仅修复组合风控及测试，未接入真实持仓或交易决策、未修改评分规格与版本、未提交/推送/发布。合成用例只证明日期对齐行为，不证明真实收益提升；全市场同口径cnfin因子、样本外IC/ICIR、purged CV及容量验证仍受此前数据缺口约束。
+- 本片仅修复组合风控及测试，后续已随vc47提交、推送并发布，并接入“推荐篮子诊断”而非真实持仓或交易决策。合成用例只证明日期对齐行为，不证明真实收益提升；全市场同口径基准因子、样本外IC/ICIR及容量有效性仍受实际数据覆盖约束。
 
 ## 2026-11-04：P1–P3 持续整改 / 2.5.0-engine.2 vc46
 
