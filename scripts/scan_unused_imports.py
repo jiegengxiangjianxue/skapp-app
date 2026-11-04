@@ -76,6 +76,12 @@ def scan_file(kotlin_file: Path, project_root: Path) -> tuple[Path, list[str]]:
         if fq in DELEGATE_EXCEPTIONS and has_by:
             continue  # 保留
 
+        # 通配符 import（`import a.b.*`）静态无法判定用了哪些名字，一律保留。
+        # 2026-11-04 实测：`import org.junit.Assert.*` 被误报未使用，删掉后
+        # SectionLoaderTest 里的 assertEquals/assertTrue 全部编译失败。
+        if fq.endswith(".*"):
+            continue
+
         if not body_contains_name(body, simple):
             unused.append(imp)
 

@@ -43,7 +43,9 @@ def parse_report(report_path: Path) -> list[tuple[Path, list[str]]]:
                 current_file = Path(rel)
                 current_unused = []
             elif line.startswith("  -import "):
-                current_unused.append(line.strip())
+                # 报告里的条目带前缀 '-'（"  -import a.b.C"），比对目标是文件里的
+                # 原始行（"import a.b.C"），必须把前缀去掉，否则一条也匹配不上。
+                current_unused.append(line.strip().lstrip("-").strip())
 
         if current_file is not None:
             result.append((current_file, current_unused))
