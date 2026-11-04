@@ -1,12 +1,15 @@
 # 用户问题追踪（每次交付必须更新完成状态）
 
-## 2026-11-04：2.4.8 发布修复
+## 2026-11-04：2.5.0-engine.1 / vc45 发布修复
 
 - 已修复：实时总结页首屏保留“实时总结”标题，原 Robolectric 断言不变。
 - 已修复：FactorWeightStrategy 全平 RSI 保持 50 中性，普通序列继续委托 Canonical；Canonical 全平 100 的云端契约未改。新增回归先失败后修复，本地 engine-algo 215 项、engine-runtime 156 项通过，UI Kotlin 编译通过。
 - 已修复：云端规格生成器与 App 3.2.2 同步，规格/黄金向量/参数清单与 10 个双端产物指纹一致；本地契约矩阵 89/89。
 - 已修复：云端 ai_pick_v4 零候选分支遗漏 global/adapt/cycle_note，未计算的三个字段显式为 null，不改变筛选条件、不修改历史数据时间戳。
-- 发布验收：以本次提交的 android-build 全门禁、release job 与实际 APK 校验结果为准；本地结果不代替云端成功。
+- 云端发布已验证：App 提交 `26ebe6277ce8542ea35bea9f58743f9b4ff1c26e` 的 [android-build 41834239111](https://github.com/jiegengxiangjianxue/skapp-app/actions/runs/41834239111) 23/23 jobs 成功（含 release）；[v2.5.0-engine.1](https://github.com/jiegengxiangjianxue/skapp-app/releases/tag/v2.5.0-engine.1) 已发布。构建配置为 2.5.0-engine.1/vc45；原 f0a0115 提交说明中的 2.4.8/vc44 不准确。
+- APK 已下载核验：`skapp-2.5.0-engine.1-vc45-arm64.apk`，18,370,971字节；包名/版本/arm64-only/ZIP结构通过，SHA-256 `2e764e48639221a277ac279dea51da3e29a011271850079d347e88b0ea533f3d` 与GitHub资产摘要一致。使用SDK已有 `apksigner.jar verify --verbose --print-certs` 验证v2签名通过；尚未进行真机安装与运行验证。
+- 云端提交 `558797b001d4a68377485d4bd7ae66443679a93b` 的 [engine-contract 41834224362](https://github.com/qwerzxcva/stocks-ai-view/actions/runs/41834224362) 成功；manifest-heal、gitcode-sync、Pages 部署同批成功。
+- 独立未解决项：工作区其他会话修改中的 `scripts/validate_teams.py:123` 存在 F841；全库数据审计发现时效性和部分实时基准不一致。以上未修改、未降低门槛，不可把构建成功当作行情审计通过。
 - P1 未完成：Canonical 仍逐票计权与共振，family 尚未参与族级归并；旧权重表、多界面分数来源与死链路尚未全面收敛。不得把本次发版宣称为“P1 全部完成”或收益提升。
 
 ## 推股页
