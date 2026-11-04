@@ -134,7 +134,7 @@ object MarketHeartbeat {
                     val rotation = deepRound++
                     val res = runCatching {
                         LocalScreener.screen(
-                            deepCriteria, onProgress = {}, mode = "all", rotation = rotation,
+                            deepCriteria, onProgress = {}, mode = "all", rotation = rotation, snapshotIn = snap,
                         )
                     }.getOrDefault(emptyList())
                     if (res.isNotEmpty()) {
@@ -143,7 +143,11 @@ object MarketHeartbeat {
                         res.forEach { deepPool[it.code] = it }
                         // 只保留评分最好的若干个，避免累积池无限增长
                         deep = deepPool.values
-                            .sortedByDescending { it.centralScore ?: 0.0 }
+                            .sortedByDescending {
+                                it.effectiveScore?.takeIf(Double::isFinite)
+                                    ?: it.canonicalScore?.takeIf(Double::isFinite)
+                                    ?: Double.NEGATIVE_INFINITY
+                            }
                             .take(DEEP_POOL_MAX)
                         // 掉出榜单的票下次补扫还会重算，池子跟着淘汰
                         deepPool.keys.retainAll(deep.map { it.code }.toSet())
@@ -174,7 +178,7 @@ object MarketHeartbeat {
         val snap = LiveMarket.snapshot(force = true)
         if (snap.isEmpty()) return null
         val screened = if (deep) {
-            runCatching { LocalScreener.screen(mode = "all") }.getOrDefault(emptyList())
+            runCatching { LocalScreener.screen(mode = "all", snapshotIn = snap) }.getOrDefault(emptyList())
         } else null
         val deepRows = screened?.takeIf { it.isNotEmpty() }
         val tick = Tick(

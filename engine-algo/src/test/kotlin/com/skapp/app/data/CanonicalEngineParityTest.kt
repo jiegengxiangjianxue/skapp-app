@@ -35,9 +35,9 @@ class CanonicalEngineParityTest {
         val loaded = EngineSpecLoader.loadBundled()
         assertTrue(!loaded.drift, "规格漂移：${loaded.reason}")
         assertEquals(EngineSpecLoader.BUNDLED_VERSION, loaded.spec.specVersion)
-        assertEquals(21, loaded.spec.engines.size, "引擎清单应与云端 spec 一致（21 票）")
+        assertEquals(26, loaded.spec.engines.size, "技术与独立外部票的注册清单必须完整")
         assertTrue(loaded.spec.deviceEngines.size >= 18, "端上至少能算 18 票")
-        assertEquals("weighted_vote", loaded.spec.aggregation.kind)
+        assertEquals("family_weighted_vote", loaded.spec.aggregation.kind)
         // 流水线阶段必须由 spec 声明，端上不再自己写死顺序
         assertTrue(loaded.spec.pipeline.any { it.id == "decision" })
     }
@@ -91,6 +91,9 @@ class CanonicalEngineParityTest {
             assertEquals(expect.optDouble("score"), result.score, 0.05, "$code 综合分不一致")
             assertEquals(expect.optInt("bull"), result.bull, "$code 看多票数不一致")
             assertEquals(expect.optInt("bear"), result.bear, "$code 看空票数不一致")
+            assertEquals(expect.getInt("familyBull"), result.familyBull, "$code 看多族数不一致")
+            assertEquals(expect.getInt("familyBear"), result.familyBear, "$code 看空族数不一致")
+            assertEquals(expect.getInt("familyNeutral"), result.familyNeutral, "$code 中性族数不一致")
             checked++
         }
         assertTrue(checked >= 3, "至少校验 3 个黄金样本，实际 $checked")

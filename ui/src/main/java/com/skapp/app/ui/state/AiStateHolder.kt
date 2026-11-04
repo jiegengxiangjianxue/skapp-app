@@ -91,14 +91,16 @@ $data
 
     /** 拼复盘用的真实数据底稿（原 GitCodeAiClient.reviewStock 的数据段，现归 ViewModel） */
     private fun buildStockReviewData(d: StockDetail): String {
+        val s = _state.value
         return buildString {
             append("【基础】代码=${d.code} 名称=${d.name}")
             _state.value.liveQuote?.let { q ->
                 append(" 现价=${q.price ?: "暂无"} 涨跌=${q.pctChg?.let { "%.2f%%".format(it) } ?: "暂无"}")
             }
             appendLine()
-            _state.value.localEngine?.let { e ->
-                appendLine("【中枢引擎】综合=${(e.centralScore ?: e.weightedComposite ?: e.composite)?.let { "%.1f".format(it) } ?: "insufficient"} 共振=${e.resonanceRatio?.let { "%.0f%%".format(it * 100) } ?: "insufficient"}（${e.nValid}/${e.engines.size} 有效）")
+            appendLine("【中枢引擎】综合=${s.centralEngineScore?.takeIf { it.isFinite() }?.let { "%.1f".format(it) } ?: "insufficient"} 共振=${s.centralEngineResonance?.takeIf { it.isFinite() }?.let { "%.0f%%".format(it * 100) } ?: "insufficient"}（按启用规格聚合） 状态=${s.centralEngineStatus} 规格=${s.engineSpecVersion ?: "unknown"}")
+            s.localEngine?.let { e ->
+                appendLine("【旧12引擎技术对照，非中枢评分】（${e.nValid}/${e.engines.size} 有效）")
                 e.engines.forEach { en ->
                     if (en.score != null) {
                         appendLine("  · ${en.engine}=${"%.1f".format(en.score)} ${en.signal}（${en.reasons.take(2).joinToString("，")}）")
@@ -203,8 +205,9 @@ $ctx
         // 若当前打开了某只股，带上它的完整本地分析
         s.detail?.let { dd ->
             sb.appendLine("【当前详情】${dd.name ?: dd.code}（${dd.code}）")
+            sb.appendLine("【中枢引擎】综合=${s.centralEngineScore?.takeIf { it.isFinite() }?.let { "%.1f".format(it) } ?: "insufficient"} 共振=${s.centralEngineResonance?.takeIf { it.isFinite() }?.let { "%.0f%%".format(it * 100) } ?: "insufficient"}（按启用规格聚合） 状态=${s.centralEngineStatus} 规格=${s.engineSpecVersion ?: "unknown"}")
             s.localEngine?.let { e ->
-                sb.appendLine("  中枢引擎综合=${e.composite?.let { "%.1f".format(it) } ?: "insufficient"}（${e.nValid}/${e.engines.size}）")
+                sb.appendLine("【旧12引擎技术对照，非中枢评分】（${e.nValid}/${e.engines.size} 有效）")
                 e.engines.filter { it.score != null }.forEach {
                     sb.appendLine("    · ${it.engine}=${"%.1f".format(it.score!!)} ${it.signal}")
                 }

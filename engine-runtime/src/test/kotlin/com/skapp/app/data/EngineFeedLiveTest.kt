@@ -44,10 +44,55 @@ class EngineFeedLiveTest {
         mv = 1e10,
         engine = engineResult(),
         centralScore = score,
+        chain = EngineChain.ChainResult(
+            score, CanonicalEngine.Result(code, score, 0.2, 0.75, 1, 1, 1,
+                listOf(CanonicalEngine.Vote("trend", 1, 0.44, "MA20 上穿 MA60"),
+                    CanonicalEngine.Vote("macd", -1, 0.24, "柱状线缩短"),
+                    CanonicalEngine.Vote("volume", 0, 0.1, "中性")), "neutral", "fixture"),
+            null, null, null, emptyList(), "fixture", false, emptyList(), null, "ok",
+        ),
         resonanceRatio = 0.75,
         detailStatus = "ok",
         buyable = buyable,
     )
+
+    @Test
+    fun `旧引擎90但canonical30时所有展示字段来自canonical`() {
+        val s = screened(score = 30.0).copy(centralScore = 90.0, effectiveScore = 99.0)
+        val top = EngineFeedLive.assemble(pulse("强势"), listOf(s), emptyList()).engineV5!!.top.single()
+        val canonical = s.chain!!.canonical!!
+        assertEquals(30.0, top.score)
+        assertEquals(canonical.resonance, top.resonance)
+        assertEquals(canonical.bull, top.bull)
+        assertEquals(canonical.bear, top.bear)
+        assertEquals(canonical.neutral, top.neutral)
+        assertEquals(canonical.votes.map { it.strength }, top.votes.map { it.strength })
+    }
+
+    @Test
+    fun `缺canonical不展示旧引擎分也不伪造零分`() {
+        val s = screened(score = 90.0).copy(chain = null)
+        assertTrue(EngineFeedLive.assemble(pulse("强势"), listOf(s), emptyList()).engineV5!!.top.isEmpty())
+    }
+
+    @Test
+    fun `高分卡片缺安全证据或行情过期时禁止buy`() {
+        val now = 1_790_000_000_000L
+        val evidence = LocalScreener.DataEvidence(1.0, 0.1, "2026-06-30", "cnfin:hfq_factor:fixture",
+            "synthetic_fixture", now - 1000, now + 1000)
+        val valid = screened(score = 90.0).copy(dataEvidence = evidence, safetyInputsReady = true,
+            snapshotAtMs = now - 1000, snapshotSource = "synthetic_fixture")
+        fun action(s: LocalScreener.Screened) =
+            EngineFeedLive.assemble(pulse("强势"), listOf(s), emptyList(), ts = now).decision!!.cards.single().action
+        assertEquals("buy", action(valid))
+        for (bad in listOf(valid.copy(dataEvidence = null), valid.copy(safetyInputsReady = false),
+            valid.copy(snapshotStatus = "stale"), valid.copy(dataEvidence = evidence.copy(expiresAtMs = now - 1)),
+            valid.copy(code = "300001"), valid.copy(pctChg = 9.6),
+            valid.copy(snapshotAtMs = null), valid.copy(snapshotAtMs = now + 1),
+            valid.copy(snapshotAtMs = now - 300_001))) {
+            assertTrue(action(bad) != "buy", bad.toString())
+        }
+    }
 
     private fun pulse(label: String) = LivePulse(
         ts = 1_700_000_000_000L,

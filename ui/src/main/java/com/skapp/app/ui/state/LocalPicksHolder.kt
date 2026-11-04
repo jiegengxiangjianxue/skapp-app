@@ -9,7 +9,6 @@ import com.skapp.app.data.IntradayPicks
 import com.skapp.app.data.toPlainMap
 import com.skapp.app.data.PicksArchiveQueue
 import com.skapp.app.data.GitHubRepoWriter
-import com.skapp.app.data.DataCache
 import com.skapp.app.data.NewsCalc
 import com.skapp.app.data.LocalScreener
 import com.skapp.app.data.StructuredPickArtifact
@@ -18,14 +17,13 @@ import com.skapp.app.data.PickSignal
 import com.skapp.app.data.TodayPicks
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.coroutineScope
 import org.json.JSONObject
 import com.skapp.app.ui.Watchlist
 
@@ -178,68 +176,41 @@ internal class LocalPicksHolder(
                 poolHits = poolHits,
             )
             val tEngine = System.currentTimeMillis()
-            // 名单**全部**票算多日趋势：逐票走 DataCache 拉日 K（6 小时缓存，名单上限 10 只）；
-            // 拉不到或不足 60 根就不给该票方向（不编、不拿同名单其他票的结果顶替）。
-            // 之前只算前 5 只，第 6 只起恒显示「未计算」，被读成「名单只出了前 5 只」——
-            // 而 MAX_PICKS 本是 10：性能取舍换来的是对名单规模的误判，不划算。
+            // 趋势与退出计划复用筛选时点的 bars，不再按250根另取一次。
+            // 本轮不足60根就显式降级，不用第二时点数据补洞。
             val trendTargets = artifact.picks
-            // 逐票串行拉日 K 时首屏耗时随名单条数线性增长（10 只 × 单票 0.5~2s）。
-            // 并发度压到 4 而不是全开：日 K 三源按单 IP 限流，并发全开换来的是整批失败，
-            // 比慢更糟；分片间隔由每个 async 的内部串行门关保。
+            val screenedByCode = screened.associateBy { it.code }
             class TrendRun(
                 val code: String,
                 val ms: Long,
                 val result: com.skapp.app.data.TrendForecast.Result?,
                 val fail: String?,
             )
-            val trendRuns = coroutineScope {
-                trendTargets
-                    .chunked(4)
-                    .map { chunk ->
-                        async(Dispatchers.IO) {
-                            chunk.map { p ->
-                                val k0 = System.currentTimeMillis()
-                                val fetched = runCatching {
-                                    com.skapp.app.data.DataCache.kline(p.code, "qfq", 250)
-                                }
-                                val ms = System.currentTimeMillis() - k0
-                                val bars = fetched.getOrNull()
-                                val err = fetched.exceptionOrNull()
-                                when {
-                                    bars == null -> TrendRun(
-                                        p.code, ms, null,
-                                        "${p.code} 抛 ${err?.javaClass?.simpleName ?: "未知"}",
-                                    )
-                                    bars.size < 60 -> TrendRun(
-                                        p.code, ms, null,
-                                        if (bars.isNotEmpty()) "${p.code} 仅 ${bars.size} 根" else null,
-                                    )
-                                    else -> runCatching {
-                                        com.skapp.app.data.TrendForecast.compute(bars)
-                                    }.fold(
-                                        onSuccess = { r -> TrendRun(p.code, ms, r, null) },
-                                        onFailure = { e ->
-                                            TrendRun(p.code, ms, null, "${p.code} compute ${e.javaClass.simpleName}")
-                                        },
-                                    )
-                                }
-                            }
-                        }
-                    }
-                    .awaitAll()
-                    .flatten()
-            }
-            val klineCalls = trendRuns.size
+            val trendRuns = withContext(Dispatchers.Default) { trendTargets.map { p ->
+                val k0 = System.currentTimeMillis()
+                val bars = screenedByCode[p.code]?.bars.orEmpty()
+                if (bars.size < 60) {
+                    TrendRun(p.code, 0L, null, "${p.code} 本轮仅 ${bars.size} 根")
+                } else {
+                    runCatching { com.skapp.app.data.TrendForecast.compute(bars) }.fold(
+                        onSuccess = { r -> TrendRun(p.code, System.currentTimeMillis() - k0, r, null) },
+                        onFailure = { e ->
+                            if (e is CancellationException) throw e
+                            TrendRun(p.code, System.currentTimeMillis() - k0, null, "${p.code} compute ${e.javaClass.simpleName}")
+                        },
+                    )
+                }
+            } }
+            val klineCalls = 0
             val klineMs = trendRuns.sumOf { it.ms }
             val trendFails = trendRuns.mapNotNull { it.fail }
             val trends = trendRuns.mapNotNull { r -> r.result?.let { r.code to it } }.toMap()
             val tTrend = System.currentTimeMillis()
             val timing = buildString {
                 append("首屏 ${tTrend - t0}ms（快照 ${tSnapshot - t0} / 筛选 ${tScreen - tSnapshot} / 引擎 ${tEngine - tScreen}）")
-                append(" · 日K $klineCalls 次 ${klineMs}ms")
-                if (klineCalls > 0) append("，均 ${klineMs / klineCalls}ms")
+                append(" · 复用本轮日K ${trendRuns.size} 只，额外请求 $klineCalls 次；趋势 ${klineMs}ms")
                 if (trendFails.isNotEmpty()) {
-                    append(" · 趋势失败 ${trendFails.size}/$klineCalls：")
+                    append(" · 趋势失败 ${trendFails.size}/${trendRuns.size}：")
                     append(trendFails.take(3).joinToString("；"))
                 }
             }
@@ -261,9 +232,6 @@ internal class LocalPicksHolder(
                     artifact else _state.value.localMorningPicks,
                 localMiddayPicks = if (session == com.skapp.app.data.LocalPicks.Session.MIDDAY)
                     artifact else _state.value.localMiddayPicks,
-                engineSpecVersion = screened.mapNotNull { it.chain?.specVersion }.distinct().singleOrNull(),
-                chainStatus = if (screened.isEmpty()) "insufficient" else if (screened.all { it.chain?.status == "ok" }) "ok" else "degraded",
-                chainDegraded = screened.flatMap { it.chain?.degraded.orEmpty() }.distinct(),
                 localPicksMsg = artifact.reason,
                 localPicksTiming = timing,
             )

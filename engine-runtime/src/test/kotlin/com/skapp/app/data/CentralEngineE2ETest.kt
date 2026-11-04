@@ -302,11 +302,24 @@ class CentralEngineE2ETest {
         assertEquals(canonical.votes.size, canonical.votes.map { it.indicator }.distinct().size)
         assertEquals(canonical.votes.count { it.vote > 0 }, canonical.bull)
         assertEquals(canonical.votes.count { it.vote < 0 }, canonical.bear)
-        val directional = canonical.bull + canonical.bear
-        val resonance = if (directional == 0) 0.0 else maxOf(canonical.bull, canonical.bear).toDouble()/directional
+        val families = canonical.votes.groupBy {
+            val family = spec.familyOfWeightKey(it.indicator)
+            if (family.isNullOrBlank() || family == "external") "indicator:${it.indicator}" else "family:$family"
+        }.values.map { votes ->
+            val weight = votes.maxOf { spec.weights[it.indicator] ?: 1.0 }
+            val net = votes.sumOf { (spec.weights[it.indicator] ?: 1.0) * it.vote * it.strength } /
+                votes.sumOf { spec.weights[it.indicator] ?: 1.0 }
+            weight to net
+        }
+        val bullish = families.count { it.second > 1e-12 }
+        val bearish = families.count { it.second < -1e-12 }
+        assertEquals(bullish, canonical.familyBull)
+        assertEquals(bearish, canonical.familyBear)
+        assertEquals(families.size - bullish - bearish, canonical.familyNeutral)
+        val directional = bullish + bearish
+        val resonance = if (directional == 0) 0.0 else maxOf(bullish, bearish).toDouble() / directional
         assertEquals(CanonicalIndicators.pyRound(resonance, spec.aggregation.roundResonance), canonical.resonance)
-        val denominator = canonical.votes.sumOf { spec.weights[it.indicator] ?: 1.0 }
-        val numerator = canonical.votes.sumOf { (spec.weights[it.indicator] ?: 1.0)*it.vote*it.strength }
-        assertEquals(CanonicalIndicators.pyRound(spec.aggregation.score(numerator/denominator, resonance), spec.aggregation.roundScore), canonical.score)
+        val base = families.sumOf { it.first * it.second } / families.sumOf { it.first }
+        assertEquals(CanonicalIndicators.pyRound(spec.aggregation.score(base, resonance), spec.aggregation.roundScore), canonical.score)
     }
 }

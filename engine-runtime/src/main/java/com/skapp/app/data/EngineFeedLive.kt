@@ -60,12 +60,12 @@ object EngineFeedLive {
         }
         val pulse = LivePulse.of(snap)
 
-        onProgress("本地 12 引擎重算候选池…")
-        val screened = LocalScreener.screen(criteria, onProgress, mode = "all")
+        onProgress("本地规格驱动链路重算候选池…")
+        val screened = LocalScreener.screen(criteria, onProgress, mode = "all", snapshotIn = snap)
 
         onProgress("外围指数与本地板块强弱…")
         val indices = runCatching { MarketDataClient.globalIndices() }.getOrDefault(emptyList())
-        val sectors = runCatching { LocalSectors.compute() }.getOrNull()
+        val sectors = runCatching { LocalSectors.compute(snapshotIn = snap) }.getOrNull()
         // 外围指数只拉一次：策略卡的入市闸门与本轮 market_phase 用同一份数据
         val strategy = LiveExtras.strategy(globalIndices = indices)
         // 当天快照仍落一份：盘中给实时封板率兜底，收盘后就是「今天」的那一行
@@ -136,31 +136,29 @@ object EngineFeedLive {
         val snapAgeMs = if (snapTs > 0) ts - snapTs else 0L
         val stale = snapshot.isNotEmpty() && snapTs > 0 && snapAgeMs > STALE_MS
 
-        val scored = screened.filter { (it.centralScore ?: 0.0) > 0.0 }
-            .sortedByDescending { it.effectiveScore ?: it.centralScore ?: 0.0 }
+        // 展示基分是 canonical.score；effectiveScore 仅决定顺序，不替换基分。
+        val scored = screened.filter { it.chain?.canonical?.score?.isFinite() == true }
+            .sortedByDescending { it.effectiveScore?.takeIf(Double::isFinite) ?: it.chain!!.canonical!!.score }
             .take(limit)
 
         val top = scored.mapIndexed { i, s ->
-            val eng = s.engine
+            val canonical = requireNotNull(s.chain?.canonical)
             EngineFeed.EngineV5Top(
                 rank = i + 1,
                 code = s.code,
                 date = date,
                 price = s.price,
-                score = s.centralScore ?: 0.0,
-                resonance = s.resonanceRatio ?: 0.0,
-                bull = eng?.bullCount ?: 0,
-                bear = eng?.bearCount ?: 0,
-                neutral = eng?.neutralCount ?: 0,
-                votes = eng?.engines.orEmpty().map { e ->
+                score = canonical.score,
+                resonance = canonical.resonance,
+                bull = canonical.bull,
+                bear = canonical.bear,
+                neutral = canonical.neutral,
+                votes = canonical.votes.map { e ->
                     EngineFeed.Vote(
-                        indicator = e.engine,
-                        vote = voteOf(e.signal),
-                        // 强度 = 偏离中性的幅度（0..1），方向由 vote 承载。
-                        // 旧写法直接拿 score/100：中性 50 分被当成 0.5 强度、看空 32 分当成 0.32，
-                        // 界面上看着像「看空强度 0.32」，实际是把分数当强度用了。
-                        strength = (kotlin.math.abs((e.score ?: 50.0) - 50.0) / 50.0).coerceIn(0.0, 1.0),
-                        why = e.reasons.firstOrNull() ?: e.signal.orEmpty(),
+                        indicator = e.indicator,
+                        vote = e.vote,
+                        strength = e.strength,
+                        why = e.why,
                     )
                 },
             )
@@ -320,17 +318,24 @@ object EngineFeedLive {
                 reason = capAdvice.reasons.joinToString("；"),
             ),
             cards = scored.take(10).map { s ->
+                val canonical = requireNotNull(s.chain?.canonical)
                 EngineFeed.DecisionCard(
                     code = s.code,
                     name = s.name ?: s.code,
                     price = s.price,
                     chgPct = s.pctChg,
-                    composite = s.centralScore ?: 0.0,
-                    dims = s.engine?.engines.orEmpty()
-                        .mapNotNull { e -> e.score?.let { e.engine to it } }
-                        .toMap(),
-                    action = actionOf(s.centralScore ?: 0.0, s.buyable == true),
-                    confidence = (s.resonanceRatio ?: 0.0).coerceIn(0.0, 1.0),
+                    composite = canonical.score,
+                    // 方向 × 强度的票映射（0~100），不是校准分，也不参与交易计算。
+                    dims = canonical.votes.associate { e ->
+                        e.indicator to (50.0 + 50.0 * e.vote * e.strength)
+                    },
+                    action = actionOf(canonical.score,
+                        s.buyable == true && s.riskFlag == null && s.chain?.riskFlag == null &&
+                            s.safetyInputsReady && s.dataEvidence?.validAt(ts) == true &&
+                            s.snapshotStatus == "live" && Code.isMainBoard(s.code) &&
+                            (s.pctChg ?: Double.POSITIVE_INFINITY) < MarketLimits.LIMIT_UP_PCT &&
+                            s.snapshotAtMs?.let { it > 0L && ts - it in 0..STALE_MS } == true),
+                    confidence = canonical.resonance.coerceIn(0.0, 1.0),
                 )
             },
             avoid = screened.filter { it.buyable != true }

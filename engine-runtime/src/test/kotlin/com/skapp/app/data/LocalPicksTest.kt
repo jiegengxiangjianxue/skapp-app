@@ -46,6 +46,98 @@ class LocalPicksTest {
     )
 
     @Test
+    fun `明日早盘缺early结果不能借canonical推荐`() {
+        for (session in listOf(LocalPicks.Session.REALTIME, LocalPicks.Session.MORNING)) {
+            val result = LocalPicks.build(listOf(row("600001", 99.0)), session, "2026-11-02T20:00:00+08:00")
+            assertTrue(result.picks.isEmpty(), session.key)
+            assertEquals("insufficient", result.status)
+        }
+    }
+
+    private fun earlyRow(): LocalScreener.Screened {
+        val bars = (0 until 120).map { i ->
+            val close = 10.0 + i * 0.08 + kotlin.math.sin(i * 0.7) * 0.15
+            KBar(java.time.LocalDate.of(2026, 6, 1).plusDays(i.toLong()).toString(),
+                close - 0.03, close, close + 0.1, close - 0.1, 1000.0 + i * 20)
+        }
+        val context = EarlyVoteEngine.Context(mainNetToday = 1.0e8, industryChg5 = 5.0,
+            globalAvgChg = 2.0, indexCloses = bars.mapIndexed { i, bar -> bar.date to (3000.0 + i) })
+        return row("600001", 91.0).copy(
+            earlyTomorrow = EarlyVoteEngine.tomorrow(bars, context),
+            earlyMorning = EarlyVoteEngine.morning(bars, context), bars = bars,
+        )
+    }
+
+    @Test
+    fun `相同bars明日和早盘用不同公式且午盘保持canonical`() {
+        val s = earlyRow()
+        val tomorrow = kotlin.test.assertNotNull(s.earlyTomorrow)
+        val morning = kotlin.test.assertNotNull(s.earlyMorning)
+        assertTrue(tomorrow.score >= 55 && morning.score >= 55)
+        assertTrue(tomorrow.votes.map { it.indicator } != morning.votes.map { it.indicator })
+        val real = LocalPicks.build(listOf(s), LocalPicks.Session.REALTIME, "2026-11-02T20:00:00+08:00")
+        val early = LocalPicks.build(listOf(s), LocalPicks.Session.MORNING, "2026-11-02T09:30:00+08:00")
+        val mid = LocalPicks.build(listOf(s), LocalPicks.Session.MIDDAY, "2026-11-02T13:00:00+08:00")
+        assertEquals(tomorrow.score, real.picks.single().score)
+        assertEquals(morning.score, early.picks.single().score)
+        assertEquals(91.0, mid.picks.single().score)
+        assertEquals("EarlyVoteEngine.tomorrow", real.metadata["scoreSource"])
+        assertEquals("EarlyVoteEngine.morning", early.metadata["scoreSource"])
+        assertTrue(real.picks.single().why.any { it.contains("0.6/0.4") })
+        assertTrue(early.picks.single().why.any { it.contains("0.5/0.5") })
+        assertEquals(EarlyVoteEngine.VERSION, real.metadata["engineVersion"])
+        val archived = IntradayPicks.toRound(real, "2026-11-02T20:00:00+08:00", "realtime")
+        assertEquals(EarlyVoteEngine.VERSION, archived.getString("version"))
+        assertEquals("EarlyVoteEngine.tomorrow", archived.getString("scoreSource"))
+        assertTrue(archived.has("dataAsOf"))
+        assertTrue(archived.isNull("dataAsOf"))
+        val quotedAt = java.time.OffsetDateTime.parse("2026-11-02T19:59:00+08:00").toInstant().toEpochMilli()
+        val withTime = LocalPicks.build(listOf(s.copy(snapshotAtMs = quotedAt, snapshotSource = "synthetic_fixture")),
+            LocalPicks.Session.REALTIME, "2026-11-02T20:00:00+08:00")
+        assertEquals("2026-11-02T19:59+08:00",
+            IntradayPicks.toRound(withTime, "2026-11-02T20:00:00+08:00", "realtime").getString("dataAsOf"))
+    }
+
+    @Test
+    fun `early安全输入就绪时不依赖另一评分器产分`() {
+        val s = earlyRow().copy(detailStatus = "insufficient", canonicalScore = null, safetyInputsReady = true)
+        for (session in listOf(LocalPicks.Session.REALTIME, LocalPicks.Session.MORNING)) {
+            assertEquals(1, LocalPicks.build(listOf(s), session, "2026-11-02T20:00:00+08:00").picks.size)
+            assertTrue(LocalPicks.build(listOf(s.copy(safetyInputsReady = false)), session,
+                "2026-11-02T20:00:00+08:00").picks.isEmpty())
+        }
+    }
+
+    @Test
+    fun `early高分仍服从财务涨停风控新鲜度主板门禁`() {
+        val s = earlyRow()
+        for (session in listOf(LocalPicks.Session.REALTIME, LocalPicks.Session.MORNING)) {
+            val rejected = listOf(s.copy(dataEvidence = null), s.copy(pctChg = 9.6),
+                s.copy(riskFlag = "risk"), s.copy(snapshotStatus = "stale"), s.copy(code = "300001"))
+            for (candidate in rejected) {
+                assertTrue(LocalPicks.build(listOf(candidate), session, "2026-11-02T20:00:00+08:00").picks.isEmpty())
+            }
+        }
+    }
+
+    @Test
+    fun `同轮bars传递且包装层不重新请求指数或参数`() = kotlinx.coroutines.runBlocking {
+        val s = earlyRow()
+        kotlin.test.assertSame(s.bars, s.copy(riskFlag = "news").bars)
+        kotlin.test.assertNotNull(ExitPlan.compute(s.bars))
+        val artifact = LocalPicks.buildWithMarket(listOf(s), LocalPicks.Session.MIDDAY, "2026-11-02T13:00:00+08:00")
+        assertEquals(91.0, artifact.picks.single().score)
+        val root = java.io.File(System.getProperty("skapp.fixtures")).parentFile
+        val holder = java.io.File(root, "ui/src/main/java/com/skapp/app/ui/state/LocalPicksHolder.kt").readText()
+        assertTrue(holder.contains("screenedByCode[p.code]?.bars.orEmpty()"))
+        assertTrue(!holder.contains("DataCache.kline(p.code"))
+        val screener = java.io.File(root, "engine-runtime/src/main/java/com/skapp/app/data/LocalScreener.kt").readText()
+        assertTrue(screener.contains("bars = bars,"))
+        assertTrue(screener.contains("EarlyVoteEngine.tomorrow(bars, earlyContext)"))
+        assertTrue(screener.contains("EarlyVoteEngine.morning(bars, earlyContext)"))
+    }
+
+    @Test
     fun `达标的票才进 picks`() {
         val artifact = LocalPicks.build(
             screened = listOf(row("600001", 62.0), row("000002", 71.5, pct = 4.2)),
@@ -273,9 +365,9 @@ class LocalPicksTest {
     @Test
     fun `链路分优先且不再过第二次市况闸门`() {
         val result = LocalPicks.build(listOf(row("600001", 1.0).copy(canonicalScore = 66.0)),
-            LocalPicks.Session.REALTIME, "2026-11-02T20:00:00+08:00", gate = 0.5)
+            LocalPicks.Session.MIDDAY, "2026-11-02T13:00:00+08:00", gate = 0.5)
         assertEquals(66.0, result.picks.single().score)
-        assertEquals("realtime", result.session)
+        assertEquals("midday", result.session)
     }
 
     @Test

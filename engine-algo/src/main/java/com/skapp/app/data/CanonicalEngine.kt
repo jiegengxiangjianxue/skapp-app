@@ -17,7 +17,7 @@ import kotlin.math.min
  *
  * [LocalEngine] 的 12 引擎是另一套口径（每引擎直接给 0~100 分再平均），保留它是因为
  * 界面与筛股链路仍在用；但「引擎评分」的权威口径从这里出。
- * spec 的 `family` 目前仅用于分类；评分与共振仍逐票计算，尚未做族级归并。
+ * spec 的 `aggregation.kind` 决定逐票回放或族级归并；原票明细与族计数分别保留。
  *
  * ## 不编造
  *
@@ -41,6 +41,9 @@ object CanonicalEngine {
         val signal: String,
         val specVersion: String,
         val missing: List<String> = emptyList(),
+        val familyBull: Int = 0,
+        val familyBear: Int = 0,
+        val familyNeutral: Int = 0,
     ) {
         val directional: Int get() = bull + bear
     }
@@ -60,9 +63,18 @@ object CanonicalEngine {
         val vol = bars.map { it.vol }
         val votes = buildVotes(code, close, high, low, vol, spec).toMutableList()
         votes += externalVotes
+        return aggregateVotes(votes, weights ?: spec.weights, spec, code)
+    }
+
+    internal fun aggregateVotes(
+        votes: List<Vote>,
+        weights: Map<String, Double>,
+        spec: EngineSpec,
+        code: String = "",
+    ): Result? {
         if (votes.isEmpty()) return null
         val agg = spec.aggregation
-        val w = weights ?: spec.weights
+        val w = weights
         var num = 0.0
         var den = 0.0
         var bull = 0
@@ -71,7 +83,13 @@ object CanonicalEngine {
         // 约定行为（与 engine_v5 的 w.get(ind, 1.0) 对齐），但权重文件少一票与
         // 「这一票本来就该权 1.0」看起来一样，得记下是哪几票。
         val missingWeights = ArrayList<String>()
-        val activeVotes = votes.filter { (w[it.indicator] ?: 1.0).let { weight -> weight.isFinite() && weight > 0.0 } }
+        val familyMode = agg.kind == "family_weighted_vote"
+        // 第一条占位后再校验；非法首票不能被后续同名票偷偷替换。
+        val candidates = if (familyMode) votes.distinctBy { it.indicator } else votes
+        val activeVotes = candidates.filter {
+            (w[it.indicator] ?: 1.0).let { weight -> weight.isFinite() && weight > 0.0 } &&
+                it.indicator.isNotBlank() && it.vote in -1..1 && it.strength.isFinite() && it.strength in 0.0..1.0
+        }
         for (v in activeVotes) {
             val declared = w[v.indicator]
             if (declared == null) missingWeights += v.indicator
@@ -82,9 +100,44 @@ object CanonicalEngine {
             if (v.vote > 0) bull++ else if (v.vote < 0) bear++
         }
         val directional = bull + bear
-        val resonance = if (directional > 0) max(bull, bear).toDouble() / directional else 0.0
+        var resonance = if (directional > 0) max(bull, bear).toDouble() / directional else 0.0
         if (den <= 0.0) return null
+        var familyBull = 0
+        var familyBear = 0
+        var familyNeutral = 0
+        if (familyMode) {
+            // 命名空间分开，避免某个指标名恰好与族名相同而误合并。
+            val families = activeVotes.groupBy { vote ->
+                val family = spec.familyOfWeightKey(vote.indicator)
+                if (!family.isNullOrBlank() && family != "external") true to family
+                else false to vote.indicator
+            }
+            num = 0.0
+            den = 0.0
+            val scale = activeVotes.maxOf { w[it.indicator] ?: 1.0 }
+            for (members in families.values) {
+                var familyNum = 0.0
+                var familyDen = 0.0
+                val familyWeight = members.maxOf { w[it.indicator] ?: 1.0 }
+                for (vote in members) {
+                    val weight = (w[vote.indicator] ?: 1.0) / familyWeight
+                    familyNum += weight * vote.vote * vote.strength
+                    familyDen += weight
+                }
+                val net = familyNum / familyDen
+                when {
+                    net > 1e-12 -> familyBull++
+                    net < -1e-12 -> familyBear++
+                    else -> familyNeutral++
+                }
+                num += (familyWeight / scale) * net
+                den += familyWeight / scale
+            }
+            val familyDirectional = familyBull + familyBear
+            resonance = if (familyDirectional > 0) max(familyBull, familyBear).toDouble() / familyDirectional else 0.0
+        }
         val base = num / den
+        if (!base.isFinite()) return null
         val score = CanonicalIndicators.pyRound(agg.score(base, resonance), agg.roundScore)
         return Result(
             code = code,
@@ -98,6 +151,9 @@ object CanonicalEngine {
             signal = agg.signalOf(score),
             specVersion = spec.specVersion,
             missing = missingWeights,
+            familyBull = familyBull,
+            familyBear = familyBear,
+            familyNeutral = familyNeutral,
         )
     }
 

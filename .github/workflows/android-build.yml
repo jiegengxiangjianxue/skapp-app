@@ -337,7 +337,7 @@ jobs:
         include:
           - { module: engine-core, group: core, filters: '*Test' }
           - { module: engine-net, group: net, filters: '*Test' }
-          - { module: engine-algo, group: canonical, filters: '*Canonical21VoteParityTest,*CanonicalEngineParityTest' }
+          - { module: engine-algo, group: canonical, filters: '*Canonical21VoteParityTest,*CanonicalEngineParityTest,*FamilyAggregationTest,*IndicatorSingleSourceTest,*CentralInputContractTest' }
           - { module: engine-algo, group: engines-state, filters: '*EngineV2ParityTest,*VolTargetParityTest,*EngineSurfaceRenderContractTest' }
           - { module: engine-algo, group: early-votes, filters: '*EarlyVoteParityTest' }
           - { module: engine-algo, group: price-levels, filters: '*PriceLevelParityTest,*SuperTrendTest,*IndicatorWindowTest' }
@@ -346,7 +346,7 @@ jobs:
           - { module: engine-algo, group: sectors-pulse, filters: '*LocalSectorsTest,*SectorAliasTest,*SectorLinkTest,*ResonanceAndPulseTest,*LivePulseTest,*PeadEventsTest' }
           - { module: engine-algo, group: render-contracts, filters: '*UiRenderContractTest,*ScreenDataContractTest,*CloudArtifactIntegrationTest' }
           - { module: engine-algo, group: perf, filters: '*PerfProbeTest' }
-          - { module: engine-runtime, group: wiring, filters: '*BoardStatsWiringTest,*ChainIntegrityTest,*CloudParamsTest,*EngineFeedLiveTest,*HeartbeatPolicyTest' }
+          - { module: engine-runtime, group: wiring, filters: '*BoardStatsWiringTest,*ChainIntegrityTest,*CloudParamsTest,*EngineFeedLiveTest,*HeartbeatPolicyTest,*ScreenerRequestTest,*CentralAnalysisTest,*CentralEngineE2ETest' }
           - { module: engine-runtime, group: picks, filters: '*LocalPicksTest,*PickScoringChainTest,*SectorBoostTest' }
           - { module: engine-runtime, group: snapshot, filters: '*LocalSnapshotTest,*SnapshotStatusTest,*DayArchiveTest,*LiveExtrasTest' }
           - { module: engine-runtime, group: contracts, filters: '*ScreenDataContractRuntimeTest,*NewsCalcResolveTest' }

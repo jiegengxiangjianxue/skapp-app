@@ -5,6 +5,9 @@ import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.junit4.createComposeRule
+import com.skapp.app.data.LocalEngineResult
+import com.skapp.app.data.StockDetail
+import com.skapp.app.ui.screens.StockDetailSheet
 import com.skapp.app.ui.screens.CredentialsScreen
 import com.skapp.app.ui.screens.DashboardHubScreen
 import com.skapp.app.ui.screens.DashboardScreen
@@ -20,6 +23,7 @@ import com.skapp.app.ui.screens.SectorsScreen
 import com.skapp.app.ui.screens.PicksHubScreen
 import com.skapp.app.ui.screens.SummaryHubScreen
 import com.skapp.app.ui.screens.ThemeScreen
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -38,8 +42,8 @@ import org.robolectric.annotation.Config
  * 1. 组合必须顺利完成、不抛异常 —— 空数据下崩溃是端上最常见的白屏原因，数据层测试发现不了；
  * 2. 有静态文案的屏，还要求至少一条属于自己的文案真的显示出来（不是空组合）。
  *
- * 只断言静态文案与「有文本节点」这类**与数据无关**的事实，不猜数据驱动的数值 ——
- * 数值正确性归 `ScreenDataContractTest` / `ScreenDataContractRuntimeTest`。
+ * 主屏断言静态文案与「有文本节点」；详情页另用显式状态验证中枢评分来源隔离，
+ * 不验证算法计算正确性（归 `ScreenDataContractTest` / `ScreenDataContractRuntimeTest`）。
  *
  * ## 为什么断言「至少一个文本节点」
  *
@@ -86,6 +90,45 @@ class ScreenRenderRobolectricTest {
         }
         assertTrue("$screen 未渲染出候选文案 ${candidates.toList()} 中的任何一条", shown)
     }
+
+    private fun assertDetailCentralScore(centralScore: Double?, expected: String?) {
+        val state = UiState(
+            detail = StockDetail(code = "600519", name = "评分隔离测试"),
+            detailLoading = false,
+            localEngine = LocalEngineResult(
+                factors = null, engines = emptyList(), composite = 90.0,
+                nValid = 12, barsUsed = 320, weightedComposite = 90.0, centralScore = 90.0,
+            ),
+            centralEngineScore = centralScore,
+            engineSpecVersion = "3.3.0",
+        )
+        val viewModel = vm()
+        compose.setContent { StockDetailSheet(viewModel, state) }
+        val texts = textNodes().flatMap {
+            it.config.getOrNull(SemanticsProperties.Text).orEmpty().map { text -> text.text }
+        }
+        assertEquals(
+            "中枢评分不得使用旧12引擎的90分兜底",
+            listOfNotNull(expected),
+            texts.filter { it.startsWith("中枢综合 ") },
+        )
+        if (expected == null) assertTrue("缺失或非有限评分必须显示 insufficient", "insufficient" in texts)
+        assertTrue("旧引擎功能应保留为技术对照", texts.any { it.contains("旧12引擎技术对照，非中枢评分") })
+        assertTrue("共振口径不得冒充逐票统计", texts.any { it.contains("按启用规格聚合") && it.contains("3.3.0") })
+    }
+
+    @Test(timeout = 120_000)
+    fun `详情 中枢缺失不回退旧引擎高分`() = assertDetailCentralScore(null, null)
+
+    @Test(timeout = 120_000)
+    fun `详情 中枢低分不被旧引擎高分替代`() =
+        assertDetailCentralScore(30.0, "中枢综合 ${String.format("%.1f", 30.0)}")
+
+    @Test(timeout = 120_000)
+    fun `详情 中枢NaN显示数据不足`() = assertDetailCentralScore(Double.NaN, null)
+
+    @Test(timeout = 120_000)
+    fun `详情 中枢无穷值显示数据不足`() = assertDetailCentralScore(Double.POSITIVE_INFINITY, null)
 
     // ── 有静态文案的屏：文案 + 不白屏 ────────────────────────────────────
 

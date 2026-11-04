@@ -1,9 +1,16 @@
 package com.skapp.app.data
 
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 
 /**
  * 本地实时选股引擎 —— 在设备上完成「实时收集数据 → 算法分析 → 出结果」。
@@ -96,6 +103,13 @@ object LocalScreener {
         /** 排序分 = canonicalScore + 板块偏移，见 [effectiveScoreOf]；只影响排序，不影响 minScore 过滤 */
         val effectiveScore: Double? = null,
         val dataEvidence: DataEvidence? = null,
+        val earlyTomorrow: EarlyVoteEngine.Result? = null,
+        val earlyMorning: EarlyVoteEngine.Result? = null,
+        /** 本轮已过滤日期的 K 线，退出计划复用，禁止另取一轮混合时点。 */
+        val bars: List<KBar> = emptyList(),
+        val safetyInputsReady: Boolean = detailStatus == "ok",
+        val snapshotAtMs: Long? = null,
+        val snapshotSource: String? = null,
     )
 
     /**
@@ -171,18 +185,88 @@ object LocalScreener {
         Result.failure(e)
     }
 
+    /** Full value equality, not a serialized digest; only in-flight work is shared. */
+    internal data class RequestKey(
+        val criteria: Criteria = Criteria(),
+        val mode: String = "score",
+        val dropLastBar: Boolean = false,
+        val rotation: Int = 0,
+        val fallbackCodes: List<String> = emptyList(),
+        val evidenceByCode: Map<String, DataEvidence> = emptyMap(),
+        val news: List<EngineChain.NewsEvidence> = emptyList(),
+        val newsAvailable: Boolean = false,
+        val snapshotIn: List<LiveMarket.Row>? = null,
+    )
+
+    internal class RequestCoordinator {
+        private val mutex = Mutex()
+        private val pending = mutableMapOf<RequestKey, CompletableDeferred<List<Screened>>>()
+
+        suspend fun run(key: RequestKey, compute: suspend () -> List<Screened>): List<Screened> {
+            val (result, owner) = mutex.withLock {
+                val existing = pending[key]?.takeIf { it.isActive }
+                if (existing != null) existing to false
+                else CompletableDeferred<List<Screened>>().also { pending[key] = it } to true
+            }
+            // The deferred has no parent: cancelling a waiter never cancels the owner.
+            if (!owner) return result.await()
+            try {
+                val rows = compute()
+                currentCoroutineContext().ensureActive()
+                result.complete(rows)
+                return rows
+            } catch (error: Throwable) {
+                result.completeExceptionally(error)
+                throw error
+            } finally {
+                withContext(NonCancellable) {
+                    mutex.withLock {
+                        if (pending[key] === result) pending.remove(key)
+                    }
+                }
+            }
+        }
+    }
+
+    private val requests = RequestCoordinator()
+
+    /** An explicitly empty snapshot is authoritative, never a request for stale/network data. */
+    internal suspend fun snapshotForRequest(
+        snapshotIn: List<LiveMarket.Row>?,
+        fetch: suspend () -> List<LiveMarket.Row>,
+    ): List<LiveMarket.Row> = snapshotIn ?: fetch()
+
     suspend fun screen(c: Criteria = Criteria(), onProgress: (String) -> Unit = {},
                        mode: String = "score", dropLastBar: Boolean = false,
                        rotation: Int = 0, fallbackCodes: List<String> = emptyList(),
                        evidenceByCode: Map<String, DataEvidence> = emptyMap(),
                        news: List<EngineChain.NewsEvidence> = CentralAnalysis.newsOf(emptyList()),
-                       newsAvailable: Boolean = CentralAnalysis.hasNewsContext): List<Screened> = coroutineScope {
-        onProgress("正在实时拉取全市场行情…")
+                       newsAvailable: Boolean = CentralAnalysis.hasNewsContext,
+                       snapshotIn: List<LiveMarket.Row>? = null): List<Screened> {
+        // Freeze collection containers so caller mutation cannot corrupt the in-flight map key.
+        val key = RequestKey(c, mode, dropLastBar, rotation, fallbackCodes.toList(),
+            evidenceByCode.toMap(), news.toList(), newsAvailable, snapshotIn?.toList())
+        return requests.run(key) {
+            screenOnce(key.criteria, onProgress, key.mode, key.dropLastBar, key.rotation,
+                key.fallbackCodes, key.evidenceByCode, key.news, key.newsAvailable, key.snapshotIn)
+        }
+    }
+
+    private suspend fun screenOnce(c: Criteria, onProgress: (String) -> Unit,
+                       mode: String = "score", dropLastBar: Boolean = false,
+                       rotation: Int = 0, fallbackCodes: List<String> = emptyList(),
+                       evidenceByCode: Map<String, DataEvidence> = emptyMap(),
+                       news: List<EngineChain.NewsEvidence> = CentralAnalysis.newsOf(emptyList()),
+                       newsAvailable: Boolean = CentralAnalysis.hasNewsContext,
+                       snapshotIn: List<LiveMarket.Row>? = null): List<Screened> = coroutineScope {
+        onProgress(if (snapshotIn == null) "正在实时拉取全市场行情…" else "复用本轮全市场快照…")
         // 全市场快照被东财风控拒绝时退回代码池（自选），否则候选永为 0、推股名单恒空，
         // 而用户只看到「暂无数据」——不知道是被限流。
-        val snap = LiveMarket.snapshot().ifEmpty {
-            onProgress("全市场行情不可用，改用自选池（${fallbackCodes.size} 只）深算；量比/资金流不可得")
-            poolSnap(fallbackCodes)
+        val snap = snapshotForRequest(snapshotIn) {
+            LiveMarket.snapshot().ifEmpty {
+                onProgress("全市场行情不可用，改用自选池（${fallbackCodes.size} 只）深算；量比/资金流不可得")
+                poolSnap(fallbackCodes)
+            }
         }
         if (snap.isEmpty()) return@coroutineScope emptyList()
 
@@ -234,7 +318,8 @@ object LocalScreener {
 
         // 市况闸门只吃指数序列：全轮拉一次，不随个股变化。
         // 拿不到就传 null，链路会记 degraded 并把闸门按 1.0，不拿个股 K 线充数。
-        val regimeCloses = cancellable { IndexDaily.closes() }.getOrNull()
+        val indexBars = cancellable { IndexDaily.fetch()?.bars.orEmpty() }.getOrDefault(emptyList())
+        val regimeCloses = indexBars.map { it.close }
 
         onProgress("预筛命中 ${cands.size} 只，逐只拉 K 线 + 本地引擎计算…")
 
@@ -268,11 +353,19 @@ object LocalScreener {
                         ).let { result -> result.copy(degraded = result.degraded + parameters.notes,
                             status = if (parameters.notes.isNotEmpty() && result.status == "ok") "partial" else result.status) }
                     }.getOrNull() else null
+                    // 仅使用同轮已取到的真实上下文；没有5日板块/外围数据就保留缺项，不拿1日值冒充。
+                    val earlyContext = EarlyVoteEngine.Context(
+                        indexCloses = indexBars.map { it.date to it.close },
+                        mainNetToday = m.mainNet,
+                    )
+                    val earlyTomorrow = EarlyVoteEngine.tomorrow(bars, earlyContext)
+                    val earlyMorning = EarlyVoteEngine.morning(bars, earlyContext)
                     val primary = chain?.canonicalScore?.takeIf { it.isFinite() }
                     val evidence = evidenceByCode[code]
                     val evidenceOk = evidence?.validAt(nowMs) == true
-                    val chainUsable = primary != null && chain?.status != "insufficient" &&
-                        chain?.flow?.score != null && chain?.tape?.score != null && evidenceOk
+                    val safetyInputsReady = bars.size >= 30 && evidenceOk &&
+                        chain?.flow?.score?.isFinite() == true && chain.tape?.score?.isFinite() == true
+                    val chainUsable = primary != null && chain?.status != "insufficient" && safetyInputsReady
                     val sectorName = board?.sectorNameOf(code)
                     val sectorStrength = sectorName?.let { strengthByName[it] }
                     // 退出纪律：破位（收盘跌破 20 日最低）的票一票否决，不再进推荐
@@ -311,6 +404,12 @@ object LocalScreener {
                         sectorStrength = sectorStrength,
                         effectiveScore = effectiveScoreOf(primary, sectorStrength),
                         dataEvidence = evidence,
+                        earlyTomorrow = earlyTomorrow,
+                        earlyMorning = earlyMorning,
+                        bars = bars,
+                        safetyInputsReady = safetyInputsReady,
+                        snapshotAtMs = m.ts.takeIf { it > 0L },
+                        snapshotSource = "LocalScreener/LiveMarket.Row",
                     )
                     }
                 }

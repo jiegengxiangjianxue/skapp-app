@@ -24,7 +24,7 @@ data class EngineSpec(
     val specVersion: String,
     val aggregation: Aggregation,
     val runtime: RuntimePolicy,
-    /** 校准权重（weight_calibrator 产物）：两端读同一份，缺失时等权。 */
+    /** 两端共用权重；默认非校准键由 [defaultWeightKeys] 标明，缺失时等权。 */
     val weights: Map<String, Double>,
     /** 权重的来源标识（`data/engine_weights.json` / `equal`）。页面上要能回放「这份分用的是哪套权重」。 */
     val weightsSource: String,
@@ -43,10 +43,14 @@ data class EngineSpec(
     val cloudOnlyEngines: List<String>,
     val pipeline: List<PipelineStage>,
     val stateParams: Map<String, Map<String, Double>> = emptyMap(),
+    val defaultWeightKeys: List<String> = emptyList(),
 ) {
     private val byId: Map<String, VoteEngine> = engines.associateBy { it.id }
 
     fun engine(id: String): VoteEngine? = byId[id]
+
+    fun familyOfWeightKey(weightKey: String): String? =
+        engines.firstOrNull { it.weightKey == weightKey }?.family
 
     /** 取某个引擎的数值参数；规格里没写的用调用方给的默认值（并保持可追溯）。 */
     fun param(engineId: String, key: String, default: Double): Double =
@@ -73,6 +77,12 @@ data class EngineSpec(
         val roundResonance: Int,
         val roundStrength: Int,
     ) {
+        init {
+            require(kind == "weighted_vote" || kind == "family_weighted_vote") {
+                "Unsupported aggregation kind: $kind"
+            }
+        }
+
         fun signalOf(score: Double): String = when {
             score >= signalBullish -> "bullish"
             score <= signalBearish -> "bearish"
@@ -128,7 +138,7 @@ object EngineSpecLoader {
     const val RESOURCE = "/engine_spec.json"
 
     /** 编译进资源包的那份规格版本；与云端产物比对用。 */
-    const val BUNDLED_VERSION = "3.2.2"
+    const val BUNDLED_VERSION = "3.3.0"
 
     class Loaded(val spec: EngineSpec, val drift: Boolean, val reason: String)
 
@@ -244,6 +254,9 @@ object EngineSpecLoader {
             runtime = runtime,
             weights = weights,
             weightsSource = weightsSource,
+            defaultWeightKeys = root.optJSONArray("default_weight_keys")?.let { a ->
+                (0 until a.length()).map { a.getString(it) }
+            } ?: emptyList(),
             blend = blend,
             engines = engines,
             deviceEngines = root.optJSONArray("device_engines")?.let { a ->

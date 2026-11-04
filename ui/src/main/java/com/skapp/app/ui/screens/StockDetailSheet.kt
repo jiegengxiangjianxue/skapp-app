@@ -355,19 +355,16 @@ fun StockDetailSheet(vm: SkappViewModel, state: UiState) {
                 ) {
                     Text("中枢引擎", fontWeight = FontWeight.SemiBold)
                     Text(
-                        state.centralEngineScore?.let { "中枢综合 ${String.format("%.1f", it)}" }
-                            ?: eng?.centralScore?.let { "中枢综合 ${String.format("%.1f", it)}" }
-                            ?: eng?.weightedComposite?.let { "中枢综合 ${String.format("%.1f", it)}" }
-                            ?: eng?.composite?.let { "中枢综合 ${String.format("%.1f", it)}" }
-                            ?: "insufficient",
+                        state.centralEngineScore?.takeIf { it.isFinite() }
+                            ?.let { "中枢综合 ${String.format("%.1f", it)}" } ?: "insufficient",
                         fontWeight = FontWeight.Bold,
-                        color = state.centralEngineScore?.let(::scoreColor)
-                            ?: (eng?.centralScore ?: eng?.weightedComposite ?: eng?.composite)?.let(::scoreColor) ?: SkColors.textSecondary,
+                        color = state.centralEngineScore?.takeIf { it.isFinite() }?.let(::scoreColor)
+                            ?: SkColors.textSecondary,
                     )
                 }
                 Text("中枢总结：${state.centralEngineSummary?.takeIf { it.isNotBlank() } ?: "暂无数据：中枢总结未返回。"}",
                     style = MaterialTheme.typography.bodySmall)
-                Text("规格投票共振：${state.centralEngineResonance?.let { String.format("%.0f%%", it * 100) } ?: "insufficient"}（按实际启用规格票计算；不是旧12引擎族级共振）· 状态：${state.centralEngineStatus}",
+                Text("规格共振：${state.centralEngineResonance?.takeIf { it.isFinite() }?.let { String.format("%.0f%%", it * 100) } ?: "insufficient"}（按启用规格聚合）· 状态：${state.centralEngineStatus} · 规格：${state.engineSpecVersion ?: "unknown"}",
                     style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
                 // 形态标签（#1 日本蜡烛图）：引擎只认锤子/倒锤子，无命中时整行不出现，不占位
                 val patternTags = remember(d.code, state.kline.size) {
@@ -387,7 +384,7 @@ fun StockDetailSheet(vm: SkappViewModel, state: UiState) {
                     )
                 }
                 Text(
-                    "技术对照：基于 ${eng?.barsUsed ?: 0} 根日 K，旧12引擎有效 ${eng?.nValid ?: 0}/${eng?.engines?.size ?: 0}；不代表资金、消息或市况输入完整",
+                    "旧12引擎技术对照，非中枢评分：基于 ${eng?.barsUsed ?: 0} 根日 K，有效 ${eng?.nValid ?: 0}/${eng?.engines?.size ?: 0}；不代表资金、消息或市况输入完整",
                     style = MaterialTheme.typography.bodySmall,
                     color = SkColors.textSecondary,
                 )

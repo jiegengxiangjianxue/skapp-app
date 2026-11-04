@@ -18,6 +18,7 @@ package com.skapp.app.data
  * 分母随之变化，绝不用 0 票或中性票顶替。
  */
 object EarlyVoteEngine {
+    const val VERSION = "early-vote-1"
 
     /** 两套引擎的族差异只有同向率系数与票集，其余实现共用。 */
     enum class Family(
