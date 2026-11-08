@@ -39,6 +39,7 @@ internal class NewsSummaryHolder(
                     continue
                 }
                 loadNewsCalcs().join()
+                loadSummary().join()
                 val wait = if (MarketHours.isTrading() || MarketHours.isAuction()) 30_000L else 180_000L
                 delay(wait)
             }
@@ -167,7 +168,12 @@ internal class NewsSummaryHolder(
         val snap = com.skapp.app.data.LiveMarket.snapshot(force = force)
         if (snap.isEmpty()) return localBoardUnavailable()
         val now = System.currentTimeMillis()
-        if (snap.any { now - it.ts !in 0..300_000L }) return localBoardUnavailable()
+        if (snap.any { now - it.ts !in 0..300_000L }) return localBoardUnavailable() + mapOf(
+            "reason" to "行情源时间未知或已过期；抓取成功不等于实时行情。",
+            "sampleSize" to snap.size,
+            "unknownTimeCount" to snap.count { it.ts <= 0L },
+            "staleCount" to snap.count { it.ts > 0L && now - it.ts !in 0..300_000L },
+        )
         val pulse = com.skapp.app.data.LivePulse.of(snap)
         val mapping = requestResult { com.skapp.app.data.SectorLink.load() }.getOrNull()
         val res = mapping?.let { board ->
@@ -336,8 +342,13 @@ internal class NewsSummaryHolder(
                 // 快通道结果先放开 UI 转圈，让用户立即看到数据
                 _state.value = _state.value.copy(summaryRefreshing = false, summaryRefreshMessage = message)
 
-                picks.ensureLocalPicks()
-                message += "；已检查当前推股时段，执行状态见候选区。"
+                val session = com.skapp.app.data.LocalPicks.sessionAt(System.currentTimeMillis(), !MarketHours.isClosedDay())
+                if (session != null) {
+                    picks.refreshLocalPicks(session)
+                    message += "；已请求当前时段强制重算，执行状态见候选区。"
+                } else {
+                    message += "；当前不在可更新时段，保留冻结推股记录。"
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {

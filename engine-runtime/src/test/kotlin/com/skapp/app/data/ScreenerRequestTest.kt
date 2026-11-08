@@ -13,6 +13,14 @@ import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 
 class ScreenerRequestTest {
+    @Test fun `fallback quote retains source time and missing remains unknown`() {
+        val stamp = "2026-11-06 15:00:00"
+        val expected = CentralAnalysis.timeOf(stamp)!!
+        assertEquals(expected, LocalScreener.quoteSnapshot(listOf(Quote("600519", ts = stamp))).single().ts)
+        assertEquals(0L, LocalScreener.quoteSnapshot(listOf(Quote("600519"))).single().ts)
+        assertEquals("stale", FreshnessPolicy.snapshotStatus(expected, expected + 600_000))
+    }
+
     private fun row() = LiveMarket.Row(
         code = "600000", name = "fixture", price = 10.0, pctChg = 2.0,
         volumeLots = null, amount = null, amplitude = null, turnoverRate = null,

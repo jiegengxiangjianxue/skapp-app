@@ -27,10 +27,11 @@ class SnapshotStatusTest {
     }
 
     @Test
-    fun missingTimestampIsNotStale() {
-        // ts <= 0：拿不到时间戳，沿用旧行为（不误报 stale）
-        assertEquals("live", FreshnessPolicy.snapshotStatus(0, now))
-        assertEquals("live", FreshnessPolicy.snapshotStatus(-1, now))
+    fun missingOrFutureTimestampIsUnknownNotLive() {
+        assertEquals("unknown", FreshnessPolicy.snapshotStatus(0, now))
+        assertEquals("unknown", FreshnessPolicy.snapshotStatus(-1, now))
+        assertEquals("unknown", FreshnessPolicy.snapshotStatus(now + 1, now))
+        assertEquals("unknown", FreshnessPolicy.snapshotStatus(Long.MAX_VALUE, now))
     }
 
     @Test

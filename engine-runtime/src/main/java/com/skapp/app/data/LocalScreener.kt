@@ -164,8 +164,11 @@ object LocalScreener {
     private suspend fun poolSnap(codes: List<String>): List<LiveMarket.Row> {
         val clean = codes.mapNotNull { Code.normalize(it) }.distinct()
         if (clean.isEmpty()) return emptyList()
-        val ts = System.currentTimeMillis()
-        return TencentQuote.batch(clean).values.map { q ->
+        return quoteSnapshot(TencentQuote.batch(clean).values)
+    }
+
+    internal fun quoteSnapshot(quotes: Collection<Quote>): List<LiveMarket.Row> {
+        return quotes.map { q ->
             LiveMarket.Row(
                 code = q.code,
                 name = q.name,
@@ -179,7 +182,8 @@ object LocalScreener {
                 volRatio = null,
                 mv = null,
                 mainNet = null,
-                ts = ts,
+                ts = CentralAnalysis.timeOf(q.ts) ?: 0L,
+                source = "tencent/quote",
             )
         }
     }

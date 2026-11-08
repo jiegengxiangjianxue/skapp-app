@@ -14,8 +14,13 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.OffsetMapping
+import androidx.compose.ui.text.input.TransformedText
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
+import com.skapp.app.data.GitHubModelsClient
 import com.skapp.app.ui.SkappViewModel
 import com.skapp.app.ui.UiState
 import com.skapp.app.ui.components.SkCard
@@ -79,15 +84,24 @@ fun TokenConfigCard(vm: SkappViewModel, state: UiState) {
                 OutlinedTextField(
                     value = state.githubToken,
                     onValueChange = vm::setGithubToken,
-                    label = { Text("GitHub token") },
+                    label = { Text("GitHub tokens（每行一个）") },
                     placeholder = { Text("github.com → Settings → Personal access token") },
+                    supportingText = {
+                        Text("有效令牌 ${GitHubModelsClient.parseTokens(state.githubToken).size} 个；按顺序故障切换，仓库写入仅使用首项")
+                    },
                     modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
+                    minLines = 3,
+                    maxLines = 6,
+                    visualTransformation = VisualTransformation { text ->
+                        TransformedText(
+                            AnnotatedString(text.text.map { if (it == '\n' || it == '\r') it else '•' }.joinToString("")),
+                            OffsetMapping.Identity,
+                        )
+                    },
                 )
                 Spacer(Modifier.height(4.dp))
                 Button(
                     onClick = vm::saveGithubTokenNow,
-                    enabled = state.githubToken.isNotBlank(),
                     modifier = Modifier.fillMaxWidth(),
                 ) { Text("保存 GitHub token") }
                 Text(

@@ -41,8 +41,19 @@ internal object WorkbenchSummary {
             val time = (item["time"] ?: item["published_at"] ?: item["ts"])?.toString()
             !source.isNullOrBlank() && fresh(time, nowMs, 86_400_000L)
         }.distinctBy { (it["source_name"] ?: it["source"]) to (it["title"] ?: it["digest"]) }
-        val pos = news.count { it["direction"]?.toString() in setOf("pos", "positive", "bull") }
-        val neg = news.count { it["direction"]?.toString() in setOf("neg", "negative", "bear") }
+        val directions = news.map { item ->
+            val declared = item["direction"]?.toString()
+            val source = (item["source_name"] ?: item["source"])?.toString()
+            val title = (item["title"] ?: item["digest"])?.toString()
+            val time = CentralAnalysis.timeOf((item["time"] ?: item["published_at"] ?: item["ts"])?.toString())
+            val analysis = s.newsCalcs.firstOrNull {
+                it.newsTitle == title && it.source == source && time != null && CentralAnalysis.timeOf(it.ts) == time
+            }
+            declared?.takeIf { it in setOf("pos", "positive", "bull", "neg", "negative", "bear") }
+                ?: analysis?.direction
+        }
+        val pos = directions.count { it in setOf("pos", "positive", "bull") }
+        val neg = directions.count { it in setOf("neg", "negative", "bear") }
         val newsEntries = if (news.isEmpty()) listOf(Entry("没有通过来源与24小时有效期校验的消息。")) else
             listOf(Entry("有效消息 ${news.size} 条 · 利好 $pos / 利空 $neg；未定性 ${news.size - pos - neg} 条，不补成中性结论。")) +
                 news.take(4).map { Entry("${it["title"] ?: it["digest"] ?: "无标题"} · ${it["source_name"] ?: it["source"]}") }

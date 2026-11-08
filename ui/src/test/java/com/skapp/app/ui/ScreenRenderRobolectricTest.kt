@@ -1,5 +1,8 @@
 package com.skapp.app.ui
 
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
@@ -71,6 +74,23 @@ class ScreenRenderRobolectricTest {
     val compose = createComposeRule()
 
     private fun vm() = SkappViewModel()
+
+    @Test(timeout = 120_000)
+    fun systemInsetsProtectHeaderAndBottomNavigation() {
+        compose.setContent {
+            MainScreen(vm(), contentInsets = WindowInsets(top = 96, bottom = 72, left = 20, right = 20))
+        }
+        val header = compose.onNodeWithTag("main-header").getUnclippedBoundsInRoot()
+        val bar = compose.onNodeWithTag("main-bottom-bar").getUnclippedBoundsInRoot()
+        val content = compose.onNodeWithTag("main-safe-content").getUnclippedBoundsInRoot()
+        val density = compose.density.density
+        assertTrue(header.top.value * density >= 96f)
+        assertTrue(header.left.value * density >= 20f)
+        assertTrue(bar.top > header.bottom)
+        assertEquals(content.bottom.value, bar.bottom.value, 0.5f)
+        val root = compose.onNodeWithTag("main-root").getUnclippedBoundsInRoot()
+        assertTrue((root.bottom.value - bar.bottom.value) * density >= 71.5f)
+    }
 
     @Test(timeout = 120_000)
     fun multiPoolStockAndRefreshAreRealActions() {

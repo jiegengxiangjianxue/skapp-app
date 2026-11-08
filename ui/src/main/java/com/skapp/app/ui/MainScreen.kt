@@ -11,7 +11,9 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
@@ -30,6 +32,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.skapp.app.ui.components.SkTabBar
@@ -76,8 +79,7 @@ private fun GlassBottomBar(
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .height(72.dp)
-            .navigationBarsPadding(),
+            .height(72.dp),
         contentAlignment = Alignment.Center,
     ) {
         // 半透明白色渐变背景（替代原 blur 方案，全 API 层级兼容）
@@ -107,7 +109,11 @@ private fun GlassBottomBar(
 }
 
 @Composable
-fun MainScreen(vm: SkappViewModel, initialTab: Int = 0) {
+fun MainScreen(
+    vm: SkappViewModel,
+    initialTab: Int = 0,
+    contentInsets: WindowInsets = WindowInsets.safeDrawing,
+) {
     val state by vm.state.collectAsStateWithLifecycle()
     var tab by remember { mutableStateOf(MainTab.entries.getOrElse(initialTab) { MainTab.DASHBOARD }) }
     val subTabs = remember { mutableStateMapOf<MainTab, Int>() }
@@ -126,10 +132,13 @@ fun MainScreen(vm: SkappViewModel, initialTab: Int = 0) {
         }
     }
 
+    Box(Modifier.fillMaxSize().testTag("main-root")) {
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
+            .windowInsetsPadding(contentInsets)
+            .testTag("main-safe-content")
             .pointerInput(tab, sub, detailOpen) {
                 var edgeStartX = Float.MAX_VALUE
                 var edgeDragX = 0f
@@ -161,6 +170,7 @@ fun MainScreen(vm: SkappViewModel, initialTab: Int = 0) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .testTag("main-header")
                     .padding(horizontal = 18.dp, vertical = 12.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -192,7 +202,7 @@ fun MainScreen(vm: SkappViewModel, initialTab: Int = 0) {
         }
 
         // 底部悬浮玻璃栏
-        GlassBottomBar {
+        GlassBottomBar(Modifier.align(Alignment.BottomCenter).testTag("main-bottom-bar")) {
             SkTabBar(
                 tabs = MainTab.entries.map { it.label },
                 selected = tab.ordinal,
@@ -211,5 +221,6 @@ fun MainScreen(vm: SkappViewModel, initialTab: Int = 0) {
                 StockDetailSheet(vm, state)
             }
         }
+    }
     }
 }

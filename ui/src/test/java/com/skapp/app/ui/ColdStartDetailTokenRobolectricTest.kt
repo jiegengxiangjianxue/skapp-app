@@ -4,6 +4,8 @@ import android.content.Context
 import android.os.Looper
 import androidx.test.core.app.ApplicationProvider
 import com.skapp.app.data.AiRouter
+import com.skapp.app.data.GitHubModelsClient
+import com.skapp.app.data.GitHubRepoWriter
 import com.skapp.app.data.KPeriod
 import com.skapp.app.ui.state.SKAPP_PREFS
 import org.junit.Assert.assertEquals
@@ -161,6 +163,65 @@ class ColdStartDetailTokenRobolectricTest {
         assertEquals(fakeGhToken, reopened.state.value.githubToken)
         assertTrue(reopened.state.value.aiConfigured)
         assertTrue(reopened.state.value.githubConfigured)
+    }
+
+    @Test(timeout = 120_000)
+    fun `多令牌 保存恢复并且仓库写入只取首项且清空生效`() {
+        freshPrefs()
+        val vm = SkappViewModel()
+        vm.loadSavedToken(ctx)
+        val tokens = " \n$fakeGhToken\n$fakeGhToken\nTEST-second-not-real \n"
+        val writerToken = GitHubRepoWriter::class.java.getDeclaredField("token").apply { isAccessible = true }
+
+        vm.setGithubToken(tokens)
+        vm.saveGithubTokenNow()
+        assertEquals(tokens, prefs().getString("github_token", null))
+        assertTrue(vm.state.value.githubConfigured)
+        assertEquals(fakeGhToken, writerToken.get(GitHubRepoWriter))
+        assertEquals(AiRouter.statusLine(), vm.state.value.aiProviderStatus)
+
+        val reopened = SkappViewModel()
+        reopened.loadSavedToken(ctx)
+        assertEquals(tokens, reopened.state.value.githubToken)
+        assertTrue(reopened.state.value.githubConfigured)
+        assertTrue(GitHubModelsClient.isConfigured())
+        assertEquals(fakeGhToken, writerToken.get(GitHubRepoWriter))
+
+        reopened.setGithubToken("TEST-replacement-not-real\n$fakeGhToken")
+        reopened.saveGithubTokenNow()
+        assertEquals("TEST-replacement-not-real", writerToken.get(GitHubRepoWriter))
+        reopened.setGithubToken("")
+        reopened.saveGithubTokenNow()
+        assertEquals("", prefs().getString("github_token", null))
+        assertFalse(reopened.state.value.githubConfigured)
+        assertFalse(GitHubModelsClient.isConfigured())
+        assertFalse(GitHubRepoWriter.isConfigured())
+        assertNull(writerToken.get(GitHubRepoWriter))
+        val cleared = SkappViewModel()
+        cleared.loadSavedToken(ctx)
+        assertEquals("", cleared.state.value.githubToken)
+        assertFalse(cleared.state.value.githubConfigured)
+    }
+
+    @Test(timeout = 120_000)
+    fun `保存新凭据解除旧路由冷却但重存原集合不解除`() {
+        freshPrefs()
+        val vm = SkappViewModel()
+        vm.loadSavedToken(ctx)
+        vm.setGithubToken(fakeGhToken)
+        vm.saveGithubTokenNow()
+        val routerPrefs = ctx.getSharedPreferences(AiRouter.PREFS, Context.MODE_PRIVATE)
+        val key = "cooldown_" + AiRouter.PROVIDER_GITHUB
+        routerPrefs.edit().putLong(key, System.currentTimeMillis() + AiRouter.COOLDOWN_MS).commit()
+        vm.setGithubToken(" $fakeGhToken\n$fakeGhToken ")
+        vm.saveGithubTokenNow()
+        assertTrue(AiRouter.isCooling(AiRouter.PROVIDER_GITHUB))
+        vm.setGithubToken("TEST-new-credential-not-real")
+        vm.saveGithubTokenNow()
+        assertFalse(AiRouter.isCooling(AiRouter.PROVIDER_GITHUB))
+        assertTrue(AiRouter.availableProviders().contains(AiRouter.PROVIDER_GITHUB))
+        assertEquals(AiRouter.statusLine(), vm.state.value.aiProviderStatus)
+        routerPrefs.edit().remove(key).commit()
     }
 
     @Test(timeout = 120_000)

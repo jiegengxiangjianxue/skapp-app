@@ -50,7 +50,7 @@ object LiveMarket {
         val volRatio: Double?,     // f10 量比
         val mv: Double?,           // f20 总市值（元）
         val mainNet: Double?,      // f62 主力净流入（元）
-        val ts: Long,              // 抓取时刻
+        val ts: Long,              // 源行情时刻；0 表示源没有可验证的日期时间
         /**
          * 以下四个字段为「RPS / 封板率」本地计算新增（同一次 clist 批量里取，零额外请求）：
          * f15 最高价、f18 昨收、f24 60 日涨跌幅、f25 年初至今涨跌幅。
@@ -247,7 +247,7 @@ object LiveMarket {
             "&fs=m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81+s:2048" +
             // f15/f18/f24/f25 一并取：RPS（60日/年初至今涨幅）与封板率（最高价 vs 涨停价）
             // 都要它们，放在同一次批量里不增加请求数。
-            "&fields=f2,f3,f5,f6,f7,f8,f9,f10,f12,f14,f15,f16,f17,f18,f20,f22,f24,f25,f62"
+            "&fields=f2,f3,f5,f6,f7,f8,f9,f10,f12,f14,f15,f16,f17,f18,f20,f22,f24,f25,f62,f124"
         // 单页失败即返回空，重试交给 fetchAll 的补拉轮：在这里 sleep 退避会在并发下
         // 把 8 条 IO 线程全按在睡眠里（实测串行节流 63.8s/37 页，并发 8 只要 2.75s/42 页）。
         for (attempt in HOSTS.indices) {
@@ -267,7 +267,6 @@ object LiveMarket {
         val data = obj.optJSONObject("data") ?: return emptyList()
         val arr = data.optJSONArray("diff") ?: return emptyList()
         val total = data.optInt("total", -1).takeIf { it > 0 }
-        val ts = System.currentTimeMillis()
         return (0 until arr.length()).mapNotNull { i ->
             val o = arr.optJSONObject(i) ?: return@mapNotNull null
             val code = o.optString("f12").takeIf { it.isNotEmpty() } ?: return@mapNotNull null
@@ -284,7 +283,8 @@ object LiveMarket {
                 volRatio = o.num("f10"),
                 mv = o.num("f20"),
                 mainNet = o.num("f62"),
-                ts = ts,
+                ts = o.num("f124")?.takeIf { it.isFinite() && it > 0 && it < Long.MAX_VALUE / 1000.0 }
+                    ?.times(1000)?.toLong() ?: 0L,
                 high = o.num("f15"),
                 low = o.num("f16"),
                 open = o.num("f17"),
@@ -342,7 +342,6 @@ object LiveMarket {
         val url = SINA_BASE + "?page=$page&num=$SINA_PAGE_SIZE&sort=symbol&asc=1&node=hs_a"
         val txt = httpGet(url, referer = "https://finance.sina.com.cn/") ?: return emptyList()
         val arr = runCatching { JSONArray(txt) }.getOrNull() ?: return emptyList()
-        val ts = System.currentTimeMillis()
         return (0 until arr.length()).mapNotNull { i ->
             val o = arr.optJSONObject(i) ?: return@mapNotNull null
             val code = o.optString("code").takeIf { it.length == 6 } ?: return@mapNotNull null
@@ -367,7 +366,8 @@ object LiveMarket {
                 // 新浪 mktcap 单位万元，东财 f20 是元。
                 mv = o.num("mktcap")?.times(10_000.0),
                 mainNet = null,
-                ts = ts,
+                // ticktime 只有时分秒，不能把周五收盘报价拼成周末或周一的新行情。
+                ts = 0L,
                 high = high,
                 low = low,
                 open = o.num("open"),
@@ -375,6 +375,7 @@ object LiveMarket {
                 chg60d = null,
                 chgYtd = null,
                 speed = null,
+                source = "sina/Market_Center",
             )
         }
     }

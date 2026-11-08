@@ -49,6 +49,16 @@ class WorkbenchSummaryTest {
         assertFalse(text(state).contains("旧利空"))
     }
 
+    @Test fun localNewsAnalysisIsCountedOnlyForSameSourceAndTime() {
+        val item = mapOf("title" to "政策消息", "source" to "公开源", "time" to stamp)
+        val calc = com.skapp.app.data.NewsCalc("政策消息", source = "公开源", ts = stamp, direction = "pos")
+        val state = UiState(news = NewsSnapshot(items = listOf(item)), newsCalcs = listOf(calc))
+        assertTrue(text(state).contains("利好 1 / 利空 0"))
+        assertTrue(text(state.copy(newsCalcs = listOf(calc.copy(source = "其他源")))).contains("未定性 1"))
+        assertTrue(text(state.copy(newsCalcs = listOf(calc.copy(ts = "2026-11-08T02:00:00Z")))).contains("未定性 1"))
+        assertTrue(text(state.copy(news = NewsSnapshot(items = listOf(item + ("direction" to "neg"))))).contains("利好 0 / 利空 1"))
+    }
+
     @Test fun technicalCandidateWithMissingDpsDoesNotBecomeRecommendation() {
         val row = LocalScreener.Screened(code = "600519", name = "测试", price = 10.0, pctChg = 1.0,
             volRatio = null, turnover = null, pe = null, mv = null, engine = null,

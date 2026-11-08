@@ -24,6 +24,24 @@ class LiveMarketRowTest {
         assertFalse(LiveMarket.completeCoverage(emptyList()))
     }
 
+    private fun parsed(timestamp: String): LiveMarket.Row {
+        val method = LiveMarket::class.java.getDeclaredMethod("parsePage", String::class.java)
+        method.isAccessible = true
+        val json = """{"data":{"total":1,"diff":[{"f12":"600519","f2":10,"f3":1$timestamp}]}}"""
+        @Suppress("UNCHECKED_CAST")
+        return (method.invoke(LiveMarket, json) as List<LiveMarket.Row>).single()
+    }
+
+    @Test fun `old quotes keep source time instead of fetch time`() {
+        assertEquals(1_730_000_000_000L, parsed(",\"f124\":1730000000").ts)
+    }
+
+    @Test fun `missing and malformed quote times stay unknown`() {
+        assertEquals(0L, parsed("").ts)
+        assertEquals(0L, parsed(",\"f124\":\"-\"").ts)
+        assertEquals(0L, parsed(",\"f124\":-1").ts)
+    }
+
     private fun row(code: String, pct: Double, name: String? = "测试股") = LiveMarket.Row(
         code = code,
         name = name,

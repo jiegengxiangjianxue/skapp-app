@@ -30,18 +30,35 @@ object GitHubModelsClient {
     const val LIGHT_MODEL = "llama-3.1-8b-instant"
     private const val TIMEOUT = 90000
 
-    /** token 由用户在 app 设置页填入（SharedPreferences key=github_token，由 AiRouter/SkappViewModel 注入） */
-    private var token: String? = null
-
-    fun setToken(t: String?) {
-        token = t?.takeIf { it.isNotBlank() }
+    internal var openConnection: () -> HttpURLConnection = {
+        URL(ENDPOINT).openConnection() as HttpURLConnection
     }
 
-    fun isConfigured(): Boolean = !token.isNullOrBlank()
+    /** token 由用户在 app 设置页填入（SharedPreferences key=github_token，由 AiRouter/SkappViewModel 注入） */
+    @Volatile
+    private var tokens: List<String> = emptyList()
+
+    fun parseTokens(t: String?): List<String> = t.orEmpty().lineSequence()
+        .map { it.trim() }
+        .filter { it.isNotEmpty() && it.all { ch -> ch in '!'..'~' } }
+        .distinct()
+        .toList()
+
+    fun setToken(t: String?) {
+        tokens = parseTokens(t)
+        lastHttpCode = 0
+        lastRateLimited = false
+    }
+
+    fun isConfigured(): Boolean = tokens.isNotEmpty()
 
     /** 最近一次调用的 HTTP 状态码（0=未请求/网络异常），供 AiRouter 识别 429 */
     @Volatile
     var lastHttpCode: Int = 0
+        private set
+
+    @Volatile
+    var lastRateLimited: Boolean = false
         private set
 
     /**
@@ -49,47 +66,59 @@ object GitHubModelsClient {
      * 429/超时等也会返回 null——是否触发冷却由 [AiRouter] 用 [lastHttpCode] 判断。
      */
     fun chat(messages: List<Pair<String, String>>, model: String): String? {
-        val tok = token ?: return null
+        val configuredTokens = tokens
         lastHttpCode = 0
-        var conn: HttpURLConnection? = null
-        return try {
-            conn = (URL(ENDPOINT).openConnection() as HttpURLConnection).apply {
-                connectTimeout = TIMEOUT
-                readTimeout = TIMEOUT
-                requestMethod = "POST"
-                setRequestProperty("Authorization", "Bearer $tok")
-                setRequestProperty("Content-Type", "application/json")
-                doOutput = true
+        lastRateLimited = false
+        for (tok in configuredTokens) {
+            var conn: HttpURLConnection? = null
+            try {
+                conn = openConnection().apply {
+                    connectTimeout = TIMEOUT
+                    readTimeout = TIMEOUT
+                    requestMethod = "POST"
+                    setRequestProperty("Authorization", "Bearer $tok")
+                    setRequestProperty("Content-Type", "application/json")
+                    doOutput = true
+                }
+                val body = JSONObject().apply {
+                    put("model", model)
+                    put("temperature", 0.3)
+                    put("messages", JSONArray().apply {
+                        messages.forEach { (role, content) ->
+                            put(JSONObject().apply {
+                                put("role", role)
+                                put("content", content)
+                            })
+                        }
+                    })
+                }
+                OutputStreamWriter(conn.outputStream, Charsets.UTF_8).use { it.write(body.toString()) }
+                val code = conn.responseCode
+                lastHttpCode = code
+                if (code == 429) lastRateLimited = true
+                if (code in listOf(401, 403, 429)) continue
+                if (code != HttpURLConnection.HTTP_OK) return null
+                val resp = BufferedReader(InputStreamReader(conn.inputStream, Charsets.UTF_8)).use { it.readText() }
+                return JSONObject(resp).optJSONArray("choices")
+                    ?.optJSONObject(0)?.optJSONObject("message")?.optString("content")
+            } catch (e: Exception) {
+                return null
+            } finally {
+                conn?.disconnect()
             }
-            val body = JSONObject().apply {
-                put("model", model)
-                put("temperature", 0.3)
-                put("messages", JSONArray().apply {
-                    messages.forEach { (role, content) ->
-                        put(JSONObject().apply {
-                            put("role", role)
-                            put("content", content)
-                        })
-                    }
-                })
-            }
-            OutputStreamWriter(conn.outputStream, Charsets.UTF_8).use { it.write(body.toString()) }
-            val code = conn.responseCode
-            lastHttpCode = code
-            if (code != HttpURLConnection.HTTP_OK) return null
-            val resp = BufferedReader(InputStreamReader(conn.inputStream, Charsets.UTF_8)).use { it.readText() }
-            JSONObject(resp).optJSONArray("choices")
-                ?.optJSONObject(0)?.optJSONObject("message")?.optString("content")
-        } catch (e: Exception) {
-            null
-        } finally {
-            conn?.disconnect()
         }
+        return null
     }
 
     /** 深度模型 → 轻量模型依次尝试 */
-    fun chatDeep(messages: List<Pair<String, String>>): String? =
-        chat(messages, DEEP_MODEL) ?: chat(messages, LIGHT_MODEL)
+    fun chatDeep(messages: List<Pair<String, String>>): String? {
+        val deep = chat(messages, DEEP_MODEL)
+        if (deep != null) return deep
+        val deepLimited = lastRateLimited
+        val light = chat(messages, LIGHT_MODEL)
+        lastRateLimited = deepLimited || lastRateLimited
+        return light
+    }
 
     fun chatLight(messages: List<Pair<String, String>>): String? =
         chat(messages, LIGHT_MODEL)

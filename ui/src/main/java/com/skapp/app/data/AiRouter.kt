@@ -59,6 +59,13 @@ object AiRouter {
         OpenAiCompatClient.configure(customBaseUrl, customApiKey, customModel)
     }
 
+    fun onGithubTokensSaved(previous: String?, current: String?) {
+        val before = GitHubModelsClient.parseTokens(previous).toSet()
+        if (GitHubModelsClient.parseTokens(current).any { it !in before }) {
+            prefs?.edit()?.remove(KEY_COOLDOWN + PROVIDER_GITHUB)?.apply()
+        }
+    }
+
     enum class Tier { DEEP, LIGHT }
 
     data class AiResult(
@@ -194,7 +201,7 @@ object AiRouter {
                     tier == Tier.DEEP -> GitHubModelsClient.DEEP_MODEL
                     else -> GitHubModelsClient.LIGHT_MODEL
                 }
-                Triple(text, model, text == null && GitHubModelsClient.lastHttpCode == 429)
+                Triple(text, model, text == null && GitHubModelsClient.lastRateLimited)
             }
             PROVIDER_CUSTOM -> {
                 val text = OpenAiCompatClient.rawChat(messages)

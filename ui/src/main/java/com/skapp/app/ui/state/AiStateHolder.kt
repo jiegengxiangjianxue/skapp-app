@@ -35,7 +35,7 @@ internal class AiStateHolder(shared: SharedVm) : StateHolder(shared) {
         GitHubModelsClient.setToken(t)
         _state.value = _state.value.copy(
             githubToken = t,
-            githubConfigured = t.isNotBlank(),
+            githubConfigured = GitHubModelsClient.isConfigured(),
         )
         refreshAiProviderStatus()
     }

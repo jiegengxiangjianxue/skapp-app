@@ -27,8 +27,12 @@ object FreshnessPolicy {
     /**
      * 快照新鲜度判定：`ts` 距今超过 [SNAPSHOT_STALE_MS] 记 `stale`。
      *
-     * `ts <= 0` 视为拿不到时间戳，沿用旧行为不算 stale（宁可不判新鲜也不误报）。
+     * 缺失或未来时间戳记 unknown，不能作为实时行情参与推荐。
      */
     fun snapshotStatus(ts: Long, now: Long): String =
-        if (ts > 0 && now - ts > SNAPSHOT_STALE_MS) "stale" else "live"
+        when {
+            ts <= 0L || ts > now -> "unknown"
+            now - ts > SNAPSHOT_STALE_MS -> "stale"
+            else -> "live"
+        }
 }

@@ -176,14 +176,14 @@ class SkappViewModel : ViewModel() {
         // 归档队列落在应用私有目录：杀进程后队列还在，下次打开接着传
         runCatching { PicksArchiveQueue.init(context.applicationContext.filesDir) }
         // GitHub 仓库写入（消息库 / 开盘推股历史）复用同一个 PAT
-        GitHubRepoWriter.configure(gh)
+        GitHubRepoWriter.configure(GitHubModelsClient.parseTokens(gh).firstOrNull())
         // 本地推股存档：只恢复上次落盘结果，不在启动时重算（重算要拉 11 页快照 + 40 只日 K）
         runCatching { picks.restoreLocalPicks() }
         runCatching { picks.restorePremarketDraft() }
         AiRouter.configure(context.applicationContext, t, gh, customUrl, customKey, customModel)
         _state.value = _state.value.copy(
             aiToken = t, aiConfigured = t.isNotBlank(),
-            githubToken = gh, githubConfigured = gh.isNotBlank(),
+            githubToken = gh, githubConfigured = GitHubModelsClient.isConfigured(),
             customBaseUrl = customUrl, customApiKey = customKey, customModel = customModel,
             customConfigured = customUrl.isNotBlank() && customKey.isNotBlank(),
             aiProviderStatus = AiRouter.statusLine(),
@@ -198,8 +198,10 @@ class SkappViewModel : ViewModel() {
 
     /** 保存 GitHub token 到 SharedPreferences */
     fun saveGithubToken(context: android.content.Context) {
-        context.getSharedPreferences(SKAPP_PREFS, android.content.Context.MODE_PRIVATE)
-            .edit().putString(KEY_GITHUB_TOKEN, _state.value.githubToken).apply()
+        val prefs = context.getSharedPreferences(SKAPP_PREFS, android.content.Context.MODE_PRIVATE)
+        AiRouter.onGithubTokensSaved(prefs.getString(KEY_GITHUB_TOKEN, null), _state.value.githubToken)
+        prefs.edit().putString(KEY_GITHUB_TOKEN, _state.value.githubToken).apply()
+        GitHubRepoWriter.configure(GitHubModelsClient.parseTokens(_state.value.githubToken).firstOrNull())
     }
 
     /** 设置页「保存 GitHub token」按钮 */
