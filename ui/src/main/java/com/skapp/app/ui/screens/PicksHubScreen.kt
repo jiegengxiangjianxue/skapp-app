@@ -20,7 +20,7 @@ fun PicksHubScreen(
 ) {
     Column(Modifier.fillMaxSize()) {
         SkTabBar(
-            tabs = listOf("实时", "早盘", "午盘", "历史", "板块"),
+            tabs = listOf("实时", "早盘", "午盘", "历史", "板块", "多池"),
             selected = selected,
             onSelect = onSelect,
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
@@ -31,7 +31,8 @@ fun PicksHubScreen(
                 1 -> MorningPicksScreen(vm, state)
                 2 -> MiddayPicksScreen(vm, state)
                 3 -> PicksHistoryScreen(onBack = { onSelect(0) })
-                else -> SectorsScreen(vm, state)
+                4 -> SectorsScreen(vm, state)
+                else -> MultiPoolScreen(vm, state)
             }
         }
     }

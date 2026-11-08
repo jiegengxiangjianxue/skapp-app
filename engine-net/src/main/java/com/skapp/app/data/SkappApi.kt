@@ -1,6 +1,7 @@
 package com.skapp.app.data
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -369,12 +370,16 @@ object SkappApi {
     }
 
     /** 单股 API 财务兜底：分片 bundle 未覆盖该股时，直接读 api/stocks/{code}.json。 */
-    suspend fun fetchStockFinancial(code: String): Map<String, Any?>? = withContext(Dispatchers.IO) {
-        val o = fetchJson(RemoteSources.apiStock(RemoteSources.OWNER_A, RemoteSources.REPO_A, code))
-            ?: return@withContext null
-        val direct = o.optJSONObject("financial_latest")?.toPlainMap()
-        val arr = o.optJSONArray("financial")?.optJSONObject(0)?.toPlainMap()
-        (direct ?: arr)?.takeIf { it.isNotEmpty() }
+    internal suspend fun fetchInputText(url: String): String? = withContext(Dispatchers.IO) {
+        kotlinx.coroutines.currentCoroutineContext().ensureActive()
+        fetchText(url).also { kotlinx.coroutines.currentCoroutineContext().ensureActive() }
+    }
+
+    suspend fun fetchStockFinancial(code: String): Map<String, Any?>? {
+        val input = Db.stockAnalysisInputs(code, emptyList())
+        if (input.reportPeriod == null) return null
+        return input.financialFields + mapOf("eps" to input.eps, "dps" to input.dps, "report_date" to input.reportPeriod,
+            "source" to input.source, "snapshot_at_ms" to input.snapshotAtMs)
     }
 
     /** 数据源台账；不可达时返回空快照，由 UI 显示暂无数据。 */

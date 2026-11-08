@@ -32,7 +32,7 @@ fun SummaryHubScreen(
         )
         Box(Modifier.weight(1f)) {
             when (selected) {
-                0 -> RealtimeSummaryScreen(vm, state)
+                0 -> RealtimeSummaryScreen(vm, state, onSection = onSelect)
                 1 -> NewsScreen(vm, state)
                 2 -> ThemeScreen(vm, state)
                 else -> DecisionScreen(vm, state)

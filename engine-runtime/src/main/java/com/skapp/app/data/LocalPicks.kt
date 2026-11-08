@@ -293,6 +293,12 @@ object LocalPicks {
             put("snapshotByCode", selected.associate { s -> s.code to mapOf(
                 "atMs" to s.snapshotAtMs, "source" to s.snapshotSource,
             ) })
+            put("evidenceByCode", selected.associate { s -> s.code to s.dataEvidence?.let { e -> mapOf(
+                "eps" to e.eps, "dps" to e.dps, "reportPeriod" to e.reportPeriod,
+                "adjustmentEvidence" to e.adjustmentEvidence, "source" to e.source,
+                "snapshotAtMs" to e.snapshotAtMs, "expiresAtMs" to e.expiresAtMs,
+                "barsBound" to (e.validFor(s.code, s.bars, calculatedAt) && e.missing.isEmpty()),
+            ) } })
             put("engineVersion", if (earlySession) EarlyVoteEngine.VERSION else screened.mapNotNull { it.chain?.specVersion }.distinct().singleOrNull())
             put("engineVersions", if (earlySession) listOf(EarlyVoteEngine.VERSION) else screened.mapNotNull { it.chain?.specVersion }.distinct())
             put("versionStatus", if (earlySession) "EarlyVoteEngine.VERSION; source and formula recorded" else "chain specVersion")

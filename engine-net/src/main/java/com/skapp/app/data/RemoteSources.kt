@@ -125,6 +125,12 @@ object RemoteSources {
     fun apiQa(owner: String, repo: String, code: String): String =
         "${base(owner, repo)}/api/qa/$code.json"
 
+    fun stockBenchmark(code: String): String =
+        "$RAW/$OWNER_A/$REPO_A/main/tests/fixtures/research/${SkappApi.prefixed(code)}_benchmark.csv"
+
+    fun stockFinance(code: String): String =
+        "$RAW/jiegengxiangjianxue1/stocks-holo/main/${SkappApi.prefixed(code)}/finance.json"
+
     fun shardBundle(code6: String): String? {
         val repo = SHARD_REPOS[code6.take(2)] ?: return null
         return "$RAW/$repo/main/${code6.take(2)}/$code6/stock.json"

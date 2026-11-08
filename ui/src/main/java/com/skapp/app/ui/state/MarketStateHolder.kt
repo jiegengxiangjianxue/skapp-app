@@ -1029,6 +1029,8 @@ internal class MarketStateHolder(shared: SharedVm) : StateHolder(shared) {
     fun closeDetail() {
         detailJob?.cancel()
         detailJob = null
+        detailLiveJob?.cancel()
+        detailLiveJob = null
         _state.update { it.copy(detail = null, detailLoading = false, kline = emptyList()) }
     }
 

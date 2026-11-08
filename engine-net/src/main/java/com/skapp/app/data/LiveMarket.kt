@@ -73,6 +73,8 @@ object LiveMarket {
          * 快照里根本不存在的 "speed" 键，于是首轮整张异动榜都是「缺少连续快照」。
          */
         val speed: Double? = null,
+        val expectedTotal: Int? = null,
+        val source: String? = null,
     ) {
 
         /** 涨停价（元）：昨收 ×(1+上限)，两位小数。昨收缺失则为 null。 */
@@ -212,6 +214,13 @@ object LiveMarket {
      */
     fun lastSnapshot(): List<Row> = cached
 
+    fun completeCoverage(rows: List<Row>): Boolean {
+        val totals = rows.map { it.expectedTotal }.distinct()
+        val total = totals.singleOrNull() ?: return false
+        return total > 0 && rows.all { it.source == "eastmoney/clist" } &&
+            rows.size == total && rows.map { it.code }.distinct().size == total
+    }
+
     suspend fun snapshot(force: Boolean = false): List<Row> = withContext(Dispatchers.IO) {
         val fresh = cached.takeIf { !force && it.isNotEmpty() && System.currentTimeMillis() - cachedAt < ttlMs() }
         if (fresh != null) return@withContext fresh
@@ -255,7 +264,9 @@ object LiveMarket {
     private fun parsePage(txt: String?): List<Row> {
         if (txt.isNullOrEmpty()) return emptyList()
         val obj = runCatching { JSONObject(txt) }.getOrNull() ?: return emptyList()
-        val arr = obj.optJSONObject("data")?.optJSONArray("diff") ?: return emptyList()
+        val data = obj.optJSONObject("data") ?: return emptyList()
+        val arr = data.optJSONArray("diff") ?: return emptyList()
+        val total = data.optInt("total", -1).takeIf { it > 0 }
         val ts = System.currentTimeMillis()
         return (0 until arr.length()).mapNotNull { i ->
             val o = arr.optJSONObject(i) ?: return@mapNotNull null
@@ -281,6 +292,8 @@ object LiveMarket {
                 chg60d = o.num("f24"),
                 chgYtd = o.num("f25"),
                 speed = o.num("f22"),
+                expectedTotal = total,
+                source = "eastmoney/clist",
             )
         }
     }

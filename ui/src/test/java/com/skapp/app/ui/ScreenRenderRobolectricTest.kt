@@ -4,6 +4,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
+import com.skapp.app.ui.screens.MultiPoolContent
+import com.skapp.app.data.SiteBoardClient
 import androidx.compose.ui.test.junit4.createComposeRule
 import com.skapp.app.data.LocalEngineResult
 import com.skapp.app.data.StockDetail
@@ -67,6 +71,30 @@ class ScreenRenderRobolectricTest {
     val compose = createComposeRule()
 
     private fun vm() = SkappViewModel()
+
+    @Test(timeout = 120_000)
+    fun multiPoolStockAndRefreshAreRealActions() {
+        var selected: String? = null
+        var refreshed = false
+        val pool = SiteBoardClient.Pool("watch", "行业观察", items = listOf(
+            SiteBoardClient.PoolItem("600519", "贵州茅台")), ts = "2020-01-01T00:00:00Z")
+        compose.setContent {
+            MultiPoolContent(listOf(pool), false, null, onRefresh = { refreshed = true }, onStock = { selected = it })
+        }
+        compose.onNodeWithText("贵州茅台 · 600519").performClick()
+        assertEquals("600519", selected)
+        compose.onNodeWithText("刷新池子").performClick()
+        assertTrue(refreshed)
+        assertTrue(textNodes().any { node -> node.config.getOrNull(SemanticsProperties.Text)?.any { it.text.contains("过期或时点未核") } == true })
+    }
+
+    @Test(timeout = 120_000)
+    fun multiPoolNavigationIsReachable() {
+        var selected = -1
+        compose.setContent { PicksHubScreen(vm(), UiState(), selected = 0, onSelect = { selected = it }) }
+        compose.onNodeWithText("多池").performClick()
+        assertEquals(5, selected)
+    }
 
     private fun textNodes() = compose
         .onAllNodes(SemanticsMatcher.keyIsDefined(SemanticsProperties.Text))

@@ -38,7 +38,13 @@ internal class LocalPicksHolder(
 
     private var picksJob: Job? = null
 
-    private var localPicksJob: Job? = null
+    private val sessionRequests = LatestRequestRunner<com.skapp.app.data.LocalPicks.Session>(viewModelScope) { session ->
+        try {
+            kotlinx.coroutines.withTimeout(90_000) { rebuildLocalPicks(session, force = true) }
+        } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+            _state.value = _state.value.copy(localPicksLoading = false, localPicksMsg = "筛选超时，已保留上一轮记录；可重试。")
+        }
+    }
 
     /** 当前可用的本地推股产物：午盘优先（更近），其次盘前；都不是今天则视为没有。 */
     fun localPicksArtifact(): StructuredPickArtifact? {
@@ -69,7 +75,6 @@ internal class LocalPicksHolder(
     }
 
     private fun startSession(session: com.skapp.app.data.LocalPicks.Session, force: Boolean) {
-        if (_state.value.localPicksLoading || localPicksJob?.isActive == true) return
         val window = com.skapp.app.data.AnalysisSessionPolicy.window(session.key,
             System.currentTimeMillis(), !MarketHours.isClosedDay())
         if (!window.updating) {
@@ -82,13 +87,7 @@ internal class LocalPicksHolder(
             runCatching { System.currentTimeMillis() - java.time.OffsetDateTime.parse(it).toInstant().toEpochMilli() }.getOrNull()
         }
         if (!force && current.date == window.date && age != null && age in 0..300_000L) return
-        localPicksJob = viewModelScope.launch {
-            try {
-                kotlinx.coroutines.withTimeout(90_000) { rebuildLocalPicks(session, force = true) }
-            } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
-                _state.value = _state.value.copy(localPicksLoading = false, localPicksMsg = "筛选超时，已保留上一轮记录；可重试。")
-            }
-        }
+        sessionRequests.submit(session, force)
     }
 
     /**
@@ -122,13 +121,15 @@ internal class LocalPicksHolder(
             val t0 = System.currentTimeMillis()
             val calcTime = java.time.OffsetDateTime.now(com.skapp.app.data.AnalysisSessionPolicy.zone).toString()
             val dropLast = session == com.skapp.app.data.LocalPicks.Session.PREMARKET
-            val snapshotSize = runCatching { LocalScreener.marketSnapshot(pz = 500).size }.getOrDefault(0)
+            val snapshot = requestResult { com.skapp.app.data.LiveMarket.snapshot() }.getOrDefault(emptyList())
+            val snapshotSize = snapshot.size
             val tSnapshot = System.currentTimeMillis()
             // mode=all：保留未达标票，由 LocalPicks 决定谁进 picks、谁只当「未达标观察」
             val analyzed = LocalScreener.screen(
                 onProgress = { msg -> _state.value = _state.value.copy(localPicksMsg = msg) },
                 mode = "all",
                 dropLastBar = dropLast,
+                snapshotIn = snapshot,
                 news = com.skapp.app.data.CentralAnalysis.newsOf(_state.value.newsCalcs),
                 newsAvailable = com.skapp.app.data.CentralAnalysis.newsAvailable(_state.value.news),
                 // 全市场快照不可得时退到自选池：没有这个，推股页在限流下永远是空的
@@ -234,6 +235,9 @@ internal class LocalPicksHolder(
                     artifact else _state.value.localMiddayPicks,
                 localPicksMsg = artifact.reason,
                 localPicksTiming = timing,
+                screened = screened,
+                screenedAt = calcTime,
+                scanMode = "all",
             )
             persistLocalPicks(session, artifact)
             // 盘前/早盘/午盘各入队一轮，历史页才有四类时段可查；ts 去重由队列负责

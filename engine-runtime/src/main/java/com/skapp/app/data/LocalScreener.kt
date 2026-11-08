@@ -51,7 +51,14 @@ object LocalScreener {
         val source: String?,
         val snapshotAtMs: Long?,
         val expiresAtMs: Long?,
+        val code: String? = null,
+        val barsFingerprint: String? = null,
+        val missing: List<String> = emptyList(),
     ) {
+        fun validFor(expectedCode: String, bars: List<KBar>, nowMs: Long): Boolean =
+            validAt(nowMs) && code == expectedCode && barsFingerprint != null &&
+                barsFingerprint == StockAnalysisInputs.barsFingerprint(bars)
+
         fun validAt(nowMs: Long): Boolean {
             val period = try { java.time.LocalDate.parse(reportPeriod) } catch (_: Exception) { null }
             val today = java.time.Instant.ofEpochMilli(nowMs).atZone(AnalysisSessionPolicy.zone).toLocalDate()
@@ -330,15 +337,12 @@ object LocalScreener {
                 async(Dispatchers.IO) {
                     // 单只超时：一只票的 K 线接口卡住不该拖垮整轮全市场扫描
                     kotlinx.coroutines.withTimeoutOrNull(PER_STOCK_TIMEOUT_MS) {
-                    val code = m.code
-                    val barsRaw = DataCache.kline(code, "qfq", c.klineCount)
-                    // 只剔除 CST 当日（以及非法/未来日期），不能误删昨日已完成 bar。
-                    val bars = barsRaw.filter {
-                        AnalysisSessionPolicy.acceptsBar(it.date, System.currentTimeMillis(), dropLastBar)
-                    }
-                    val eng = if (bars.size >= 30) DataCache.engine(code, "qfq", bars) else null
-                    val nowMs = System.currentTimeMillis()
-                    val chain = if (bars.size >= 30) cancellable {
+                    analyzeCandidate(m, c, dropLastBar,
+                        evidenceOverride = evidenceByCode[m.code], indexBars = indexBars,
+                        sectorName = board?.sectorNameOf(m.code),
+                        sectorStrength = board?.sectorNameOf(m.code)?.let { strengthByName[it] },
+                        evaluate = { bars, nowMs ->
+                            if (bars.size >= 30) cancellable {
                         EngineChain.analyze(
                             EngineChain.Inputs(
                                 bars = bars,
@@ -348,69 +352,12 @@ object LocalScreener {
                                 sectors = sectorsRes,
                                 turnScale = turnScale,
                                 regimeCloses = regimeCloses,
-                                nowMs = nowMs, code = code, news = news, newsAvailable = newsAvailable,
+                                nowMs = nowMs, code = m.code, news = news, newsAvailable = newsAvailable,
                             ), parameters.spec
                         ).let { result -> result.copy(degraded = result.degraded + parameters.notes,
                             status = if (parameters.notes.isNotEmpty() && result.status == "ok") "partial" else result.status) }
                     }.getOrNull() else null
-                    // 仅使用同轮已取到的真实上下文；没有5日板块/外围数据就保留缺项，不拿1日值冒充。
-                    val earlyContext = EarlyVoteEngine.Context(
-                        indexCloses = indexBars.map { it.date to it.close },
-                        mainNetToday = m.mainNet,
-                    )
-                    val earlyTomorrow = EarlyVoteEngine.tomorrow(bars, earlyContext)
-                    val earlyMorning = EarlyVoteEngine.morning(bars, earlyContext)
-                    val primary = chain?.canonicalScore?.takeIf { it.isFinite() }
-                    val evidence = evidenceByCode[code]
-                    val evidenceOk = evidence?.validAt(nowMs) == true
-                    val safetyInputsReady = bars.size >= 30 && evidenceOk &&
-                        chain?.flow?.score?.isFinite() == true && chain.tape?.score?.isFinite() == true
-                    val chainUsable = primary != null && chain?.status != "insufficient" && safetyInputsReady
-                    val sectorName = board?.sectorNameOf(code)
-                    val sectorStrength = sectorName?.let { strengthByName[it] }
-                    // 退出纪律：破位（收盘跌破 20 日最低）的票一票否决，不再进推荐
-                    val exit = if (bars.size >= ExitPlan.LOOKBACK + 1) {
-                        cancellable { ExitPlan.compute(bars) }.getOrNull()
-                    } else null
-                    Screened(
-                        code = code,
-                        name = m.name,
-                        price = m.price,
-                        pctChg = m.pctChg,
-                        volRatio = m.volRatio,
-                        // 对外语义保持「成交额」：界面上的「成交」列读的是 amount
-                        turnover = m.amount,
-                        pe = m.pe,
-                        mv = m.mv,
-                        engine = eng,
-                        chain = chain,
-                        detailStatus = if (chainUsable) "ok" else "insufficient",
-                        reason = when {
-                            !evidenceOk -> "insufficient_data：缺EPS/DPS/财报报告期/同源复权/来源或有效期证据"
-                            !chainUsable -> "多输入链路证据不足：" + (chain?.degraded?.joinToString("；") ?: "K线或链路不可得")
-                            exit?.action == ExitPlan.ACT_CLEAR -> "已破位：" + exit.reasons.first()
-                            exit?.action == ExitPlan.ACT_TRIM -> "高位回吐过半：" + (exit.reasons.firstOrNull() ?: "")
-                            else -> null
-                        },
-                        exitPlan = exit,
-                        buyable = (m.price?.let { it > 0.0 } == true) &&
-                            (m.pctChg ?: Double.POSITIVE_INFINITY) < c.maxChgPct &&
-                            // 破位票不可买：跌穿 20 日最低的票，「评分高」只是下跌惯性
-                            exit?.action != ExitPlan.ACT_CLEAR,
-                        // 快照新鲜度如实标出来：LiveMarket 拉不到新数据时会退回上一份缓存，
-                        // 那这时结果就不是「实时」而是「旧值」，界面必须能区分（5 分钟内算实时）
-                        snapshotStatus = FreshnessPolicy.snapshotStatus(m.ts, System.currentTimeMillis()),
-                        sector = sectorName,
-                        sectorStrength = sectorStrength,
-                        effectiveScore = effectiveScoreOf(primary, sectorStrength),
-                        dataEvidence = evidence,
-                        earlyTomorrow = earlyTomorrow,
-                        earlyMorning = earlyMorning,
-                        bars = bars,
-                        safetyInputsReady = safetyInputsReady,
-                        snapshotAtMs = m.ts.takeIf { it > 0L },
-                        snapshotSource = "LocalScreener/LiveMarket.Row",
-                    )
+                        })
                     }
                 }
             }.mapNotNull { cancellable { it.await() }.getOrNull() }
@@ -440,6 +387,92 @@ object LocalScreener {
         onProgress("评分达标 0 只，暂无可买推荐（数据不足或过滤涨停）")
         emptyList()
     }
+    internal suspend fun analyzeCandidate(
+        m: LiveMarket.Row, c: Criteria, dropLastBar: Boolean,
+        evidenceOverride: DataEvidence? = null,
+        indexBars: List<KBar> = emptyList(), sectorName: String? = null, sectorStrength: Double? = null,
+        barsProvider: suspend (String, Int) -> List<KBar> = { code, count -> DataCache.kline(code, "qfq", count) },
+        nowMs: Long = System.currentTimeMillis(),
+        inputTransport: StockInputTransport? = null,
+        inputProvider: suspend (String, List<KBar>) -> StockAnalysisInputs = { code, bars ->
+            if (inputTransport == null) Db.stockAnalysisInputs(code, bars, nowMs)
+            else Db.stockAnalysisInputs(code, bars, nowMs, inputTransport)
+        },
+        evaluate: suspend (List<KBar>, Long) -> EngineChain.ChainResult? = { _, _ -> null },
+    ): Screened {
+        val code = m.code
+        val barsRaw = barsProvider(code, c.klineCount)
+        val original = barsRaw.filter { AnalysisSessionPolicy.acceptsBar(it.date, nowMs, dropLastBar) }
+        val input = cancellable { inputProvider(code, original) }.getOrElse {
+            StockAnalysisInputs(code, bars = original, barsFingerprint = StockAnalysisInputs.barsFingerprint(original),
+                missing = listOf("input_provider_unavailable"))
+        }
+        // 只剔除 CST 当日（以及非法/未来日期），不能误删昨日已完成 bar。
+        val bars = input.bars.filter {
+            AnalysisSessionPolicy.acceptsBar(it.date, nowMs, dropLastBar)
+        }
+        val eng = if (bars.size >= 30) DataCache.engine(code, "qfq", bars) else null
+        val chain = evaluate(bars, nowMs)
+        // 仅使用同轮已取到的真实上下文；没有5日板块/外围数据就保留缺项，不拿1日值冒充。
+        val earlyContext = EarlyVoteEngine.Context(
+            indexCloses = indexBars.map { it.date to it.close },
+            mainNetToday = m.mainNet,
+        )
+        val earlyTomorrow = EarlyVoteEngine.tomorrow(bars, earlyContext)
+        val earlyMorning = EarlyVoteEngine.morning(bars, earlyContext)
+        val primary = chain?.canonicalScore?.takeIf { it.isFinite() }
+        val evidence = evidenceOverride ?: DataEvidence(input.eps, input.dps, input.reportPeriod,
+            input.adjustmentEvidence, input.source, input.snapshotAtMs, input.expiresAtMs,
+            input.code, input.barsFingerprint, input.gaps(nowMs))
+        val evidenceOk = evidence.validFor(code, bars, nowMs) && evidence.missing.isEmpty()
+        val safetyInputsReady = bars.size >= 30 && evidenceOk &&
+            chain?.flow?.score?.isFinite() == true && chain.tape?.score?.isFinite() == true
+        val chainUsable = primary != null && chain?.status != "insufficient" && safetyInputsReady
+        // 退出纪律：破位（收盘跌破 20 日最低）的票一票否决，不再进推荐
+        val exit = if (bars.size >= ExitPlan.LOOKBACK + 1) {
+            cancellable { ExitPlan.compute(bars) }.getOrNull()
+        } else null
+        return Screened(
+            code = code,
+            name = m.name,
+            price = m.price,
+            pctChg = m.pctChg,
+            volRatio = m.volRatio,
+            // 对外语义保持「成交额」：界面上的「成交」列读的是 amount
+            turnover = m.amount,
+            pe = m.pe,
+            mv = m.mv,
+            engine = eng,
+            chain = chain,
+            detailStatus = if (chainUsable) "ok" else "insufficient",
+            reason = when {
+                !evidenceOk -> "insufficient_data：" + (evidence.missing.ifEmpty { listOf("code/bars_binding/财务或同源复权证据") }).joinToString("；")
+                !chainUsable -> "多输入链路证据不足：" + (chain?.degraded?.joinToString("；") ?: "K线或链路不可得")
+                exit?.action == ExitPlan.ACT_CLEAR -> "已破位：" + exit.reasons.first()
+                exit?.action == ExitPlan.ACT_TRIM -> "高位回吐过半：" + (exit.reasons.firstOrNull() ?: "")
+                else -> null
+            },
+            exitPlan = exit,
+            buyable = (m.price?.let { it > 0.0 } == true) &&
+                (m.pctChg ?: Double.POSITIVE_INFINITY) < c.maxChgPct &&
+                // 破位票不可买：跌穿 20 日最低的票，「评分高」只是下跌惯性
+                exit?.action != ExitPlan.ACT_CLEAR,
+            // 快照新鲜度如实标出来：LiveMarket 拉不到新数据时会退回上一份缓存，
+            // 那这时结果就不是「实时」而是「旧值」，界面必须能区分（5 分钟内算实时）
+            snapshotStatus = FreshnessPolicy.snapshotStatus(m.ts, nowMs),
+            sector = sectorName,
+            sectorStrength = sectorStrength,
+            effectiveScore = effectiveScoreOf(primary, sectorStrength),
+            dataEvidence = evidence,
+            earlyTomorrow = earlyTomorrow,
+            earlyMorning = earlyMorning,
+            bars = bars,
+            safetyInputsReady = safetyInputsReady,
+            snapshotAtMs = m.ts.takeIf { it > 0L },
+            snapshotSource = "LocalScreener/LiveMarket.Row",
+        )
+    }
+
     /** 单只股票的 K 线 + 引擎计算超时（毫秒）。 */
     private const val PER_STOCK_TIMEOUT_MS = 20_000L
 

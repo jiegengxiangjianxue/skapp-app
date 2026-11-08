@@ -1,0 +1,3 @@
+# Approved benchmarks retain their original UTF-8 BOM and CRLF for SHA validation.
+testdata/research/sh600519_benchmark.csv binary
+testdata/research/sz002242_benchmark.csv binary

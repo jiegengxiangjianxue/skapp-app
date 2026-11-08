@@ -27,6 +27,7 @@ internal class NewsSummaryHolder(
     private var newsJob: Job? = null
 
     private var boardJob: Job? = null
+    private var summaryJob: Job? = null
 
     /** 本地消息刷新：交易时段约30秒，非交易时段约3分钟；云端快照只作低频补偿。 */
     fun startNewsLoop() {
@@ -165,9 +166,19 @@ internal class NewsSummaryHolder(
     suspend fun localBoardMap(force: Boolean = false): Map<String, Any?> {
         val snap = com.skapp.app.data.LiveMarket.snapshot(force = force)
         if (snap.isEmpty()) return localBoardUnavailable()
+        val now = System.currentTimeMillis()
+        if (snap.any { now - it.ts !in 0..300_000L }) return localBoardUnavailable()
         val pulse = com.skapp.app.data.LivePulse.of(snap)
-        val res = runCatching { com.skapp.app.data.LocalSectors.compute() }.getOrNull()
-        return com.skapp.app.data.LocalSectors.boardMap(res, pulse, snap)
+        val mapping = requestResult { com.skapp.app.data.SectorLink.load() }.getOrNull()
+        val res = mapping?.let { board ->
+            com.skapp.app.data.LocalSectors.aggregate(snap, sectorOf = { board.sectorNameOf(it) })
+        }
+        return com.skapp.app.data.LocalSectors.boardMap(res, pulse, snap) + mapOf(
+            "ts" to java.time.Instant.ofEpochMilli(snap.minOf { it.ts }).toString(),
+            "coverageVerified" to com.skapp.app.data.LiveMarket.completeCoverage(snap),
+            "sampleSize" to snap.size,
+            "expectedTotal" to snap.mapNotNull { it.expectedTotal }.distinct().singleOrNull(),
+        )
     }
 
     fun localBoardUnavailable(): Map<String, Any?> = mapOf(
@@ -178,20 +189,25 @@ internal class NewsSummaryHolder(
 
     /** 多池选股：库里池子名单 + 本地实时补价。force=true 时忽略间隔强制重拉。 */
     fun loadPools(force: Boolean = true) {
+        if (_state.value.poolsLoading) return
         val last = _state.value.poolsLoadedAt
         val now = System.currentTimeMillis()
         if (!force && now - last < 60_000L) return
+        _state.value = _state.value.copy(poolsLoading = true)
         viewModelScope.launch {
-            _state.value = _state.value.copy(poolsLoading = true)
-            val ps = runCatching { DbTables.pools() }.getOrElse { emptyList() }
-            val enriched = runCatching { DbTables.repricePools(ps) }.getOrDefault(ps)
-            _state.value = _state.value.copy(
-                poolsLoading = false,
-                // 抓失败（enriched 为空）时不要用空表覆盖已算过的池：
-                // 名单的池加权已经生效，界面标签却会因此集体消失，看起来像「算法没加权」。
-                pools = enriched.ifEmpty { _state.value.pools },
-                poolsLoadedAt = System.currentTimeMillis(),
-            )
+            try {
+                val ps = requestResult { DbTables.pools() }.getOrDefault(emptyList())
+                val enriched = requestResult { DbTables.repricePools(ps) }.getOrDefault(ps)
+                _state.value = _state.value.copy(
+                    pools = enriched.ifEmpty { _state.value.pools },
+                    poolsLoadedAt = if (enriched.isNotEmpty()) System.currentTimeMillis() else _state.value.poolsLoadedAt,
+                    dataGaps = if (ps.isEmpty() || ps.all { it.status == "insufficient" })
+                        _state.value.dataGaps + ("多池" to "来源不可达或没有可用池，保留的旧名单仅供观察")
+                    else _state.value.dataGaps - "多池",
+                )
+            } finally {
+                _state.value = _state.value.copy(poolsLoading = false)
+            }
         }
     }
 
@@ -271,8 +287,8 @@ internal class NewsSummaryHolder(
 
     /** 手动刷新实时总结：正文、消息异动和本地推股统一由一个入口触发。 */
     fun refreshRealtimeSummary(mode: String = "score") {
-        if (_state.value.summaryRefreshing) return
-        viewModelScope.launch {
+        if (summaryJob?.isActive == true) return
+        summaryJob = viewModelScope.launch {
             _state.value = _state.value.copy(
                 summaryRefreshing = true,
                 summaryRefreshMessage = "正在刷新盘面、消息与结构化推股…",
@@ -285,7 +301,11 @@ internal class NewsSummaryHolder(
                 // 本地全市场深算（几十秒~数分钟）故意拆到后面，不阻塞这里，
                 // 否则用户看到的永远是长时间转圈 / 整次刷新“失败”。
                 val refreshed = supervisorScope {
-                    val summaryD = async { requestResult { refreshSummary() } }
+                    val summaryD = async { requestResult {
+                        val board = localBoardMap(true)
+                        _state.value = _state.value.copy(board = board)
+                        check(board["status"] == "ok") { board["reason"]?.toString() ?: "全市场快照不足" }
+                    } }
                     val newsD = async { requestResult { refreshNewsCalcs() } }
                     val closeD = async { requestResult { DbTables.closeReview() } }
                     val winrateD = async { requestResult { DbTables.winrate() } }
@@ -301,6 +321,7 @@ internal class NewsSummaryHolder(
                 _state.value = _state.value.copy(
                     closeReview = close ?: _state.value.closeReview,
                     winrateMatrix = winrate ?: _state.value.winrateMatrix,
+                    summary = WorkbenchSummary.asMap(_state.value),
                 )
                 fastTotal = refreshed.size
                 fastOk = refreshed.count { it.second.isSuccess }
@@ -315,14 +336,8 @@ internal class NewsSummaryHolder(
                 // 快通道结果先放开 UI 转圈，让用户立即看到数据
                 _state.value = _state.value.copy(summaryRefreshing = false, summaryRefreshMessage = message)
 
-                // ── 慢通道：本地全市场实时选股（不阻塞上面的展示）──
-                if (!_state.value.screening) {
-                    val screenOk = runCatching { picks.refreshScreen(mode) }.isSuccess
-                    message = message + if (screenOk) "；本地深算完成：${_state.value.screened.size} 个候选"
-                    else "；本地深算失败：${_state.value.screenMsg ?: "行情接口不可达"}"
-                }
-                // 盘前/午盘本地推股：已有当日存档就复用，不重复拉 11 页快照
                 picks.ensureLocalPicks()
+                message += "；已检查当前推股时段，执行状态见候选区。"
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -335,84 +350,22 @@ internal class NewsSummaryHolder(
 
     /** 实时总结正文：加载失败时保留明确的 insufficient 状态。 */
     fun loadSummary(): Job = shared.sections.load("市场解读", fetch = {
-        val cloud = requestResult { DbTables.summary() }.getOrNull()
-        val date = cloud?.get("date")?.toString()?.take(10)
-        if (cloud?.get("status") == "ok" && date == MarketHours.todayKey()) cloud
-        else buildLocalSummary()
+        val board = localBoardMap(false)
+        _state.value = _state.value.copy(board = board)
+        WorkbenchSummary.asMap(_state.value)
     }) { s, v -> s.copy(summary = v) }
 
     suspend fun refreshSummary() {
-        val cloud = requestResult { DbTables.summary() }.getOrNull()
-        val cloudOk = cloud != null && cloud["status"]?.toString() == "ok" &&
-            cloud["date"]?.toString()?.take(10) == MarketHours.todayKey()
-        if (cloudOk) {
-            _state.value = _state.value.copy(summary = cloud!!)
-            return
-        }
-        // 云端产物不可达/过期时，用本地实时行情、消息与本地深算生成总结。
-        // 关键：marketPulse 过去只在交易/竞价时段刷新，导致盘后总结永远 insufficient、
-        // 用户点刷新一直“失败”。这里在构建总结前补拉一次全市场快照（盘后也能拿到）。
-        if (_state.value.marketPulse.isEmpty()) {
-            runCatching { market.refreshMarketPulse() }
-        }
-        val local = buildLocalSummary()
+        val board = localBoardMap(true)
+        _state.value = _state.value.copy(board = board)
+        val local = WorkbenchSummary.asMap(_state.value)
         _state.value = _state.value.copy(summary = local)
         if (local["status"]?.toString() != "ok") {
             throw IllegalStateException(
                 local["reason"]?.toString()
-                    ?: cloud?.get("reason")?.toString()
                     ?: "暂无盘面数据"
             )
         }
-    }
-
-    /** 本地实时总结：只用当前已有真实数据；任何指标缺失就直说不编造。 */
-    private fun buildLocalSummary(): Map<String, Any?> {
-        val s = _state.value
-        val pulse = s.marketPulse
-        val up = pulse.count { (it.pctChg ?: 0.0) > 0 }
-        val down = pulse.count { (it.pctChg ?: 0.0) < 0 }
-        val newsPos = s.news.items.count { it["direction"]?.toString() == "pos" }
-        val newsNeg = s.news.items.count { it["direction"]?.toString() == "neg" }
-        val leaders = pulse.take(5).joinToString("、") { row ->
-            val pct = row.pctChg?.let { "%+.2f%%".format(it) } ?: "暂无"
-            "${row.name}$pct(${outlookLabel(row.outlook)})"
-        }
-        val picks = s.screened.take(5).joinToString("、") { row ->
-            val score = row.centralScore?.let { "%.1f".format(it) } ?: "暂无分"
-            "${row.name ?: row.code}$score"
-        }
-        val lines = buildList {
-            if (pulse.isNotEmpty()) {
-                add("实时异动：涨 $up / 跌 $down（前 ${pulse.size} 只异动候选）")
-                if (leaders.isNotBlank()) add("异动前列：$leaders")
-            }
-            if (s.screened.isNotEmpty() && picks.isNotBlank()) add("本地深算推股：$picks")
-            if (s.news.items.isNotEmpty()) add("消息面：偏多 $newsPos 条 / 偏空 $newsNeg 条（共 ${s.news.items.size} 条）")
-            s.quoteTs?.let { add("行情时点：$it") }
-        }
-        if (lines.isEmpty()) {
-            return mapOf(
-                "status" to "insufficient",
-                "reason" to "本地实时数据尚未就绪（行情、消息、深算均无结果）",
-                "source" to "local_realtime",
-            )
-        }
-        return mapOf(
-            "status" to "ok",
-            "source" to "local_realtime",
-            "ts" to (s.marketPulseTs ?: s.quoteTs ?: java.time.OffsetDateTime.now().toString()),
-            "date" to java.time.LocalDate.now().toString(),
-            "text" to lines.joinToString("\n"),
-        )
-    }
-
-    private fun outlookLabel(value: String): String = when (value) {
-        "bullish" -> "偏多"
-        "bearish" -> "偏空"
-        "watch_up" -> "观察偏强"
-        "watch_down" -> "观察偏弱"
-        else -> "数据不足"
     }
 
     // ── GitCode AI ─────────────────────────────────────

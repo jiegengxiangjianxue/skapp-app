@@ -1,153 +1,101 @@
 package com.skapp.app.ui.screens
 
-import com.skapp.app.ui.theme.SkColors
-
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
-import com.skapp.app.ui.components.SkCard
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import com.skapp.app.data.CloseReview
+import com.skapp.app.data.MarketHours
 import com.skapp.app.ui.SkappViewModel
 import com.skapp.app.ui.UiState
+import com.skapp.app.ui.components.SkCard
+import com.skapp.app.ui.state.WorkbenchSummary
+import com.skapp.app.ui.theme.SkColors
 
 @Composable
-fun RealtimeSummaryScreen(vm: SkappViewModel, state: UiState) {
-    val today = java.time.LocalDate.now().toString()
-    // 进页即拉一次本地深算与异动，避免“打开就是空页”
-    LaunchedEffect(Unit) {
-        if (state.marketPulse.isEmpty()) vm.refreshPulse()
-        vm.loadSummary()
-    }
+fun RealtimeSummaryScreen(vm: SkappViewModel, state: UiState, onSection: (Int) -> Unit = {}) {
+    LaunchedEffect(Unit) { vm.loadSummary() }
+    val sections = WorkbenchSummary.sections(state)
     LazyColumn(
         modifier = Modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
-        contentPadding = PaddingValues(12.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+        contentPadding = PaddingValues(16.dp),
     ) {
         item {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text("实时总结 · 市场复盘", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                    Text("${state.marketPhase} · ${state.quoteTs ?: "时点暂无"}", style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
+                    Text("市场 → 主线 → 催化 → 候选 → 风险", style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
                 }
-                if (state.summaryRefreshing) CircularProgressIndicator(modifier = Modifier.padding(8.dp), strokeWidth = 2.dp)
-                else Text("刷新", Modifier.clickable { vm.refreshRealtimeSummary("all") }.padding(10.dp), color = MaterialTheme.colorScheme.primary)
+                if (state.summaryRefreshing) CircularProgressIndicator(Modifier.padding(8.dp), strokeWidth = 2.dp)
+                else TextButton(onClick = { vm.refreshRealtimeSummary("all") }) { Text("刷新") }
+            }
+            state.summaryRefreshMessage?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+            if (state.localPicksLoading) Text(state.localPicksMsg ?: "本地深算中…", style = MaterialTheme.typography.bodySmall)
+            Row {
+                TextButton(onClick = { onSection(1) }) { Text("消息事件") }
+                TextButton(onClick = { onSection(2) }) { Text("题材主线") }
+                TextButton(onClick = { onSection(3) }) { Text("决策详情") }
+            }
+        }
+        items(sections, key = { it.id }) { section ->
+            var expanded by remember(section.id) { mutableStateOf(false) }
+            SkCard(contentPadding = PaddingValues(16.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text(section.title, style = MaterialTheme.typography.titleMedium)
+                        Text(when (section.status) { "ok" -> "已校验"; "partial" -> "部分可用"; "observe" -> "观察"; else -> "证据不足" },
+                            style = MaterialTheme.typography.labelMedium, color = SkColors.textSecondary)
+                    }
+                    Text("${section.source} · ${section.timestamp ?: "时点未提供"}", style = MaterialTheme.typography.labelSmall, color = SkColors.textSecondary)
+                    val entries = if (expanded) section.entries else section.entries.take(3)
+                    entries.forEach { entry ->
+                        Text(entry.text, style = MaterialTheme.typography.bodyMedium,
+                            modifier = if (entry.code != null) Modifier.fillMaxWidth().heightIn(min = 48.dp)
+                                .clickable { vm.openDetail(entry.code) }.padding(vertical = 8.dp) else Modifier.fillMaxWidth())
+                    }
+                    if (section.entries.size > 3) TextButton(onClick = { expanded = !expanded }) {
+                        Text(if (expanded) "收起" else "展开全部 ${section.entries.size} 项")
+                    }
+                }
             }
         }
         item {
-            state.summaryRefreshMessage?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = if (it.startsWith("刷新失败")) MaterialTheme.colorScheme.error else SkColors.textSecondary) }
-        }
-        // 本页只做总结：推股名单已拆成「盘前推股名单 / 实时推股名单」两个独立入口，
-        // 名单是执行用的，总结是复盘用的，节奏不同，混在一页两边都看不清。
-        item(key = "sec_summary") { SectionTitle("① 盘中总结", "当下市场在讲什么，来自标明来源的市场证据") }
-        item { SummaryTextCard(state.summary) }
-
-        item(key = "sec_close") { SectionTitle("② 盘后复盘", "收盘后各阶段实际跑出了什么") }
-        item { CloseReviewCard(state.closeReview, today) }
-
-
-    }
-}
-
-@Composable
-private fun CloseReviewCard(review: CloseReview, today: String) {
-    SkCard(contentPadding = PaddingValues(0.dp)) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-            Text("盘后总结", fontWeight = FontWeight.SemiBold)
-            Text("生成 ${review.generatedAt ?: "暂无数据"} · 状态 ${review.status}", style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
-            if (review.status != "ok") Text(review.reason ?: "本交易日盘后总结未生成或数据不足。", style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
-            else {
-                if (review.date != today) Text("源日期 ${review.date ?: "未知"}，不是今日数据；以下仅作历史参考。", style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
-                review.stages.forEach { (name, data) ->
-                    val summary = data["summary"] as? Map<*, *>
-                    Text("$name：${summary?.get("n") ?: summary?.get("n_requested") ?: "暂无数据"} 条 · 胜率 ${summary?.get("hit_rate_pct") ?: "暂无数据"}", style = MaterialTheme.typography.bodySmall)
+            val review = state.closeReview
+            SkCard(contentPadding = PaddingValues(16.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("盘后复盘 · 历史参考", style = MaterialTheme.typography.titleMedium)
+                    Text("源日期 ${review.date ?: "未知"} · 生成 ${review.generatedAt ?: "未知"}", style = MaterialTheme.typography.labelSmall)
+                    Text(when {
+                        review.status != "ok" -> review.reason ?: "盘后归档尚未就绪。"
+                        review.date != MarketHours.todayKey() -> "不是今日记录；不回填为当日判断。"
+                        else -> review.reason ?: "当日归档；不代表当前实时判断。"
+                    }, style = MaterialTheme.typography.bodyMedium)
+                    review.stages.entries.take(4).forEach { (name, data) ->
+                        val summary = data["summary"] as? Map<*, *>
+                        Text("$name · 归档样本 ${summary?.get("n") ?: summary?.get("n_requested") ?: "未知"}", style = MaterialTheme.typography.bodySmall)
+                    }
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun SummaryTextCard(summary: Map<String, Any?>) {
-    val source = summary["source"]?.toString()
-    val isLocal = source == "local_realtime"
-    val ok = summary["status"]?.toString() == "ok"
-    SkCard(contentPadding = PaddingValues(0.dp)) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("市场复盘", fontWeight = FontWeight.SemiBold)
-                Text(
-                    when {
-                        isLocal -> "本地实时计算"
-                        source != null -> "云端 $source"
-                        else -> "暂无来源"
-                    },
-                    style = MaterialTheme.typography.labelSmall, color = SkColors.textSecondary,
-                )
-            }
-            if (!ok) {
-                Text(
-                    summary["reason"]?.toString() ?: "暂无数据：本地行情/消息/深算均未就绪，点上方「刷新」重试。",
-                    style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary,
-                )
-            } else {
-                val text = summary["text"]?.toString()
-                Text(
-                    if (text.isNullOrBlank()) "暂无数据：总结正文为空。" else text,
-                    style = MaterialTheme.typography.bodySmall,
-                )
-                Text(
-                    "时点 ${summary["ts"] ?: "暂无"} · 交易日 ${summary["date"] ?: "暂无"}",
-                    style = MaterialTheme.typography.labelSmall, color = SkColors.textSecondary,
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun WinrateCard(state: UiState) {
-    SkCard(contentPadding = PaddingValues(0.dp)) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-            Text("推股胜率", fontWeight = FontWeight.SemiBold)
-            Text("生成 ${state.winrateMatrix.ts ?: "时点暂无"} · 源数据 ${state.winrateMatrix.sourceTs ?: "暂无数据"} · 来源 ${state.winrateMatrix.source ?: "暂无数据"}", style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
-            val sourceDate = state.winrateMatrix.sourceTs?.take(10)
-            val fresh = sourceDate == java.time.LocalDate.now().toString()
-            if (!fresh) Text("暂无数据：胜率源数据不是当前交易日，不能作为今日统计。", style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
-            if (state.winrateMatrix.horizons.isEmpty() || !fresh) Text("暂无数据：当前无可用当日胜率。", style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
-            else state.winrateMatrix.horizons.toSortedMap().forEach { (horizon, data) ->
-                Text("${horizon}日：胜率 ${formatPercent(data["overall"])} · 平均收益 ${data["avg_ret_pct"] ?: "暂无数据"}% · 样本 ${data["n"] ?: "暂无数据"}", style = MaterialTheme.typography.bodySmall)
-            }
-        }
-    }
-}
-
-private fun formatPercent(value: Any?): String = when (value) {
-    // 胜率矩阵的 overall 由 ViewModel 预格式化成字符串（如 "62.5"），
-    // 只认 Number 会让命中率恒显示「暂无数据」——数据在、界面说没有。
-    is Number -> "%.1f%%".format(value.toDouble() * 100)
-    is String -> value.takeIf { it.isNotBlank() && it != "insufficient" }?.let { "$it%" } ?: "暂无数据"
-    else -> "暂无数据"
-}
-
-/** 分区标题：把「总结 / 复盘 / 命中率」三段的界限画出来，避免又滚成一条长列表。 */
-@Composable
-private fun SectionTitle(title: String, subtitle: String) {
-    Column(Modifier.padding(top = 6.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-        Text(subtitle, style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
     }
 }

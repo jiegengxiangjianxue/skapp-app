@@ -34,6 +34,41 @@ typealias ArchiveDoc = CloudFeed.Doc
 
 object Db {
 
+    /** Production and fixtures share this read-only boundary; cancellation must reach the caller. */
+    suspend fun stockAnalysisInputs(
+        code: String, bars: List<KBar>, nowMs: Long = System.currentTimeMillis(),
+        transport: StockInputTransport = StockInputTransport { SkappApi.fetchInputText(it) },
+    ): StockAnalysisInputs {
+        suspend fun json(url: String): JSONObject? = try {
+            transport.get(url)?.let(::JSONObject)
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (_: Exception) { null }
+        val normalized = Code.normalize(code) ?: return StockAnalysisInputs(code, bars = bars, missing = listOf("invalid_code"))
+        val api = json(RemoteSources.apiStock(RemoteSources.OWNER_A, RemoteSources.REPO_A, normalized))
+        val holo = json(RemoteSources.stockFinance(normalized))
+        val financial = StockAnalysisInputs.financial(normalized, api, holo, nowMs)
+        val benchmark = if (bars.isNotEmpty() && normalized in StockAnalysisInputs.benchmarkHashes) try {
+            transport.get(RemoteSources.stockBenchmark(normalized))?.let { StockAnalysisInputs.benchmark(normalized, it, nowMs) }
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (_: Exception) { null } else null
+        if (benchmark == null) return financial.copy(
+            bars = bars.toList(), barsFingerprint = StockAnalysisInputs.barsFingerprint(bars))
+        val byDate = benchmark.bars.associateBy { it.date }
+        if (benchmark.expiresAtMs!! < nowMs || benchmark.bars.lastOrNull()?.date != bars.lastOrNull()?.date ||
+            bars.any { it.date !in byDate }) return financial.copy(
+            bars = bars.toList(), barsFingerprint = StockAnalysisInputs.barsFingerprint(bars),
+            missing = listOf("benchmark_stale_or_date_mismatch"))
+        val selected = bars.map { byDate.getValue(it.date) }
+        return financial.copy(bars = selected, barsFingerprint = StockAnalysisInputs.barsFingerprint(selected),
+            adjustmentEvidence = benchmark.adjustmentEvidence, barSources = benchmark.barSources.filterKeys { day -> selected.any { it.date == day } },
+            source = listOfNotNull(financial.source, benchmark.source).joinToString(";"),
+            expiresAtMs = financial.expiresAtMs?.let { minOf(it, benchmark.expiresAtMs!!) },
+            missing = if (benchmark.expiresAtMs!! < nowMs) listOf("benchmark_stale") else emptyList())
+    }
+
+
     // ── 库表 ────────────────────────────────────────────────
 
     /** 全市场代码表（当日可用，一天变一次，实时接口给不全）。 */

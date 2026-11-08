@@ -346,7 +346,7 @@ jobs:
           - { module: engine-algo, group: sectors-pulse, filters: '*LocalSectorsTest,*SectorAliasTest,*SectorLinkTest,*ResonanceAndPulseTest,*LivePulseTest,*PeadEventsTest' }
           - { module: engine-algo, group: render-contracts, filters: '*UiRenderContractTest,*ScreenDataContractTest,*CloudArtifactIntegrationTest' }
           - { module: engine-algo, group: perf, filters: '*PerfProbeTest' }
-          - { module: engine-runtime, group: wiring, filters: '*BoardStatsWiringTest,*ChainIntegrityTest,*CloudParamsTest,*EngineFeedLiveTest,*HeartbeatPolicyTest,*ScreenerRequestTest,*CentralAnalysisTest,*CentralEngineE2ETest' }
+          - { module: engine-runtime, group: wiring, filters: '*BoardStatsWiringTest,*ChainIntegrityTest,*CloudParamsTest,*EngineFeedLiveTest,*HeartbeatPolicyTest,*ScreenerRequestTest,*StockInputWiringTest,*CentralAnalysisTest,*CentralEngineE2ETest' }
           - { module: engine-runtime, group: picks, filters: '*LocalPicksTest,*PickScoringChainTest,*SectorBoostTest' }
           - { module: engine-runtime, group: snapshot, filters: '*LocalSnapshotTest,*SnapshotStatusTest,*DayArchiveTest,*LiveExtrasTest' }
           - { module: engine-runtime, group: contracts, filters: '*ScreenDataContractRuntimeTest,*NewsCalcResolveTest' }
@@ -527,7 +527,9 @@ jobs:
           # 状态契约类含一条 @Ignore 的「盘中 SSE」用例——它只能由真机证据判定，故意不在此处跑。
           ./gradlew :ui:testDebugUnitTest \
             --tests "*ScreenRenderRobolectricTest*" \
-            --tests "*ColdStartDetailTokenRobolectricTest*" --stacktrace
+            --tests "*ColdStartDetailTokenRobolectricTest*" \
+            --tests "*WorkbenchSummaryTest" \
+            --tests "*LatestRequestRunnerTest" --stacktrace
 
       - name: 汇总每个屏的通过情况
         if: always()

@@ -13,6 +13,17 @@ import kotlin.test.assertTrue
  */
 class LiveMarketRowTest {
 
+    @Test fun `only unique complete source totals prove full market coverage`() {
+        val a = row("600519", 1.0).copy(expectedTotal = 2, source = "eastmoney/clist")
+        val b = row("000001", -1.0).copy(expectedTotal = 2, source = "eastmoney/clist")
+        assertTrue(LiveMarket.completeCoverage(listOf(a, b)))
+        assertFalse(LiveMarket.completeCoverage(listOf(a)))
+        assertFalse(LiveMarket.completeCoverage(listOf(a, a)))
+        assertFalse(LiveMarket.completeCoverage(listOf(a, b.copy(expectedTotal = 3))))
+        assertFalse(LiveMarket.completeCoverage(listOf(a, b.copy(source = "sina", expectedTotal = null))))
+        assertFalse(LiveMarket.completeCoverage(emptyList()))
+    }
+
     private fun row(code: String, pct: Double, name: String? = "测试股") = LiveMarket.Row(
         code = code,
         name = name,

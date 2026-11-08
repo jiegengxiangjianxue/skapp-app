@@ -127,13 +127,12 @@ object DataCache {
     /**
      * 本地引擎结果（由日 K 派生）。
      *
-     * 缓存键必须带上**最后一根 bar 的指纹**：盘中 bar 数量不变、只是数值在更新，
+     * 缓存键必须带上**全序列 OHLCV 的指纹**：盘中 bar 数量不变、只是数值在更新，
      * 老键（只看 bars.size）会命中上午算出来的旧评分，一整天都不刷新。
      * 换新键时顺手清掉同股旧键，避免盘中每分钟攒一份结果把内存吃掉。
      */
     fun engine(code: String, adjust: String, bars: List<KBar>): LocalEngineResult {
-        val last = bars.lastOrNull()
-        val fp = "${bars.size}:${last?.date}:${last?.close}:${last?.vol}"
+        val fp = StockAnalysisInputs.barsFingerprint(bars)
         val prefix = "engine:$code:$adjust:"
         val key = "$prefix$fp"
         get<LocalEngineResult>(key)?.let { return it }
