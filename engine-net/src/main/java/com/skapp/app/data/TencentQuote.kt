@@ -1,7 +1,19 @@
 package com.skapp.app.data
 
+import java.time.LocalDateTime
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.time.format.ResolverStyle
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
+import org.json.JSONObject
 
 /**
  * 腾讯行情直连（qt.gtimg.cn）——全市场快照被拒时的报价兜底。
@@ -17,7 +29,66 @@ object TencentQuote {
     private val iso get() = CstTime.fmt("yyyy-MM-dd HH:mm:ss")
     // 必须走 CstTime：SimpleDateFormat 默认跟设备时区，UTC 设备上会把北京时间的
     // 报文解析成 UTC 再按 CST 渲染，时间戳平白差 8 小时。
-    private val rawTs get() = CstTime.fmt("yyyyMMddHHmmss")
+    private val sourceTime = DateTimeFormatter.ofPattern("uuuuMMddHHmmss").withResolverStyle(ResolverStyle.STRICT)
+    private val sourceZone = ZoneId.of("Asia/Shanghai")
+
+    internal const val MARKET_SOURCE = "sina_universe/tencent_quote"
+
+    internal fun sourceTimestamp(raw: String, now: Long = System.currentTimeMillis()): Long? {
+        if (raw.length != 14 || !raw.all { it in '0'..'9' }) return null
+        return runCatching { LocalDateTime.parse(raw, sourceTime).atZone(sourceZone).toInstant().toEpochMilli() }
+            .getOrNull()?.takeIf { it > 0 && it <= now }
+    }
+
+    /** 官方枚举仅提供身份；所有报价字段和日期必须取自同一腾讯数组。 */
+    internal fun parseMarketRows(text: String?, wanted: List<String>, expectedTotal: Int?): List<LiveMarket.Row> {
+        if (text == null) return emptyList()
+        // Android 与 JVM 的 JSONObject 对重复键处理不同，先拒绝歧义身份。
+        val identities = Regex("\"(?:sh|sz|bj)[0-9]{6}\"\\s*:").findAll(text).map { it.value.substringBeforeLast('"') }.toList()
+        if (identities.distinct().size != identities.size) return emptyList()
+        val obj = runCatching { JSONObject(text) }.getOrNull() ?: return emptyList()
+        val allowed = wanted.associateBy { Code.prefixed(it) }
+        val out = LinkedHashMap<String, LiveMarket.Row>()
+        for (key in obj.keys()) {
+            val code = allowed[key] ?: continue
+            val f = obj.optJSONArray(key) ?: continue
+            if (f.length() != 88 || (0 until f.length()).any { f.opt(it) !is String }) continue
+            if (f.getString(2) != code) continue
+            val ts = sourceTimestamp(f.getString(30)) ?: continue
+            fun num(i: Int): Double? = f.getString(i).toDoubleOrNull()?.takeIf { it.isFinite() }
+            val price = num(3)?.takeIf { it > 0 } ?: continue
+            val row = LiveMarket.Row(
+                code = code, name = f.getString(1).takeIf { it.isNotEmpty() },
+                price = price, pctChg = num(32), volumeLots = num(6)?.takeIf { it >= 0 },
+                amount = null, amplitude = null, turnoverRate = null, pe = null,
+                volRatio = null, mv = null, mainNet = null, ts = ts,
+                high = num(33), low = num(34), open = num(5), prevClose = num(4),
+                expectedTotal = expectedTotal, source = MARKET_SOURCE,
+            )
+            out[code] = row
+        }
+        return out.values.toList()
+    }
+
+    internal suspend fun marketSnapshot(codes: List<String>, expectedTotal: Int?, deadline: Long): List<LiveMarket.Row> = coroutineScope {
+        val sem = Semaphore(6)
+        codes.distinct().chunked(100).map { chunk -> async(Dispatchers.IO) {
+            currentCoroutineContext().ensureActive()
+            sem.withPermit {
+                currentCoroutineContext().ensureActive()
+                val remaining = deadline - System.nanoTime()
+                val timeout = (remaining / 2_000_000L).coerceAtMost(3_000L).toInt()
+                if (timeout <= 0) return@withPermit emptyList<LiveMarket.Row>()
+                val text = Http.getText(
+                    "https://sqt.gtimg.cn/utf8/?q=" + chunk.joinToString(",") { Code.prefixed(it) } + "&fmt=json",
+                    timeoutMs = timeout, readTimeoutMs = timeout, referer = "https://gu.qq.com/",
+                    accept = "application/json",
+                )
+                currentCoroutineContext().ensureActive()
+                parseMarketRows(text, chunk, expectedTotal)
+            }
+        } }.awaitAll().flatten()
+    }
     private val GBK = java.nio.charset.Charset.forName("GBK")
 
     /** 批量报价；返回 6 位归一化代码 → 报价。拉不到的票不进结果，由调用方决定怎么标陈旧。 */
@@ -26,11 +97,13 @@ object TencentQuote {
         if (wanted.isEmpty()) return@withContext emptyMap()
         val out = LinkedHashMap<String, Quote>()
         for (chunk in wanted.chunked(40)) {
+            currentCoroutineContext().ensureActive()
             val url = "https://qt.gtimg.cn/q=" + chunk.joinToString(",") { Code.prefixed(it) }
             val probe = Http.probe(url, charset = GBK, referer = "https://gu.qq.com/")
+            currentCoroutineContext().ensureActive()
             if (!probe.ok) continue
             probe.text.lineSequence().forEach { line ->
-                parseLine(line)?.let { out[it.code] = it }
+                parseLine(line)?.takeIf { it.code in chunk }?.let { out[it.code] = it }
             }
         }
         out
@@ -47,16 +120,14 @@ object TencentQuote {
         val f = body.split('~')
         if (f.size < 33) return null
         val code = Code.normalize(f[2]) ?: return null
-        val tsRaw = f[30]
-        val ts = if (tsRaw.length == 14) {
-            runCatching { iso.format(rawTs.parse(tsRaw)!!) }.getOrNull()
-        } else null
+        val price = f[3].toDoubleOrNull()?.takeIf { it.isFinite() && it > 0 } ?: return null
+        val timestamp = sourceTimestamp(f[30]) ?: return null
         return Quote(
             code = code,
             name = f[1],
-            price = f[3].toDoubleOrNull(),
-            pctChg = f[32].toDoubleOrNull(),
-            ts = ts,
+            price = price,
+            pctChg = f[32].toDoubleOrNull()?.takeIf { it.isFinite() },
+            ts = iso.format(java.util.Date(timestamp)),
         )
     }
 }

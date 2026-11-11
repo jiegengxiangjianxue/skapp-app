@@ -124,7 +124,8 @@ class LiveMarketFetchTest {
 
     @Test fun `successful probes are reused and partial rows retain provenance and unknown times`() = withFake(
         respond = {
-            if (page(url) != 1) null
+            if (url.path.endsWith("getHQNodeStockCount")) "\"5350\""
+            else if (page(url) != 1) null
             else if (url.host.endsWith("eastmoney.com")) {
                 """{"data":{"total":5926,"diff":[{"f12":"600519","f2":10,"f124":1730000000},{"f12":"000001","f2":8}]}}"""
             } else {
@@ -135,7 +136,9 @@ class LiveMarketFetchTest {
         val rows = LiveMarket.snapshot(force = true)
         assertEquals(3, rows.size)
         assertEquals(1, connections.count { it.url.host.endsWith("eastmoney.com") && page(it.url) == 1 })
-        assertEquals(1, connections.count { !it.url.host.endsWith("eastmoney.com") && page(it.url) == 1 })
+        assertEquals(1, connections.count { it.url.path.endsWith("getHQNodeData") && page(it.url) == 1 })
+        assertEquals(1, connections.count { it.url.path.endsWith("getHQNodeStockCount") })
+        assertEquals(0, connections.count { it.url.host == "sqt.gtimg.cn" })
         assertEquals(1_730_000_000_000L, rows.single { it.code == "600519" }.ts)
         assertEquals(0L, rows.single { it.code == "000001" }.ts)
         val sina = rows.single { it.code == "600000" }

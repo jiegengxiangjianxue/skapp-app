@@ -22,6 +22,13 @@ class LiveMarketRowTest {
         assertFalse(LiveMarket.completeCoverage(listOf(a, b.copy(expectedTotal = 3))))
         assertFalse(LiveMarket.completeCoverage(listOf(a, b.copy(source = "sina", expectedTotal = null))))
         assertFalse(LiveMarket.completeCoverage(emptyList()))
+        val tencent = listOf(a, b).map { it.copy(source = TencentQuote.MARKET_SOURCE, ts = 1_730_000_000_000L) }
+        assertTrue(LiveMarket.completeCoverage(tencent))
+        assertFalse(LiveMarket.completeCoverage(tencent.dropLast(1)))
+        assertFalse(LiveMarket.completeCoverage(listOf(tencent.first(), tencent.first())))
+        assertFalse(LiveMarket.completeCoverage(listOf(a, tencent.last())))
+        assertFalse(LiveMarket.completeCoverage(tencent.map { it.copy(ts = 0) }))
+        assertFalse(LiveMarket.completeCoverage(tencent.map { it.copy(ts = Long.MAX_VALUE) }))
     }
 
     private fun parsed(timestamp: String): LiveMarket.Row {

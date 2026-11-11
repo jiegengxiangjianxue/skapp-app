@@ -295,21 +295,39 @@ class SkappViewModel : ViewModel() {
         market.loadIndices()
         news.loadBoard()
         news.loadSummary()
-        shared.sections.load("板块", fetch = {
-            val result = com.skapp.app.data.LocalSectors.compute()
-            requireNotNull(result) { "板块行情或映射不可达" }
-            com.skapp.app.data.LocalSectors.snapshot(result)
-        }) { s, v -> s.copy(sectors = v) }
+        ensureSectors()
         shared.sections.load("消息快照", fetch = { DbTables.news() }) { s, v ->
             if (s.news.items.isEmpty()) s.copy(news = v) else s
         }
         shared.sections.load("盘后归档", fetch = { DbTables.closeReview() }) { s, v -> s.copy(closeReview = v) }
         shared.sections.load("数据源", fetch = { DbTables.dataSources() }) { s, v -> s.copy(dataSources = v) }
-        shared.sections.load("题材", fetch = { DbTables.theme() }) { s, v -> s.copy(themeReport = v) }
+        ensureTheme()
         shared.sections.load("市场状态", fetch = {
             com.skapp.app.data.LivePulse.of(com.skapp.app.data.LiveMarket.snapshot())
         }) { s, v -> s.copy(market = com.skapp.app.data.LocalSnapshot.market(v),
             decision = com.skapp.app.data.LocalSnapshot.decision(v, s.screened)) }
+    }
+
+    private var themeRequested = false
+    private var sectorsRequested = false
+
+    fun ensureTheme(force: Boolean = false) {
+        if (!force && (themeRequested || _state.value.themeReport != null)) return
+        themeRequested = true
+        shared.sections.load("题材", force = force, fetch = {
+            requireNotNull(DbTables.theme()) { "题材报告不可达，可重试" }
+        }) { s, v -> s.copy(themeReport = v) }
+    }
+
+    fun ensureSectors(force: Boolean = false) {
+        if (!force && (sectorsRequested || _state.value.sectors.industries.isNotEmpty() ||
+            _state.value.sectors.concepts.isNotEmpty())) return
+        sectorsRequested = true
+        shared.sections.load("板块", force = force, fetch = {
+            val result = com.skapp.app.data.LocalSectors.compute()
+            requireNotNull(result) { "板块行情或映射不可达，可重试" }
+            com.skapp.app.data.LocalSectors.snapshot(result)
+        }) { s, v -> s.copy(sectors = v) }
     }
 
     fun loadMomentum(force: Boolean = false) {

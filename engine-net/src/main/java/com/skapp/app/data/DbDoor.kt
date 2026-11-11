@@ -61,6 +61,13 @@ object DbTables {
     /** 单票财务（按需查询）。 */
     suspend fun financial(code: String): Map<String, Any?>? = SkappApi.fetchStockFinancial(code)
 
+    /** 同股票财务与cnfin复权证据；原始bars仅作为日期范围，不混用厂商因子。 */
+    suspend fun stockAnalysisInputs(
+        code: String, bars: List<KBar>, nowMs: Long = System.currentTimeMillis(),
+        transport: StockInputTransport? = null,
+    ): StockAnalysisInputs = if (transport == null) Db.stockAnalysisInputs(code, bars, nowMs)
+        else Db.stockAnalysisInputs(code, bars, nowMs, transport)
+
     /** 消息 → 个股影响归档（随 news 一起产出）。 */
     suspend fun newsImpact(): List<Map<String, Any?>> = SkappApi.fetchNewsImpact()
 

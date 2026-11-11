@@ -1,5 +1,6 @@
 package com.skapp.app.data
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.util.Date
@@ -39,16 +40,30 @@ object LiveQuote {
         if (wanted.isEmpty()) return@withContext emptyMap()
 
         val out = LinkedHashMap<String, Quote>()
-        val rows = runCatching { LiveMarket.snapshot() }.getOrDefault(emptyList()).associateBy { it.code }
+        val rows = runCatching { LiveMarket.snapshot() }.getOrElse {
+            if (it is CancellationException) throw it
+            emptyList()
+        }.associateBy { it.code }
+        val invalidCached = wanted.filter { code ->
+            val row = rows[code] ?: return@filter false
+            row.ts <= 0 || row.ts > System.currentTimeMillis() || row.price?.let { !it.isFinite() || it <= 0 } != false
+        }
         for (code in wanted) {
-            rows[code]?.let { out[code] = quoteOf(it) }
+            rows[code]?.takeIf { code !in invalidCached }?.let { out[code] = quoteOf(it) }
+        }
+        // 已知坏缓存直接补真实报价，不让云端 token 或无日期行再次挡住腾讯。
+        if (invalidCached.isNotEmpty()) {
+            runCatching { TencentQuote.batch(invalidCached) }.getOrElse {
+                if (it is CancellationException) throw it
+                emptyMap()
+            }.forEach { (code, q) -> out[code] = q }
         }
 
-        val missing = wanted.filter { it !in out }
+        val missing = wanted.filter { it !in out && it !in invalidCached }
         if (missing.isNotEmpty()) {
             // 补拉只针对快照覆盖不到的少数票（港股、停牌、刚上市）
             runCatching { SkappApi.fetchQuotes(missing.map { Code.prefixed(it) }) }
-                .getOrDefault(emptyMap())
+                .getOrElse { if (it is CancellationException) throw it else emptyMap() }
                 .forEach { (rawCode, q) ->
                     val code = Code.normalize(rawCode) ?: return@forEach
                     out[code] = q
@@ -57,10 +72,10 @@ object LiveQuote {
 
         // 快照与云端都没给到（东财 clist 被风控时两个源会一起空）：最后直连腾讯补齐。
         // 宁可标陈旧，也不能让首页只剩空价——空价与「确实没这只票」在界面上无法区分。
-        val stillMissing = wanted.filter { it !in out }
+        val stillMissing = wanted.filter { it !in out && it !in invalidCached }
         if (stillMissing.isNotEmpty()) {
             runCatching { TencentQuote.batch(stillMissing) }
-                .getOrDefault(emptyMap())
+                .getOrElse { if (it is CancellationException) throw it else emptyMap() }
                 .forEach { (code, q) -> out[code] = q }
         }
         out

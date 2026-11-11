@@ -22,10 +22,12 @@ fun SummaryHubScreen(
     state: UiState,
     selected: Int = 0,
     onSelect: (Int) -> Unit = {},
+    mainlineSelected: Int = 0,
+    onMainlineSelect: (Int) -> Unit = {},
 ) {
     Column(Modifier.fillMaxSize()) {
         SkTabBar(
-            tabs = listOf("市场复盘", "消息事件", "题材", "决策"),
+            tabs = listOf("市场复盘", "消息事件", "题材与主线", "决策"),
             selected = selected,
             onSelect = onSelect,
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
@@ -34,7 +36,7 @@ fun SummaryHubScreen(
             when (selected) {
                 0 -> RealtimeSummaryScreen(vm, state, onSection = onSelect)
                 1 -> NewsScreen(vm, state)
-                2 -> ThemeScreen(vm, state)
+                2 -> MainlineScreen(vm, state, mainlineSelected, onMainlineSelect)
                 else -> DecisionScreen(vm, state)
             }
         }

@@ -349,7 +349,7 @@ jobs:
           - { module: engine-runtime, group: wiring, filters: '*BoardStatsWiringTest,*ChainIntegrityTest,*CloudParamsTest,*EngineFeedLiveTest,*HeartbeatPolicyTest,*ScreenerRequestTest,*StockInputWiringTest,*CentralAnalysisTest,*CentralEngineE2ETest' }
           - { module: engine-runtime, group: picks, filters: '*LocalPicksTest,*PickScoringChainTest,*SectorBoostTest' }
           - { module: engine-runtime, group: snapshot, filters: '*LocalSnapshotTest,*SnapshotStatusTest,*DayArchiveTest,*LiveExtrasTest' }
-          - { module: engine-runtime, group: contracts, filters: '*ScreenDataContractRuntimeTest,*NewsCalcResolveTest' }
+          - { module: engine-runtime, group: contracts, filters: '*ScreenDataContractRuntimeTest,*NewsCalcResolveTest,*TradingDecisionTest' }
     name: tests / ${{ matrix.module }} / ${{ matrix.group }}
     steps:
       - uses: actions/checkout@v4

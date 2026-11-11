@@ -33,6 +33,16 @@ class TencentQuoteTest {
     }
 
     @Test
+    fun `invalid prices and invalid source dates are rejected`() {
+        for (price in listOf("NaN", "Infinity", "0", "-1", "")) {
+            assertNull(TencentQuote.parseLine(row(mapOf(3 to price))))
+        }
+        for (stamp in listOf("", "20260230150000", "20991030150000", "20261030")) {
+            assertNull(TencentQuote.parseLine(row(mapOf(30 to stamp))))
+        }
+    }
+
+    @Test
     fun `短行直接放弃而不是抛下标越界`() {
         val short = "v_sz000001=\"51~平安银行~000001~11.20~\""
         assertNull(TencentQuote.parseLine(short))

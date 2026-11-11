@@ -21,16 +21,11 @@ import androidx.compose.ui.unit.dp
 import com.skapp.app.ui.SkappViewModel
 import com.skapp.app.ui.UiState
 import com.skapp.app.ui.components.SkCard
-import com.skapp.app.ui.components.SkTabBar
 import com.skapp.app.ui.theme.SkColors
 
 @Composable
 fun ResearchHubScreen(vm: SkappViewModel, state: UiState, selected: Int, onSelect: (Int) -> Unit) {
-    Column(Modifier.fillMaxSize()) {
-        SkTabBar(listOf("板块动量", "历史回测"), selected, onSelect,
-            Modifier.padding(horizontal = 12.dp, vertical = 8.dp))
-        if (selected == 0) MomentumScreen(vm, state) else BacktestScreen(vm, state)
-    }
+    BacktestScreen(vm, state)
 }
 
 @Composable

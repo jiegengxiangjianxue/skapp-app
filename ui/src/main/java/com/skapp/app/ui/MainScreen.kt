@@ -65,8 +65,8 @@ import com.skapp.app.ui.theme.SkColors
 private enum class MainTab(val label: String, val subtitle: String) {
     DASHBOARD("看板", "今天市场是什么状态"),
     SUMMARY("解读", "市场复盘、消息事件与决策"),
-    NEWS("研究", "板块动量与历史推股验证"),
-    PICKS("选股", "候选名单、板块与中枢结论"),
+    NEWS("研究", "历史推股验证与口径证据"),
+    PICKS("选股", "实时、早午盘候选与多池观察"),
     CREDENTIALS("设置", "凭据与数据诊断"),
 }
 
@@ -118,6 +118,7 @@ fun MainScreen(
     var tab by remember { mutableStateOf(MainTab.entries.getOrElse(initialTab) { MainTab.DASHBOARD }) }
     val subTabs = remember { mutableStateMapOf<MainTab, Int>() }
     val sub = subTabs[tab] ?: 0
+    var mainlineSection by remember { mutableStateOf(0) }
     val detailOpen = state.detail != null || state.detailLoading
 
     fun selectSub(index: Int) {
@@ -191,9 +192,18 @@ fun MainScreen(
             Box(Modifier.weight(1f).padding(bottom = 76.dp)) {
                 when (tab) {
                     MainTab.DASHBOARD -> DashboardHubScreen(vm, state, sub, ::selectSub,
-                        onResearch = { index -> tab = MainTab.NEWS; subTabs[MainTab.NEWS] = index },
+                        onResearch = { index ->
+                            if (index == 0) {
+                                mainlineSection = 2
+                                tab = MainTab.SUMMARY
+                                subTabs[MainTab.SUMMARY] = 2
+                            } else {
+                                tab = MainTab.NEWS
+                                subTabs[MainTab.NEWS] = 0
+                            }
+                        },
                         onInterpret = { tab = MainTab.SUMMARY; subTabs[MainTab.SUMMARY] = 1 })
-                    MainTab.SUMMARY -> SummaryHubScreen(vm, state, sub, ::selectSub)
+                    MainTab.SUMMARY -> SummaryHubScreen(vm, state, sub, ::selectSub, mainlineSection) { mainlineSection = it }
                     MainTab.NEWS -> com.skapp.app.ui.screens.ResearchHubScreen(vm, state, sub, ::selectSub)
                     MainTab.PICKS -> PicksHubScreen(vm, state, sub, ::selectSub)
                     MainTab.CREDENTIALS -> CredentialsScreen(vm, state, sub, ::selectSub)

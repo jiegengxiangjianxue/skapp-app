@@ -860,23 +860,47 @@ internal class MarketStateHolder(shared: SharedVm) : StateHolder(shared) {
     suspend fun refreshDetailCentral() {
         val captured = _state.value
         val code = captured.detail?.code ?: return
-        if (captured.detailDailyKline.size < 30) return
         val revision = centralRevision.incrementAndGet()
-        val chain = requestResult {
-            com.skapp.app.data.CentralAnalysis.analyze(code, captured.detailDailyKline, captured.fundFlow,
+        val generation = detailGeneration.get()
+        val nowMs = System.currentTimeMillis()
+        val input = requestResult {
+            withContext(Dispatchers.IO) { DbTables.stockAnalysisInputs(code, captured.detailDailyKline, nowMs) }
+        }.getOrElse {
+            com.skapp.app.data.StockAnalysisInputs(code, bars = captured.detailDailyKline,
+                missing = listOf("detail_input_unavailable"))
+        }
+        if (centralRevision.get() != revision || detailGeneration.get() != generation ||
+            _state.value.detail?.code != code || _state.value.detailAdjust != captured.detailAdjust) return
+        val analysisBars = input.bars
+        val chain = if (analysisBars.size >= 30) requestResult {
+            com.skapp.app.data.CentralAnalysis.analyze(code, analysisBars, captured.fundFlow,
                 captured.newsCalcs, com.skapp.app.data.CentralAnalysis.newsAvailable(captured.news),
                 liveFlow = captured.fundFlowLive, minute = captured.minuteTrend, minuteDate = captured.minuteDate)
-        }.getOrNull() ?: return
+        }.getOrNull() else null
         if (centralRevision.get() != revision || _state.value.detail?.code != code) return
-        val engine = _state.value.localEngine ?: return
-        val central = centralEngine(engine, chain)
+        val (verifiedEngine, levels, exit) = withContext(Dispatchers.Default) {
+            Triple(LocalEngine.analyze(analysisBars), com.skapp.app.data.KeyLevels.compute(analysisBars),
+                com.skapp.app.data.ExitPlan.compute(analysisBars))
+        }
+        val central = centralEngine(verifiedEngine, chain)
+        val quote = captured.liveQuote?.takeIf { it.code == code }
+        val decision = com.skapp.app.data.TradingDecision.evaluate(
+            chain = chain, code = code, price = quote?.price, pctChg = quote?.pctChg,
+            quoteAtMs = com.skapp.app.data.CentralAnalysis.timeOf(quote?.ts),
+            quoteSource = quote?.let { "MarketDataClient/LiveQuote（源时点随报价）" },
+            bars = analysisBars, evidence = com.skapp.app.data.TradingDecision.evidenceOf(input, System.currentTimeMillis()),
+            levels = levels, exit = exit,
+            nowMs = System.currentTimeMillis(),
+        )
         _state.update { current ->
-            if (current.detail?.code != code || centralRevision.get() != revision) current else current.copy(
-                centralEngineSummary = central.summary, centralEngineScore = central.score,
+            if (current.detail?.code != code || centralRevision.get() != revision || detailGeneration.get() != generation ||
+                current.detailDailyKline != captured.detailDailyKline || current.liveQuote != captured.liveQuote ||
+                current.detailAdjust != captured.detailAdjust) current else current.copy(
+                centralEngineSummary = decision.summary() + "\n" + central.summary, centralEngineScore = central.score,
                 centralEngineResonance = central.resonance, centralEngineStatus = central.status,
-                canonicalScore = chain.canonicalScore, canonicalResonance = chain.canonical?.resonance,
-                engineSpecVersion = chain.specVersion, engineSpecDrift = chain.specDrift,
-                chainDegraded = chain.degraded, chainStatus = chain.status,
+                canonicalScore = chain?.canonicalScore, canonicalResonance = chain?.canonical?.resonance,
+                engineSpecVersion = chain?.specVersion, engineSpecDrift = chain?.specDrift ?: false,
+                chainDegraded = chain?.degraded ?: listOf("完整多输入规格链路"), chainStatus = chain?.status ?: "insufficient",
             )
         }
     }

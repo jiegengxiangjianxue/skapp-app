@@ -9,6 +9,7 @@ import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import com.skapp.app.ui.screens.MultiPoolContent
 import com.skapp.app.data.SiteBoardClient
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -129,7 +130,46 @@ class ScreenRenderRobolectricTest {
         var selected = -1
         compose.setContent { PicksHubScreen(vm(), UiState(), selected = 0, onSelect = { selected = it }) }
         compose.onNodeWithText("多池").performClick()
-        assertEquals(5, selected)
+        assertEquals(4, selected)
+    }
+
+    @Test(timeout = 120_000)
+    fun mainlineTabsAreReachableFromInterpretationAndDoNotRouteToPicks() {
+        compose.setContent { MainScreen(vm()) }
+        compose.onNodeWithText("解读").performClick()
+        compose.onNodeWithText("题材与主线").performClick()
+        compose.onNodeWithTag("mainline-0").assertExists()
+        compose.onNodeWithText("行业概念").performClick()
+        compose.onNodeWithTag("mainline-1").assertExists()
+        compose.onNodeWithText("强弱动量").performClick()
+        compose.onNodeWithText("板块动量观察").assertExists()
+        compose.onNodeWithText("选股").performClick()
+        compose.onNodeWithText("板块").assertDoesNotExist()
+        compose.onNodeWithText("多池").performClick()
+        compose.onNodeWithText("多池观察").assertExists()
+    }
+
+    @Test(timeout = 120_000)
+    fun dashboardMomentumShortcutUsesMainlineWhileResearchIsBacktestOnly() {
+        compose.setContent { MainScreen(vm()) }
+        compose.onNodeWithText("板块动量").performScrollTo().performClick()
+        compose.onNodeWithTag("mainline-2").assertExists()
+        compose.onNodeWithText("板块动量观察").assertExists()
+        compose.onNodeWithText("研究").performClick()
+        compose.onNodeWithText("历史推股验证").assertExists()
+        compose.onNodeWithText("强弱动量").assertDoesNotExist()
+    }
+
+    @Test(timeout = 120_000)
+    fun failedMainlineSegmentsOfferOnlyTheirOwnRetryAction() {
+        val model = vm()
+        compose.setContent {
+            com.skapp.app.ui.screens.MainlineScreen(model,
+                UiState(dataGaps = mapOf("题材" to "fixture不可达")), selected = 0)
+        }
+        compose.onNodeWithText("fixture不可达").assertExists()
+        compose.onNodeWithText("重试催化题材").performClick()
+        compose.onNodeWithText("重试行业概念").assertDoesNotExist()
     }
 
     private fun textNodes() = compose
@@ -254,7 +294,7 @@ class ScreenRenderRobolectricTest {
 
     @Test(timeout = 120_000)
     fun `实时总结页 空数据下渲染标题`() = assertShowsAny(
-        "RealtimeSummaryScreen", "实时总结",
+        "RealtimeSummaryScreen", "市场复盘",
     ) { RealtimeSummaryScreen(vm(), UiState()) }
 
     @Test(timeout = 120_000)

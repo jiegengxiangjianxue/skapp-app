@@ -16,6 +16,20 @@ class WorkbenchSummaryTest {
         "market" to mapOf("涨" to 1234, "跌" to 4321, "主力净额(亿)" to -12.5),
         "sectors" to listOf(mapOf("name" to "电力", "chg_pct" to 1.8, "n" to 30)))
 
+    @Test fun applyingBoardPublishesMatchingBoardAndSummaryAtomically() {
+        val initial = UiState(summary = mapOf("text" to "旧摘要"))
+        val result = WorkbenchSummary.applyBoard(initial, board(), now)
+        assertEquals(board(), result.board)
+        assertEquals(WorkbenchSummary.asMap(result, now), result.summary)
+        assertTrue(result.summary["text"].toString().contains("1234"))
+        val missing = WorkbenchSummary.applyBoard(result, emptyMap(), now)
+        assertEquals(WorkbenchSummary.asMap(missing, now), missing.summary)
+        assertEquals("insufficient", missing.summary["status"])
+        assertFalse(missing.summary["text"].toString().contains("1234"))
+        val stale = WorkbenchSummary.applyBoard(result, board("2026-11-08T02:00:00Z"), now)
+        assertFalse(stale.summary["text"].toString().contains("1234"))
+    }
+
     @Test fun onlyWholeMarketUsesWholeMarketCountsAndMissingIsNotZero() {
         val state = UiState(board = board())
         assertTrue(text(state).contains("1234"))
@@ -92,6 +106,87 @@ class WorkbenchSummaryTest {
         assertTrue(text(state(snapshot, evidence + ("barsBound" to false))).contains("有效推荐 0"))
         assertTrue(text(state(snapshot, emptyMap())).contains("有效推荐 0"))
         assertTrue(text(state(emptyMap(), evidence)).contains("有效推荐 0"))
+    }
+
+    private val closedNow = Instant.parse("2026-11-09T16:10:00Z").toEpochMilli()
+    private val closeStamp = "2026-11-09T07:00:00Z"
+    private val closeTs = Instant.parse(closeStamp).toEpochMilli()
+    private fun historical() = board(closeStamp) + mapOf(
+        "status" to "historical", "snapshotMode" to "historical", "sourceDate" to "2026-11-09",
+        "minTs" to closeTs, "maxTs" to closeTs, "sampleSize" to 5900,
+        "reason" to "2026-11-09 历史行情复盘，非实时、不用于当前推荐",
+    )
+
+    @Test fun completeSameDayHistoryIsArchiveWithoutRenewingSourceTimeOrRecommendations() {
+        val board = historical()
+        val state = WorkbenchSummary.applyBoard(UiState(), board, closedNow)
+        val sections = WorkbenchSummary.sections(state, closedNow)
+        val market = sections.first { it.id == "market" }
+        assertEquals("historical", market.status)
+        assertTrue(market.source.contains("2026-11-09"))
+        assertTrue(market.source.contains("非实时"))
+        assertTrue(market.entries.any { it.text.contains("1234") })
+        assertTrue(market.entries.any { it.text.contains("成交额 暂无数据") })
+        assertEquals("historical", sections.first { it.id == "sectors" }.status)
+        assertEquals(closeStamp, market.timestamp)
+        assertEquals(closeStamp, state.summary["ts"])
+        assertEquals(closeTs, state.board["minTs"])
+        assertEquals("historical", state.summary["status"])
+        assertEquals("local_historical", state.summary["source"])
+        assertEquals("2026-11-09", state.summary["sourceDate"])
+        assertTrue(sections.first { it.id == "candidates" }.entries.any { it.text.contains("有效推荐 0") })
+    }
+
+    @Test fun unknownFutureAndMixedSourceTimesCannotProduceHistoricalDate() {
+        assertEquals("2026-11-09", WorkbenchSummary.historicalSourceDate(List(3000) { closeTs }, closedNow))
+        for (times in listOf(emptyList(), listOf(0L, closeTs), listOf(-1L), listOf(closedNow + 1),
+            listOf(closeTs, Instant.parse("2026-11-08T07:00:00Z").toEpochMilli()))) {
+            assertNull(WorkbenchSummary.historicalSourceDate(times, closedNow))
+        }
+    }
+
+    @Test fun invalidHistoryProofDoesNotExposeMarketOrSectors() {
+        val invalid = listOf(
+            mapOf("minTs" to 0L), mapOf("ts" to null), mapOf("ts" to Instant.ofEpochMilli(closedNow).toString()),
+            mapOf("sourceDate" to null), mapOf("sourceDate" to "2026-11-11"),
+            mapOf("maxTs" to Instant.parse("2026-11-08T07:00:00Z").toEpochMilli()),
+            mapOf("maxTs" to closedNow + 1), mapOf("coverageVerified" to false),
+            mapOf("sampleSize" to 2999), mapOf("snapshotMode" to "live"), mapOf("source" to "cloud"),
+        )
+        for (change in invalid) {
+            val sections = WorkbenchSummary.sections(UiState(board = historical() + change), closedNow)
+            for (id in listOf("market", "sectors")) assertEquals("insufficient", sections.first { it.id == id }.status)
+            assertFalse(sections.flatMap { it.entries }.any { it.text.contains("1234") || it.text.contains("电力") })
+        }
+    }
+
+    @Test fun historyWithoutMappingKeepsSectorInsufficientDespiteMarketArchive() {
+        val state = UiState(board = historical() - "sectors")
+        val sections = WorkbenchSummary.sections(state, closedNow)
+        assertEquals("historical", sections.first { it.id == "market" }.status)
+        assertEquals("insufficient", sections.first { it.id == "sectors" }.status)
+    }
+
+    @Test fun oldHistoryDuringTradingOrAuctionNeverBecomesCurrentBoard() {
+        for (time in listOf("2026-11-10T02:00:00Z", "2026-11-10T01:20:00Z")) {
+            val current = Instant.parse(time).toEpochMilli()
+            assertFalse(WorkbenchSummary.historicalBoard(historical(), current))
+            assertEquals("insufficient", WorkbenchSummary.sections(UiState(board = historical()), current).first { it.id == "market" }.status)
+        }
+    }
+
+    @Test fun historicalBoardDoesNotRenewPreviousClosePickQuotes() {
+        val pick = com.skapp.app.data.PickSignal("600519", "历史候选", pctChg = 1.0, buyable = true, snapshotStatus = "live")
+        val evidence = mapOf("eps" to 1.0, "dps" to 0.1, "reportPeriod" to "2026-06-30",
+            "adjustmentEvidence" to "cnfin:hfq_factor:test", "source" to "fixture",
+            "snapshotAtMs" to closeTs, "expiresAtMs" to closedNow + 1000, "barsBound" to true)
+        val artifact = com.skapp.app.data.StructuredPickArtifact(
+            calculationTime = Instant.ofEpochMilli(closedNow).toString(), date = "2026-11-10", status = "ok", picks = listOf(pick),
+            metadata = mapOf("snapshotByCode" to mapOf("600519" to mapOf("atMs" to closeTs, "source" to "LocalScreener/LiveMarket.Row")),
+                "evidenceByCode" to mapOf("600519" to evidence)))
+        val sections = WorkbenchSummary.sections(UiState(board = historical(), localRealtimePicks = artifact), closedNow)
+        assertTrue(sections.first { it.id == "candidates" }.entries.any { it.text.contains("有效推荐 0") })
+        assertFalse(sections.flatMap { it.entries }.any { it.text.contains("推荐 · 历史候选") })
     }
 
     @Test fun emptyStateRemainsInsufficientWithoutManufacturedTimestamp() {

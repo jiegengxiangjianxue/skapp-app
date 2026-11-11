@@ -10,6 +10,7 @@ import com.skapp.app.data.MarketDataClient
 import com.skapp.app.data.MarketHours
 import com.skapp.app.data.SiteBoardClient
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
@@ -163,12 +164,18 @@ internal class NewsSummaryHolder(
         }
     }
 
-    /** 本地实时看板：全市场快照 × 板块映射现算，涨跌榜/涨停池/板块热度都是当下的。 */
+    /** 本地看板保留行情源时点；休市完整同日行情仅用于历史复盘。 */
     suspend fun localBoardMap(force: Boolean = false): Map<String, Any?> {
         val snap = com.skapp.app.data.LiveMarket.snapshot(force = force)
         if (snap.isEmpty()) return localBoardUnavailable()
         val now = System.currentTimeMillis()
-        if (snap.any { now - it.ts !in 0..300_000L }) return localBoardUnavailable() + mapOf(
+        val live = snap.all { now - it.ts in 0..300_000L }
+        val coverage = com.skapp.app.data.LiveMarket.completeCoverage(snap)
+        val sourceDate = WorkbenchSummary.historicalSourceDate(snap.map { it.ts }, now)
+        val clock = java.util.Date(now)
+        val historical = !live && sourceDate != null && coverage && snap.size >= 3000 &&
+            !MarketHours.isTrading(clock) && !MarketHours.isAuction(clock)
+        if (!live && !historical) return localBoardUnavailable() + mapOf(
             "reason" to "行情源时间未知或已过期；抓取成功不等于实时行情。",
             "sampleSize" to snap.size,
             "unknownTimeCount" to snap.count { it.ts <= 0L },
@@ -179,12 +186,32 @@ internal class NewsSummaryHolder(
         val res = mapping?.let { board ->
             com.skapp.app.data.LocalSectors.aggregate(snap, sectorOf = { board.sectorNameOf(it) })
         }
-        return com.skapp.app.data.LocalSectors.boardMap(res, pulse, snap) + mapOf(
+        val board = com.skapp.app.data.LocalSectors.boardMap(res, pulse, snap)
+        val market = if (res == null) mapOf(
+            "market" to mapOf(
+                "涨" to pulse.up, "跌" to pulse.down, "平" to pulse.flat,
+                "涨停" to pulse.limitUp, "跌停" to pulse.limitDown,
+                "中位涨幅" to pulse.medianPct,
+                "成交额(亿)" to pulse.totalAmount?.let { it / 1e8 },
+                "主力净额(亿)" to pulse.mainNetTotal?.let { it / 1e8 },
+            ),
+            "sectors" to emptyList<Map<String, Any?>>(),
+            "reason" to "板块映射未就绪；市场统计与板块主线分别核验",
+            "status" to if (coverage && snap.size >= 3000) "ok" else "insufficient",
+        ) else emptyMap()
+        return board + market + mapOf(
             "ts" to java.time.Instant.ofEpochMilli(snap.minOf { it.ts }).toString(),
-            "coverageVerified" to com.skapp.app.data.LiveMarket.completeCoverage(snap),
+            "coverageVerified" to coverage,
+            "snapshotMode" to if (historical) "historical" else "live",
+            "sourceDate" to sourceDate,
+            "minTs" to snap.minOf { it.ts },
+            "maxTs" to snap.maxOf { it.ts },
             "sampleSize" to snap.size,
             "expectedTotal" to snap.mapNotNull { it.expectedTotal }.distinct().singleOrNull(),
-        )
+        ) + if (historical) mapOf(
+            "status" to "historical",
+            "reason" to "$sourceDate 历史行情复盘，非实时、不用于当前推荐",
+        ) else emptyMap()
     }
 
     fun localBoardUnavailable(): Map<String, Any?> = mapOf(
@@ -287,7 +314,7 @@ internal class NewsSummaryHolder(
     /** 看板 */
     fun loadBoard(force: Boolean = false) {
         shared.sections.load("看板", force = force, fetch = { localBoardMap(force) }) { s, v ->
-            s.copy(board = v)
+            WorkbenchSummary.applyBoard(s, v)
         }
     }
 
@@ -309,8 +336,10 @@ internal class NewsSummaryHolder(
                 val refreshed = supervisorScope {
                     val summaryD = async { requestResult {
                         val board = localBoardMap(true)
-                        _state.value = _state.value.copy(board = board)
-                        check(board["status"] == "ok") { board["reason"]?.toString() ?: "全市场快照不足" }
+                        _state.update { WorkbenchSummary.applyBoard(it, board) }
+                        check(board["status"] == "ok" || WorkbenchSummary.historicalBoard(board, System.currentTimeMillis())) {
+                            board["reason"]?.toString() ?: "全市场快照不足"
+                        }
                     } }
                     val newsD = async { requestResult { refreshNewsCalcs() } }
                     val closeD = async { requestResult { DbTables.closeReview() } }
@@ -361,16 +390,14 @@ internal class NewsSummaryHolder(
 
     /** 实时总结正文：加载失败时保留明确的 insufficient 状态。 */
     fun loadSummary(): Job = shared.sections.load("市场解读", fetch = {
-        val board = localBoardMap(false)
-        WorkbenchSummary.asMap(_state.value.copy(board = board))
-    }) { s, v -> s.copy(summary = v) }
+        localBoardMap(false)
+    }) { s, board -> WorkbenchSummary.applyBoard(s, board) }
 
     suspend fun refreshSummary() {
         val board = localBoardMap(true)
-        _state.value = _state.value.copy(board = board)
-        val local = WorkbenchSummary.asMap(_state.value)
-        _state.value = _state.value.copy(summary = local)
-        if (local["status"]?.toString() != "ok") {
+        _state.update { WorkbenchSummary.applyBoard(it, board) }
+        val local = _state.value.summary
+        if (local["status"]?.toString() != "ok" && !WorkbenchSummary.historicalBoard(board, System.currentTimeMillis())) {
             throw IllegalStateException(
                 local["reason"]?.toString()
                     ?: "暂无盘面数据"

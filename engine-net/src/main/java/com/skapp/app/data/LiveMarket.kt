@@ -224,8 +224,10 @@ object LiveMarket {
     fun completeCoverage(rows: List<Row>): Boolean {
         val totals = rows.map { it.expectedTotal }.distinct()
         val total = totals.singleOrNull() ?: return false
-        return total > 0 && rows.all { it.source == "eastmoney/clist" } &&
-            rows.size == total && rows.map { it.code }.distinct().size == total
+        val source = rows.map { it.source }.distinct().singleOrNull()
+        val knownSource = source == "eastmoney/clist" ||
+            (source == TencentQuote.MARKET_SOURCE && rows.all { it.ts > 0 && it.ts <= System.currentTimeMillis() })
+        return total > 0 && knownSource && rows.size == total && rows.map { it.code }.distinct().size == total
     }
 
     suspend fun snapshot(force: Boolean = false): List<Row> {
@@ -330,6 +332,7 @@ object LiveMarket {
         if (east.size >= FULL_SNAPSHOT) return east
         val sina = fetchSinaAll(deadline)
         if (sina.isEmpty()) return east
+        if (completeCoverage(sina)) return sina
         // 东财行优先：它多量比/主力净额/60日涨幅，RPS 与资金面策略要靠这些字段。
         val merged = LinkedHashMap<String, Row>()
         east.forEach { merged[it.code] = it }
@@ -378,7 +381,7 @@ object LiveMarket {
         val arr = runCatching { JSONArray(txt) }.getOrNull() ?: return emptyList()
         return (0 until arr.length()).mapNotNull { i ->
             val o = arr.optJSONObject(i) ?: return@mapNotNull null
-            val code = o.optString("code").takeIf { it.length == 6 } ?: return@mapNotNull null
+            val code = o.optString("code").takeIf { it.length == 6 && it.all(Char::isDigit) } ?: return@mapNotNull null
             val high = o.num("high")
             val low = o.num("low")
             val prev = o.num("settlement")
@@ -417,15 +420,33 @@ object LiveMarket {
     private suspend fun fetchSinaAll(deadline: Long): List<Row> = coroutineScope {
         val probe = fetchSinaPage(1, deadline)
         if (probe.isEmpty()) return@coroutineScope emptyList()
+        val countText = httpGet(
+            SINA_BASE.replace("getHQNodeData", "getHQNodeStockCount") + "?node=hs_a",
+            deadline, referer = "https://finance.sina.com.cn/",
+        )
+        val officialCount = countText?.trim()?.removeSurrounding("\"")?.toIntOrNull()?.takeIf { it > 0 }
+        val pages = officialCount?.let { ((it.toLong() + SINA_PAGE_SIZE - 1) / SINA_PAGE_SIZE).coerceAtMost(SINA_MAX_PAGES.toLong()).toInt() }
+            ?: SINA_MAX_PAGES
         val sem = Semaphore(8)
-        val batches = listOf(probe) + (2..SINA_MAX_PAGES)
+        val batches = listOf(probe) + (2..pages)
             .map { p -> async(Dispatchers.IO) {
                 if (!hasBudget(deadline)) emptyList() else sem.withPermit { fetchSinaPage(p, deadline) }
             } }
             .awaitAll()
         val out = LinkedHashMap<String, Row>()
         batches.forEach { b -> b.forEach { out.putIfAbsent(it.code, it) } }
-        out.values.toList()
+        // 数量一致还不够：缺页或重复身份不能由别页多出的行掩盖。
+        val enumerationComplete = officialCount != null && out.size == officialCount &&
+            batches.sumOf { it.size } == officialCount && batches.withIndex().all { (index, rows) ->
+                rows.size == minOf(SINA_PAGE_SIZE, officialCount - index * SINA_PAGE_SIZE)
+            }
+        val expectedTotal = officialCount.takeIf { enumerationComplete }
+        val universe = out.values.map { it.copy(expectedTotal = expectedTotal) }
+        if (universe.size >= 3000 && universe.all { it.ts == 0L } && hasBudget(deadline)) {
+            val quotes = TencentQuote.marketSnapshot(universe.map { it.code }, expectedTotal, deadline)
+            if (quotes.isNotEmpty()) return@coroutineScope quotes
+        }
+        universe
     }
 
     private suspend fun httpGet(url: String, deadline: Long, referer: String = "https://wap.eastmoney.com/"): String? {
