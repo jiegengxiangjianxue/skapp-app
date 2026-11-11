@@ -1,0 +1,61 @@
+name: symbols-source-audit
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: symbols-source-audit
+  cancel-in-progress: false
+jobs:
+  audit:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Audit counts and complete pagination without publishing
+        run: |
+          python3 - <<'PY'
+          import collections, json, os, time
+          from pathlib import Path
+          from skapp_pkg.datasrc.market_data import _http
+          base = 'https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/Market_Center.'
+          headers = {'User-Agent': 'skapp-symbol-audit/1.0', 'Referer': 'https://finance.sina.com.cn/'}
+          result = {'counts_before': {}, 'pages': [], 'symbols': [], 'counts_after': {}}
+          import atexit
+          def save_evidence():
+              Path(os.environ['RUNNER_TEMP'], 'symbols-source-audit.json').write_text(json.dumps(result, ensure_ascii=False))
+          atexit.register(save_evidence)
+          for node in ('hs_a', 'sh_a', 'sz_a', 'bj_a'):
+              result['counts_before'][node] = json.loads(_http(base + 'getHQNodeStockCount?node=' + node, headers=headers))
+              time.sleep(0.7)
+          for page in range(1, 61):
+              rows = json.loads(_http(base + f'getHQNodeData?page={page}&num=100&sort=symbol&asc=1&node=hs_a', headers=headers))
+              if not isinstance(rows, list):
+                  raise SystemExit('non-list page')
+              result['pages'].append(len(rows))
+              result['symbols'].extend({'s': row['symbol'], 'n': row['name']} for row in rows)
+              time.sleep(0.7)
+              if len(rows) < 100:
+                  break
+          else:
+              raise SystemExit('page bound exhausted')
+          for node in ('hs_a', 'sh_a', 'sz_a', 'bj_a'):
+              result['counts_after'][node] = json.loads(_http(base + 'getHQNodeStockCount?node=' + node, headers=headers))
+              time.sleep(0.7)
+          counts = collections.Counter(row['s'] for row in result['symbols'])
+          result['unique'] = len(counts)
+          result['duplicates'] = [symbol for symbol, count in counts.items() if count > 1]
+          result['prefix_counts'] = dict(collections.Counter(symbol[:2] for symbol in counts))
+          Path(os.environ['RUNNER_TEMP'], 'symbols-source-audit.json').write_text(json.dumps(result, ensure_ascii=False))
+          print({key: value for key, value in result.items() if key != 'symbols'})
+          PY
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: symbols-source-audit
+          path: ${{ runner.temp }}/symbols-source-audit.json
+          if-no-files-found: error
+          retention-days: 7
