@@ -14,6 +14,9 @@ import com.skapp.app.data.AiRouter
 import com.skapp.app.data.GitCodeAiClient
 import com.skapp.app.data.OpenAiCompatClient
 import com.skapp.app.data.GitHubModelsClient
+import com.skapp.app.data.HoloClient
+import com.skapp.app.data.SiteBoardClient
+import com.skapp.app.data.SkappApi
 import com.skapp.app.data.SymbolEntry
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -189,7 +192,11 @@ class SkappViewModel : ViewModel() {
         // 归档队列落在应用私有目录：杀进程后队列还在，下次打开接着传
         runCatching { PicksArchiveQueue.init(context.applicationContext.filesDir) }
         // GitHub 仓库写入（消息库 / 开盘推股历史）复用同一个 PAT
-        GitHubRepoWriter.configure(GitHubModelsClient.parseTokens(gh).firstOrNull())
+        val githubToken = GitHubModelsClient.parseTokens(gh).firstOrNull()
+        GitHubRepoWriter.configure(githubToken)
+        SkappApi.setToken(githubToken)
+        SiteBoardClient.setToken(githubToken)
+        HoloClient.setToken(githubToken)
         // 本地推股存档：只恢复上次落盘结果，不在启动时重算（重算要拉 11 页快照 + 40 只日 K）
         runCatching { picks.restoreLocalPicks() }
         runCatching { picks.restorePremarketDraft() }
@@ -214,7 +221,11 @@ class SkappViewModel : ViewModel() {
         val prefs = context.getSharedPreferences(SKAPP_PREFS, android.content.Context.MODE_PRIVATE)
         AiRouter.onGithubTokensSaved(prefs.getString(KEY_GITHUB_TOKEN, null), _state.value.githubToken)
         prefs.edit().putString(KEY_GITHUB_TOKEN, _state.value.githubToken).apply()
-        GitHubRepoWriter.configure(GitHubModelsClient.parseTokens(_state.value.githubToken).firstOrNull())
+        val githubToken = GitHubModelsClient.parseTokens(_state.value.githubToken).firstOrNull()
+        GitHubRepoWriter.configure(githubToken)
+        SkappApi.setToken(githubToken)
+        SiteBoardClient.setToken(githubToken)
+        HoloClient.setToken(githubToken)
     }
 
     /** 设置页「保存 GitHub token」按钮 */

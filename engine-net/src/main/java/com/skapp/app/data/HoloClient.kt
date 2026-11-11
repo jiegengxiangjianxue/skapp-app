@@ -65,7 +65,7 @@ object HoloClient {
                     .replace("/master/", "/contents/")
             else -> null
         }
-        val stickyApi = apiUrl?.takeIf { System.currentTimeMillis() < rawDownUntil }
+        val stickyApi = apiUrl?.takeIf { token != null || System.currentTimeMillis() < rawDownUntil }
         // 粘性期仍保留 raw 兜底：contents API 也会 404/限流，单通道独木会让冷却期内一直空
         val targets = if (stickyApi != null) listOfNotNull(stickyApi, rawUrl) else listOfNotNull(rawUrl, apiUrl)
         for (target in targets) {

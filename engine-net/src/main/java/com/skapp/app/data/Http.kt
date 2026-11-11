@@ -25,6 +25,8 @@ import java.util.zip.GZIPInputStream
  */
 object Http {
 
+    internal var openConnection: (URL) -> HttpURLConnection = { it.openConnection() as HttpURLConnection }
+
     /**
      * 断网 / 限流空态验证用的故障注入。默认关闭。
      *
@@ -64,10 +66,13 @@ object Http {
         }
         var conn: HttpURLConnection? = null
         return try {
-            conn = (URL(url).openConnection() as HttpURLConnection).apply {
+            conn = openConnection(URL(url)).apply {
                 connectTimeout = timeoutMs
                 readTimeout = readTimeoutMs
                 requestMethod = "GET"
+                if (headers.keys.any { it.equals("Authorization", ignoreCase = true) }) {
+                    instanceFollowRedirects = false
+                }
                 ua?.let { setRequestProperty("User-Agent", it) }
                 referer?.let { setRequestProperty("Referer", it) }
                 accept?.let { setRequestProperty("Accept", it) }

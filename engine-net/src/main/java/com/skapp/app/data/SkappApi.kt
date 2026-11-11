@@ -5,6 +5,7 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import java.net.URI
 
 /**
  * 远端数据客户端：只读 raw.githubusercontent.com 静态 JSON + 腾讯实时行情。
@@ -13,40 +14,45 @@ import org.json.JSONObject
 object SkappApi {
 
     private const val TIMEOUT = 15000
-    private const val API_ROOT = "https://api.github.com/repos"
+    private const val API_ROOT = "https://api.github.com/repos/"
     private var token: String? = null
     fun setToken(t: String?) { token = t?.takeIf { it.isNotBlank() } }
 
     private fun fetchText(url: String, charset: String = "utf-8"): String? {
-        // 公开仓数据：优先 raw.githubusercontent.com（不限流），失败才回退 Contents API
-        // 原因：api.github.com 匿名 60 req/h 限流，而 raw 不限流
-        val rawUrl = url
-        val apiUrl = if (url.contains("raw.githubusercontent.com")) {
-            url.replace("https://raw.githubusercontent.com/", API_ROOT)
-                .replaceFirst("/main/", "/contents/")
-                .replaceFirst("/master/", "/contents/")
+        val uri = runCatching { URI(url) }.getOrNull()
+        val parts = uri?.rawPath?.removePrefix("/")?.split("/", limit = 4)
+        val apiUrl = if (uri?.scheme == "https" && uri.host == "raw.githubusercontent.com" &&
+            uri.port in listOf(-1, 443) && uri.userInfo == null &&
+            parts?.size == 4 && parts.all { it.isNotBlank() }
+        ) {
+            "$API_ROOT${parts[0]}/${parts[1]}/contents/${parts[3]}?ref=${parts[2]}"
         } else null
-        
-        // 先尝试 raw（不限流）
-        fetchFromUrl(rawUrl, charset)?.let { return it }
-        
-        // raw 失败才走 API（有 token 时带 token）
-        if (apiUrl != null) {
-            return fetchFromUrl(apiUrl, charset, isApi = true)
+
+        // 有用户凭据时优先 API；匿名优先 raw，避免共享匿名 API 限额。
+        if (apiUrl != null && token != null) {
+            return fetchFromUrl(apiUrl, charset, isApi = true) ?: fetchFromUrl(url, charset)
         }
-        return null
+        return fetchFromUrl(url, charset)
+            ?: apiUrl?.let { fetchFromUrl(it, charset, isApi = true) }
     }
-    
+
     private fun fetchFromUrl(u: String, charset: String, isApi: Boolean = false): String? {
+        val uri = runCatching { URI(u) }.getOrNull()
+        val standardHttps = uri?.scheme == "https" && uri.port in listOf(-1, 443) && uri.userInfo == null
+        val githubApi = standardHttps && uri?.host == "api.github.com"
+        val githubRaw = standardHttps && uri?.host == "raw.githubusercontent.com"
         val headers = buildMap {
-            // token 对所有域都带（与原实现一致）；没有 token 就不带这个头
-            token?.let { put("Authorization", "Bearer $it") }
-            if (isApi) put("Accept", "application/vnd.github.raw")
+            if (githubApi) token?.let { put("Authorization", "Bearer $it") }
+            if (isApi && githubApi) put("Accept", "application/vnd.github.raw")
         }
         return Http.getText(
             url = u,
             charset = Http.charset(charset),
-            timeoutMs = 20000, // 20s，给弱网留时间
+            timeoutMs = when {
+                githubRaw -> 3000
+                githubApi -> 10000
+                else -> 20000
+            },
             ua = "skapp-android",
             headers = headers,
         )

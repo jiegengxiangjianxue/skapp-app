@@ -25,7 +25,8 @@ object SiteBoardClient {
                 .replaceFirst("/main/", "/contents/")
                 .replaceFirst("/master/", "/contents/")
         } else null
-        for (u in listOfNotNull(raw, api)) {
+        val targets = if (token != null) listOfNotNull(api, raw) else listOfNotNull(raw, api)
+        for (u in targets) {
             val r = fetchOnce(u)
             if (r != null) return r
         }
@@ -42,7 +43,7 @@ object SiteBoardClient {
         val txt = Http.getText(
             url = u,
             charset = Charsets.UTF_8,
-            timeoutMs = 15000,
+            timeoutMs = if (isApi) 10000 else 3000,
             ua = "Mozilla/5.0 (Android) skapp",
             headers = headers,
         ) ?: return null

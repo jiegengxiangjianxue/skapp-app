@@ -4,6 +4,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
@@ -200,6 +202,11 @@ object LiveMarket {
 
     @Volatile private var cached: List<Row> = emptyList()
     @Volatile private var cachedAt = 0L
+    @Volatile private var attemptSequence = 0L
+    private var lastAttemptResult: List<Row> = emptyList()
+    private var lastAttemptFailed = false
+    private var lastAttemptAt = 0L
+    private const val FETCH_BUDGET_NS = 18_000_000_000L
 
     /** 快照互斥锁：同一时刻只允许一个协程真正去拉全市场。 */
     private val fetchLock = Mutex()
@@ -221,28 +228,46 @@ object LiveMarket {
             rows.size == total && rows.map { it.code }.distinct().size == total
     }
 
-    suspend fun snapshot(force: Boolean = false): List<Row> = withContext(Dispatchers.IO) {
-        val fresh = cached.takeIf { !force && it.isNotEmpty() && System.currentTimeMillis() - cachedAt < ttlMs() }
-        if (fresh != null) return@withContext fresh
+    suspend fun snapshot(force: Boolean = false): List<Row> {
+        val observedAttempt = attemptSequence
+        return withContext(Dispatchers.IO) {
+            val fresh = cached.takeIf { !force && it.isNotEmpty() && System.currentTimeMillis() - cachedAt < ttlMs() }
+            if (fresh != null) return@withContext fresh
 
-        // 并发去重：心跳深算、界面刷新、策略卡可能同时要快照。
-        // 没有这把锁时它们会各拉一遍十几页，而且拿到**不同时点**的数据；
-        // 抢到锁之后先复查缓存——前一个协程可能刚拉完。
-        val rows = fetchLock.withLock {
-            val again = cached.takeIf { !force && it.isNotEmpty() && System.currentTimeMillis() - cachedAt < ttlMs() }
-            if (again != null) return@withLock again
-            val fetched = fetchAll()
-            if (fetched.isNotEmpty()) {
-                cached = fetched
-                cachedAt = System.currentTimeMillis()
+            // 并发去重：心跳深算、界面刷新、策略卡可能同时要快照。
+            // 没有这把锁时它们会各拉一遍十几页，而且拿到**不同时点**的数据；
+            // 抢到锁之后先复查缓存——前一个协程可能刚拉完。
+            val rows = fetchLock.withLock {
+                if (attemptSequence != observedAttempt) return@withLock lastAttemptResult
+                if (!force && lastAttemptFailed && System.nanoTime() - lastAttemptAt < 5_000_000_000L) {
+                    return@withLock lastAttemptResult
+                }
+                val again = cached.takeIf { !force && it.isNotEmpty() && System.currentTimeMillis() - cachedAt < ttlMs() }
+                if (again != null) return@withLock again
+                val fetched = fetchAll(System.nanoTime() + FETCH_BUDGET_NS)
+                currentCoroutineContext().ensureActive()
+                if (fetched.isNotEmpty()) {
+                    cached = fetched
+                    cachedAt = System.currentTimeMillis()
+                }
+                // 盘中拉不到时宁可给上一份，并保留真实抓取时间，让上层能标「陈旧」。
+                lastAttemptResult = fetched.ifEmpty { cached }
+                lastAttemptFailed = fetched.isEmpty()
+                lastAttemptAt = System.nanoTime()
+                attemptSequence++
+                lastAttemptResult
             }
-            // 盘中拉不到时宁可给上一份，并保留真实抓取时间，让上层能标「陈旧」。
-            fetched.ifEmpty { cached }
+            rows
         }
-        rows
     }
 
-    private fun fetchPage(page: Int): List<Row> {
+    private suspend fun hasBudget(deadline: Long): Boolean {
+        currentCoroutineContext().ensureActive()
+        return deadline - System.nanoTime() >= 2_000_000L
+    }
+
+    private suspend fun fetchPage(page: Int, deadline: Long): List<Row> {
+        if (!hasBudget(deadline)) return emptyList()
         val query = "/api/qt/clist/get?pn=$page&pz=$PAGE_SIZE&po=1&fid=f3" +
             "&fs=m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81+s:2048" +
             // f15/f18/f24/f25 一并取：RPS（60日/年初至今涨幅）与封板率（最高价 vs 涨停价）
@@ -250,9 +275,11 @@ object LiveMarket {
             "&fields=f2,f3,f5,f6,f7,f8,f9,f10,f12,f14,f15,f16,f17,f18,f20,f22,f24,f25,f62,f124"
         // 单页失败即返回空，重试交给 fetchAll 的补拉轮：在这里 sleep 退避会在并发下
         // 把 8 条 IO 线程全按在睡眠里（实测串行节流 63.8s/37 页，并发 8 只要 2.75s/42 页）。
+        val startHost = hostIdx
         for (attempt in HOSTS.indices) {
-            val idx = (hostIdx + attempt) % HOSTS.size
-            val rows = parsePage(httpGet(HOSTS[idx] + query))
+            if (!hasBudget(deadline)) break
+            val idx = (startHost + attempt) % HOSTS.size
+            val rows = parsePage(httpGet(HOSTS[idx] + query, deadline))
             if (rows.isNotEmpty()) {
                 hostIdx = idx
                 return rows
@@ -298,10 +325,10 @@ object LiveMarket {
         }
     }
 
-    private suspend fun fetchAll(): List<Row> {
-        val east = fetchEastAll()
+    private suspend fun fetchAll(deadline: Long): List<Row> {
+        val east = fetchEastAll(deadline)
         if (east.size >= FULL_SNAPSHOT) return east
-        val sina = fetchSinaAll()
+        val sina = fetchSinaAll(deadline)
         if (sina.isEmpty()) return east
         // 东财行优先：它多量比/主力净额/60日涨幅，RPS 与资金面策略要靠这些字段。
         val merged = LinkedHashMap<String, Row>()
@@ -310,19 +337,25 @@ object LiveMarket {
         return merged.values.filter { it.code.length == 6 && it.code.all(Char::isDigit) }
     }
 
-    private suspend fun fetchEastAll(): List<Row> = coroutineScope {
+    private suspend fun fetchEastAll(deadline: Long): List<Row> = coroutineScope {
+        val probe = fetchPage(1, deadline)
+        if (probe.isEmpty()) return@coroutineScope emptyList()
         // 并发 8 是实测最优点（2026-10-30）：42/60 页、2.75s；串行无节流第 28 页就断连（2700 只），
         // 串行+退避重试 37 页/63.8s，并发 16 反而因限流加剧掉到 36 页。
         val sem = Semaphore(8)
-        val first = (1..MAX_PAGES)
-            .map { p -> async(Dispatchers.IO) { sem.withPermit { fetchPage(p) } } }
+        val first = listOf(probe) + (2..MAX_PAGES)
+            .map { p -> async(Dispatchers.IO) {
+                if (!hasBudget(deadline)) emptyList() else sem.withPermit { fetchPage(p, deadline) }
+            } }
             .awaitAll()
 
         // 第一轮空的页补一次，并发降到 4：限流是成片断连，二次冲击用同样的并发只会继续被拒。
         val sem2 = Semaphore(4)
         val retried = first.indices
-            .filter { first[it].isEmpty() }
-            .map { i -> async(Dispatchers.IO) { sem2.withPermit { fetchPage(i + 1) } } }
+            .filter { first[it].isEmpty() && hasBudget(deadline) }
+            .map { i -> async(Dispatchers.IO) {
+                if (!hasBudget(deadline)) emptyList() else sem2.withPermit { fetchPage(i + 1, deadline) }
+            } }
             .awaitAll()
 
         val out = LinkedHashMap<String, Row>()
@@ -338,9 +371,10 @@ object LiveMarket {
         return v.toString().toDoubleOrNull()
     }
 
-    private fun fetchSinaPage(page: Int): List<Row> {
+    private suspend fun fetchSinaPage(page: Int, deadline: Long): List<Row> {
+        if (!hasBudget(deadline)) return emptyList()
         val url = SINA_BASE + "?page=$page&num=$SINA_PAGE_SIZE&sort=symbol&asc=1&node=hs_a"
-        val txt = httpGet(url, referer = "https://finance.sina.com.cn/") ?: return emptyList()
+        val txt = httpGet(url, deadline, referer = "https://finance.sina.com.cn/") ?: return emptyList()
         val arr = runCatching { JSONArray(txt) }.getOrNull() ?: return emptyList()
         return (0 until arr.length()).mapNotNull { i ->
             val o = arr.optJSONObject(i) ?: return@mapNotNull null
@@ -380,21 +414,31 @@ object LiveMarket {
         }
     }
 
-    private suspend fun fetchSinaAll(): List<Row> = coroutineScope {
+    private suspend fun fetchSinaAll(deadline: Long): List<Row> = coroutineScope {
+        val probe = fetchSinaPage(1, deadline)
+        if (probe.isEmpty()) return@coroutineScope emptyList()
         val sem = Semaphore(8)
-        val batches = (1..SINA_MAX_PAGES)
-            .map { p -> async(Dispatchers.IO) { sem.withPermit { fetchSinaPage(p) } } }
+        val batches = listOf(probe) + (2..SINA_MAX_PAGES)
+            .map { p -> async(Dispatchers.IO) {
+                if (!hasBudget(deadline)) emptyList() else sem.withPermit { fetchSinaPage(p, deadline) }
+            } }
             .awaitAll()
         val out = LinkedHashMap<String, Row>()
         batches.forEach { b -> b.forEach { out.putIfAbsent(it.code, it) } }
         out.values.toList()
     }
 
-    private fun httpGet(url: String, referer: String = "https://wap.eastmoney.com/"): String? = Http.getText(
-        url = url,
-        charset = Charsets.UTF_8,
-        timeoutMs = 8_000,
-        referer = referer,
-        accept = "application/json",
-    )
+    private suspend fun httpGet(url: String, deadline: Long, referer: String = "https://wap.eastmoney.com/"): String? {
+        if (!hasBudget(deadline)) return null
+        val timeoutMs = ((deadline - System.nanoTime()) / 2_000_000L).coerceAtMost(3_000L).toInt()
+        if (timeoutMs <= 0) return null
+        return Http.getText(
+            url = url,
+            charset = Charsets.UTF_8,
+            timeoutMs = timeoutMs,
+            readTimeoutMs = timeoutMs,
+            referer = referer,
+            accept = "application/json",
+        )
+    }
 }
