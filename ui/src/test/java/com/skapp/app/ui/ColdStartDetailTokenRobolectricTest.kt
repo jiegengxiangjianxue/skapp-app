@@ -4,6 +4,7 @@ import android.content.Context
 import android.os.Looper
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.ViewModelStore
+import androidx.lifecycle.viewModelScope
 import androidx.test.core.app.ApplicationProvider
 import com.skapp.app.data.AiRouter
 import com.skapp.app.data.GitHubModelsClient
@@ -11,6 +12,7 @@ import com.skapp.app.data.GitHubRepoWriter
 import com.skapp.app.data.KPeriod
 import com.skapp.app.ui.state.SKAPP_PREFS
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -89,6 +91,8 @@ class ColdStartDetailTokenRobolectricTest {
         val store = ViewModelStore()
         val vm = ViewModelProvider(store, ViewModelProvider.NewInstanceFactory())[SkappViewModel::class.java]
         try {
+            // 只验证同步恢复，不启动网络/周期任务；不代表真实 UI 点击覆盖。
+            vm.viewModelScope.cancel()
             runBlocking(Dispatchers.IO) {
                 vm.loadSavedToken(ctx)
                 vm.load()

@@ -30,6 +30,7 @@ android {
     // Robolectric 渲染测试需要读 Android 资源（主题/排版/字体度量），否则 compose 里
     // LocalContext / 资源查找在单测环境直接抛。
     testOptions { unitTests { isIncludeAndroidResources = true } }
+    sourceSets.getByName("test").assets.srcDir("../app/src/main/assets")
     packaging { resources.excludes += "/META-INF/{AL2.0,LGPL2.1}" }
 }
 
