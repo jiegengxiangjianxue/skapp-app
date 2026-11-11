@@ -48,6 +48,7 @@ fun RealtimeSummaryScreen(vm: SkappViewModel, state: UiState, onSection: (Int) -
                     val marketSection = sections.firstOrNull { it.id == "market" }
                     Text(when (marketSection?.status) {
                         "historical" -> "历史复盘 · 源日期 ${state.board["sourceDate"]} · 非实时、不用于当前推荐"
+                        "historical_sample" -> "历史采样 ${state.board["sampleSize"]} 只 · 源日期 ${state.board["sourceDate"]} · 不代表全市场、非实时"
                         "ok" -> "实时行情复盘 · 源时点 ${marketSection.timestamp}"
                         else -> "行情证据不足 · 不展示未校验盘面"
                     }, style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
@@ -69,7 +70,7 @@ fun RealtimeSummaryScreen(vm: SkappViewModel, state: UiState, onSection: (Int) -
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                         Text(section.title, style = MaterialTheme.typography.titleMedium)
-                        Text(when (section.status) { "ok" -> "时效已校验"; "historical" -> "历史复盘 · 非实时"; "partial" -> "部分可用"; "observe" -> "观察"; else -> "证据不足" },
+                        Text(when (section.status) { "ok" -> "时效已校验"; "historical" -> "历史复盘 · 非实时"; "historical_sample" -> "历史采样 · 非全市场"; "partial" -> "部分可用"; "observe" -> "观察"; else -> "证据不足" },
                             style = MaterialTheme.typography.labelMedium, color = SkColors.textSecondary)
                     }
                     Text("${section.source} · ${section.timestamp ?: "时点未提供"}", style = MaterialTheme.typography.labelSmall, color = SkColors.textSecondary)

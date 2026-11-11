@@ -67,6 +67,15 @@ class TencentMarketSnapshotTest {
         assertTrue(LiveMarket.completeCoverage(rows))
     }
 
+    @Test fun `observed 87 field report preserves the same verified prefix`() {
+        val original = fields()
+        val shortened = JSONArray((0 until 87).map { original.getString(it) })
+        val row = parse(JSONObject().put("sh600519", shortened)).single()
+        assertEquals(100.5, row.price)
+        assertEquals(TencentQuote.sourceTimestamp("20261030150000"), row.ts)
+        assertTrue(LiveMarket.completeCoverage(listOf(row)))
+    }
+
     @Test fun `missing identity mismatch duplicate identity and partial provenance never prove coverage`() {
         val good = JSONObject().put("sh600519", fields())
         assertFalse(LiveMarket.completeCoverage(parse(good, listOf("600519", "600000"), 2)))

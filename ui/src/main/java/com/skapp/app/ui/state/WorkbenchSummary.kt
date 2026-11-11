@@ -26,8 +26,10 @@ internal object WorkbenchSummary {
     fun historicalBoard(board: Map<String, Any?>, nowMs: Long): Boolean {
         val date = java.util.Date(nowMs)
         if (MarketHours.isTrading(date) || MarketHours.isAuction(date)) return false
-        if (board["source"] != "local" || board["status"] != "historical" || board["snapshotMode"] != "historical" ||
-            board["coverageVerified"] != true || (board["sampleSize"] as? Number)?.toInt()?.let { it >= 3000 } != true) return false
+        val complete = board["status"] == "historical" && board["snapshotMode"] == "historical" && board["coverageVerified"] == true
+        val sample = board["status"] == "historical_sample" && board["snapshotMode"] == "historical_sample" && board["coverageVerified"] == false
+        if (board["source"] != "local" || (!complete && !sample) ||
+            (board["sampleSize"] as? Number)?.toInt()?.let { it >= 3000 } != true) return false
         val minTs = (board["minTs"] as? Number)?.toLong() ?: return false
         val maxTs = (board["maxTs"] as? Number)?.toLong() ?: return false
         val stamp = CentralAnalysis.timeOf(board["ts"]?.toString()) ?: return false
@@ -45,10 +47,11 @@ internal object WorkbenchSummary {
         val boardReady = local && board["status"] == "ok" && fresh(stamp, nowMs)
         val archive = historicalBoard(board, nowMs)
         val marketComplete = (boardReady || archive) && board["coverageVerified"] == true
-        val boardStatus = if (archive) "historical" else "ok"
-        val historySource = "历史行情复盘 · 源日期 ${board["sourceDate"]} · 非实时、不用于当前推荐"
+        val sample = archive && board["status"] == "historical_sample"
+        val boardStatus = if (sample) "historical_sample" else if (archive) "historical" else "ok"
+        val historySource = "历史行情${if (sample) "采样 ${board["sampleSize"]} 只，不代表全市场" else "复盘"} · 源日期 ${board["sourceDate"]} · 非实时、不用于当前推荐"
         val market = board["market"] as? Map<*, *>
-        val marketEntries = if (marketComplete && market != null) listOf(
+        val marketEntries = if ((marketComplete || sample) && market != null) listOf(
             Entry("上涨 ${display(market["涨"])} / 下跌 ${display(market["跌"])} / 平盘 ${display(market["平"])}"),
             Entry("涨停 ${display(market["涨停"])} / 跌停 ${display(market["跌停"])}（本地近似统计）"),
             Entry("成交额 ${display(market["成交额(亿)"])} 亿元 · 主力净额 ${display(market["主力净额(亿)"])} 亿元"),
@@ -112,7 +115,7 @@ internal object WorkbenchSummary {
             analyzed.mapNotNull { it.riskFlag } + analyzed.mapNotNull { it.reason } +
             listOfNotNull(s.localPicksMsg, s.screenMsg)).filter { it.isNotBlank() }.distinct().take(8)
         return listOf(
-            Section("market", "市场与资金", if (marketComplete) boardStatus else "insufficient", if (archive) historySource else if (marketComplete) "本地全市场快照聚合" else "本地行情采样（全覆盖未核验）", stamp, marketEntries),
+            Section("market", "市场与资金", if (marketComplete || sample) boardStatus else "insufficient", if (archive) historySource else if (marketComplete) "本地全市场快照聚合" else "本地行情采样（全覆盖未核验）", stamp, marketEntries),
             Section("sectors", "板块与主线", if (leaders.isNotEmpty()) boardStatus else "insufficient", if (archive) "$historySource × 板块映射" else "本地行情 × 板块映射", stamp,
                 leaders.ifEmpty { listOf(Entry("暂无通过时效校验的板块强弱；不以旧主题报告代替今日主线。")) }),
             Section("news", "消息与催化", if (news.isNotEmpty()) "ok" else "insufficient", "逐条来源及发布时间校验", newsStamp, newsEntries),
@@ -131,12 +134,12 @@ internal object WorkbenchSummary {
     fun asMap(s: UiState, nowMs: Long = System.currentTimeMillis()): Map<String, Any?> {
         val sections = sections(s, nowMs)
         val ready = sections.any { it.status == "ok" || it.status == "partial" }
-        val archive = sections.any { it.status == "historical" }
+        val archive = sections.any { it.status in setOf("historical", "historical_sample") }
         return mapOf("status" to if (archive) "historical" else if (ready) "ok" else "insufficient", "source" to if (archive) "local_historical" else "local_realtime",
             "snapshotMode" to if (archive) "historical" else if (sections.any { it.id == "market" && it.status == "ok" }) "live" else null,
             "sourceDate" to if (archive) s.board["sourceDate"] else null,
             "date" to Instant.ofEpochMilli(nowMs).atZone(ZoneId.of("Asia/Shanghai")).toLocalDate().toString(),
-            "ts" to sections.firstOrNull { it.id == "market" && it.status in setOf("ok", "historical") }?.timestamp,
+            "ts" to sections.firstOrNull { it.id == "market" && it.status in setOf("ok", "historical", "historical_sample") }?.timestamp,
             "text" to sections.joinToString("\n\n") { section -> section.title + "\n" + section.entries.joinToString("\n") { it.text } },
             "reason" to if (archive) s.board["reason"] else if (ready) null else "本地有效行情、消息及分析证据尚未就绪；没有使用云端旧结论兜底")
     }

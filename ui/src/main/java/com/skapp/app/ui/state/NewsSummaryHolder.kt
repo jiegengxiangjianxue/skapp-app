@@ -173,7 +173,7 @@ internal class NewsSummaryHolder(
         val coverage = com.skapp.app.data.LiveMarket.completeCoverage(snap)
         val sourceDate = WorkbenchSummary.historicalSourceDate(snap.map { it.ts }, now)
         val clock = java.util.Date(now)
-        val historical = !live && sourceDate != null && coverage && snap.size >= 3000 &&
+        val historical = !live && sourceDate != null && snap.size >= 3000 &&
             !MarketHours.isTrading(clock) && !MarketHours.isAuction(clock)
         if (!live && !historical) return localBoardUnavailable() + mapOf(
             "reason" to "行情源时间未知或已过期；抓取成功不等于实时行情。",
@@ -202,15 +202,15 @@ internal class NewsSummaryHolder(
         return board + market + mapOf(
             "ts" to java.time.Instant.ofEpochMilli(snap.minOf { it.ts }).toString(),
             "coverageVerified" to coverage,
-            "snapshotMode" to if (historical) "historical" else "live",
+            "snapshotMode" to if (historical) { if (coverage) "historical" else "historical_sample" } else "live",
             "sourceDate" to sourceDate,
             "minTs" to snap.minOf { it.ts },
             "maxTs" to snap.maxOf { it.ts },
             "sampleSize" to snap.size,
             "expectedTotal" to snap.mapNotNull { it.expectedTotal }.distinct().singleOrNull(),
         ) + if (historical) mapOf(
-            "status" to "historical",
-            "reason" to "$sourceDate 历史行情复盘，非实时、不用于当前推荐",
+            "status" to if (coverage) "historical" else "historical_sample",
+            "reason" to "$sourceDate 历史行情${if (coverage) "复盘" else "采样复盘（${snap.size}只，不代表全市场）"}，非实时、不用于当前推荐",
         ) else emptyMap()
     }
 

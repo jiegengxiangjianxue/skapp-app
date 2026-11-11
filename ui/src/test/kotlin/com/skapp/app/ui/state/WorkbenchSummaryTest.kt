@@ -160,6 +160,20 @@ class WorkbenchSummaryTest {
         }
     }
 
+    @Test fun scopedHistoricalSampleNeverClaimsWholeMarketOrProducesRecommendations() {
+        val sample = historical() + mapOf("status" to "historical_sample", "snapshotMode" to "historical_sample",
+            "coverageVerified" to false, "sampleSize" to 5105)
+        val sections = WorkbenchSummary.sections(UiState(board = sample), closedNow)
+        val market = sections.first { it.id == "market" }
+        assertEquals("historical_sample", market.status)
+        assertTrue(market.source.contains("5105"))
+        assertTrue(market.source.contains("不代表全市场"))
+        assertTrue(market.entries.any { it.text.contains("1234") })
+        assertTrue(sections.first { it.id == "candidates" }.entries.any { it.text.contains("有效推荐 0") })
+        assertFalse(WorkbenchSummary.historicalBoard(sample + ("coverageVerified" to true), closedNow))
+        assertFalse(WorkbenchSummary.historicalBoard(sample + ("sampleSize" to 2999), closedNow))
+    }
+
     @Test fun historyWithoutMappingKeepsSectorInsufficientDespiteMarketArchive() {
         val state = UiState(board = historical() - "sectors")
         val sections = WorkbenchSummary.sections(state, closedNow)

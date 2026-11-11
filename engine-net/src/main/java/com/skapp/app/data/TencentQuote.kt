@@ -52,7 +52,7 @@ object TencentQuote {
         for (key in obj.keys()) {
             val code = allowed[key] ?: continue
             val f = obj.optJSONArray(key) ?: continue
-            if (f.length() != 88 || (0 until f.length()).any { f.opt(it) !is String }) continue
+            if (f.length() !in 87..88 || (0 until f.length()).any { f.opt(it) !is String }) continue
             if (f.getString(2) != code) continue
             val ts = sourceTimestamp(f.getString(30)) ?: continue
             fun num(i: Int): Double? = f.getString(i).toDoubleOrNull()?.takeIf { it.isFinite() }
