@@ -12,6 +12,7 @@ import androidx.compose.ui.test.performClick
 import com.skapp.app.ui.screens.MultiPoolContent
 import com.skapp.app.data.SiteBoardClient
 import androidx.compose.ui.test.junit4.createComposeRule
+import com.skapp.app.data.Http
 import com.skapp.app.data.LocalEngineResult
 import com.skapp.app.data.StockDetail
 import com.skapp.app.ui.screens.StockDetailSheet
@@ -31,6 +32,8 @@ import com.skapp.app.ui.screens.SectorsScreen
 import com.skapp.app.ui.screens.PicksHubScreen
 import com.skapp.app.ui.screens.SummaryHubScreen
 import com.skapp.app.ui.screens.ThemeScreen
+import org.junit.After
+import org.junit.Before
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -72,6 +75,19 @@ class ScreenRenderRobolectricTest {
 
     @get:Rule
     val compose = createComposeRule()
+
+    private var previousFault: Http.Fault? = null
+
+    @Before
+    fun isolateNetworkForEmptyStateRendering() {
+        previousFault = Http.fault
+        Http.fault = Http.Fault.OFFLINE
+    }
+
+    @After
+    fun restoreNetworkFault() {
+        Http.fault = previousFault
+    }
 
     private fun vm() = SkappViewModel()
 

@@ -72,6 +72,7 @@ dependencies {
 // 试过补 Uber 依赖，无效（包里就没这个架构）。CI 跑 x86_64，照常执行。
 // 纯 JVM 测试（DataGapTest）不受影响，照旧全跑。
 tasks.withType<Test>().configureEach {
+    testLogging.exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
     if (System.getProperty("os.arch") in setOf("aarch64", "arm64")) {
         exclude("**/ScreenRenderRobolectricTest*", "**/ColdStartDetailTokenRobolectricTest*")
     }
