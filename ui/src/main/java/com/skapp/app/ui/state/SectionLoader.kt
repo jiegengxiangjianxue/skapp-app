@@ -20,6 +20,7 @@ internal class SectionLoader(
     private val scope: CoroutineScope,
 ) {
     private val jobs = mutableMapOf<String, Job>()
+    private val retries = mutableMapOf<String, () -> Job>()
 
     fun <T> load(
         label: String,
@@ -28,6 +29,7 @@ internal class SectionLoader(
         fetch: suspend () -> T,
         publish: (UiState, T) -> UiState,
     ): Job {
+        retries[label] = { load(label, timeoutMs, force = true, fetch = fetch, publish = publish) }
         val old = jobs[label]
         if (old?.isActive == true && !force) return old
         old?.cancel()
@@ -56,4 +58,9 @@ internal class SectionLoader(
         job.start()
         return job
     }
+
+    fun retryFailed(exclude: Set<String> = emptySet()): List<Job> =
+        state.value.dataGaps.keys.toList()
+            .filterNot { it in exclude }
+            .mapNotNull { retries[it]?.invoke() }
 }

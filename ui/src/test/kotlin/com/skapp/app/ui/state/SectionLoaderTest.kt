@@ -59,6 +59,34 @@ class SectionLoaderTest {
         } finally { scope.cancel() }
     }
     @Test
+    fun failedSectionsRetryWithoutReloadingHealthySections() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        try {
+            val state = MutableStateFlow(UiState())
+            val loader = SectionLoader(state, scope)
+            var healthyCalls = 0
+            var failedCalls = 0
+            loader.load("healthy", fetch = { healthyCalls++; "ok" }) { s, v ->
+                s.copy(summary = mapOf("text" to v))
+            }.join()
+            loader.load<String>("failed", fetch = {
+                failedCalls++
+                if (failedCalls == 1) error("offline") else "recovered"
+            }) { s, v -> s.copy(quoteTs = v) }.join()
+            assertEquals("offline", state.value.dataGaps["failed"])
+            assertTrue(loader.retryFailed(exclude = setOf("failed")).isEmpty())
+            assertEquals("交给专用入口刷新的模块不得重复执行", 1, failedCalls)
+
+            loader.retryFailed().forEach { it.join() }
+
+            assertEquals("健康模块不应因局部重试重复请求", 1, healthyCalls)
+            assertEquals("失败模块必须真正重新执行", 2, failedCalls)
+            assertEquals("recovered", state.value.quoteTs)
+            assertFalse("failed" in state.value.dataGaps)
+        } finally { scope.cancel() }
+    }
+
+    @Test
     fun forcedRefreshRejectsOldBlockingResult() = runBlocking {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         try {

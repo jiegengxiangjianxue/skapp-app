@@ -26,7 +26,7 @@ object LiveQuote {
         name = row.name.orEmpty(),
         price = row.price,
         pctChg = row.pctChg,
-        ts = iso.format(Date(row.ts)),
+        ts = row.ts.takeIf { it > 0 }?.let { iso.format(Date(it)) },
     )
 
     /**

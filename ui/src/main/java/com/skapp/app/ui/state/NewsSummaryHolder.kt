@@ -362,8 +362,7 @@ internal class NewsSummaryHolder(
     /** 实时总结正文：加载失败时保留明确的 insufficient 状态。 */
     fun loadSummary(): Job = shared.sections.load("市场解读", fetch = {
         val board = localBoardMap(false)
-        _state.value = _state.value.copy(board = board)
-        WorkbenchSummary.asMap(_state.value)
+        WorkbenchSummary.asMap(_state.value.copy(board = board))
     }) { s, v -> s.copy(summary = v) }
 
     suspend fun refreshSummary() {

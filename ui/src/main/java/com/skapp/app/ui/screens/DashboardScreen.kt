@@ -67,6 +67,7 @@ fun DashboardScreen(vm: SkappViewModel, state: UiState, onResearch: (Int) -> Uni
                         (b["ts"]?.toString() ?: "时点暂无") +
                             " · " + when {
                                 b.isEmpty() -> "未加载"
+                                b["source"] == "local" && b["status"] in setOf("insufficient", "insufficient_data") -> "本地计算·证据不足"
                                 b["source"] == "local" -> "本地实时"
                                 else -> "库表回看"
                             } +
@@ -74,7 +75,7 @@ fun DashboardScreen(vm: SkappViewModel, state: UiState, onResearch: (Int) -> Uni
                         style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary,
                     )
                 }
-                Text("刷新", Modifier.clickable { vm.loadBoard(force = true) },
+                Text("刷新", Modifier.clickable { vm.refreshDashboard() },
                     color = MaterialTheme.colorScheme.primary,
                     style = MaterialTheme.typography.bodySmall)
             }

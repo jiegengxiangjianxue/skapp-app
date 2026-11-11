@@ -35,6 +35,14 @@ class SkappViewModel : ViewModel() {
         private const val KEY_CUSTOM_BASE_URL = "custom_base_url"
         private const val KEY_CUSTOM_API_KEY = "custom_api_key"
         private const val KEY_CUSTOM_MODEL = "custom_model"
+        private const val SYMBOL_TABLE_MIN = 3000
+
+        internal fun completeSymbolTable(symbols: List<SymbolEntry>): List<SymbolEntry> {
+            require(symbols.size >= SYMBOL_TABLE_MIN) {
+                "代码表不完整(${symbols.size}/$SYMBOL_TABLE_MIN)，已保留完整快照；可重试"
+            }
+            return symbols
+        }
     }
 
     private val _state = MutableStateFlow(UiState())
@@ -100,6 +108,13 @@ class SkappViewModel : ViewModel() {
     fun loadNewsCalcs(): Job = news.loadNewsCalcs()
     fun loadSummary(): Job = news.loadSummary()
     fun loadBoard(force: Boolean = false) { news.loadBoard(force) }
+    fun refreshDashboard() {
+        shared.sections.retryFailed(exclude = setOf("看板", "自选报价"))
+        news.loadBoard(force = true)
+        market.refreshPulse()
+        market.loadIndices()
+        shared.sections.load("自选报价", force = true, fetch = { market.refreshQuotes() }) { s, _ -> s }
+    }
     fun loadPools(force: Boolean = true) { news.loadPools(force) }
     fun refreshPoolReprice() { news.refreshPoolReprice() }
     fun refreshLocalAnalytics() { news.refreshLocalAnalytics() }
@@ -119,8 +134,6 @@ class SkappViewModel : ViewModel() {
     private var sessionJob: Job? = null
 
     /** 全市场约 5500 条；低于这个数视为半截响应，不能覆盖好快照，也不能当全表用 */
-    private val SYMBOL_TABLE_MIN = 3000
-
     private fun symbolsSnapshotFile(): java.io.File? =
         shared.appContext?.let { java.io.File(it.filesDir, "symbols_snapshot.tsv") }
 
@@ -242,6 +255,14 @@ class SkappViewModel : ViewModel() {
     }
 
     fun load() {
+        if (_state.value.symbols.size < SYMBOL_TABLE_MIN) {
+            val cached = readSymbolsSnapshot()?.takeIf { it.size >= SYMBOL_TABLE_MIN }
+                ?: readSymbolsFromAssets()?.takeIf { it.size >= SYMBOL_TABLE_MIN }
+            if (cached != null) {
+                _state.update { it.copy(symbols = cached) }
+                shared.askEngine = AskEngine(cached, shared.stockNames)
+            }
+        }
         if (sessionJob?.isActive != true) {
             sessionJob = viewModelScope.launch {
                 var ticks = 0
@@ -256,16 +277,8 @@ class SkappViewModel : ViewModel() {
         news.startNewsLoop()
         market.startMarketPulseLoop()
         _state.value = _state.value.copy(loading = false, error = null)
-        viewModelScope.launch(Dispatchers.IO) {
-            val cached = readSymbolsSnapshot() ?: readSymbolsFromAssets()
-            if (!cached.isNullOrEmpty()) {
-                _state.update { it.copy(symbols = cached) }
-                shared.askEngine = AskEngine(cached, shared.stockNames)
-            }
-        }
         shared.sections.load("代码表", fetch = {
-            val symbols = DbTables.symbols()
-            require(symbols.isNotEmpty()) { "代码表为空，已保留内置或上次结果" }
+            val symbols = completeSymbolTable(DbTables.symbols())
             if (symbols.size >= SYMBOL_TABLE_MIN) writeSymbolsSnapshot(symbols)
             shared.askEngine = AskEngine(symbols, shared.stockNames)
             symbols

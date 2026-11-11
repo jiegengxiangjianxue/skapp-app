@@ -2,6 +2,7 @@ package com.skapp.app.data
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -36,6 +37,12 @@ class LiveQuoteTest {
         assertEquals(10.5, q.price)
         assertEquals(1.23, q.pctChg)
         assertTrue(q.ts!!.startsWith("2023-11-1"), "ts 必须是 ISO 时点，实际 ${q.ts}")
+    }
+
+    @Test
+    fun `源时间缺失时保持未知而不是1970年`() {
+        assertNull(LiveQuote.quoteOf(row(ts = 0)).ts)
+        assertNull(LiveQuote.quoteOf(row(ts = -1)).ts)
     }
 
     @Test

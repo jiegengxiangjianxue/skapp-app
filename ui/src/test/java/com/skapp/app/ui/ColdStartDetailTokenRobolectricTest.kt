@@ -2,12 +2,16 @@ package com.skapp.app.ui
 
 import android.content.Context
 import android.os.Looper
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.ViewModelStore
 import androidx.test.core.app.ApplicationProvider
 import com.skapp.app.data.AiRouter
 import com.skapp.app.data.GitHubModelsClient
 import com.skapp.app.data.GitHubRepoWriter
 import com.skapp.app.data.KPeriod
 import com.skapp.app.ui.state.SKAPP_PREFS
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -77,6 +81,22 @@ class ColdStartDetailTokenRobolectricTest {
         assertTrue("双源状态行不能为空——设置页直接渲染这一行", s.aiProviderStatus.isNotBlank())
         assertNull("冷启动装配不应带 error", s.error)
         assertTrue("首屏行情相位必须有文案（加载中/交易中/休市）", s.marketPhase.isNotBlank())
+    }
+
+    @Test(timeout = 120_000)
+    fun coldStartRestoresBundledSymbolsSynchronously() {
+        freshPrefs()
+        val store = ViewModelStore()
+        val vm = ViewModelProvider(store, ViewModelProvider.NewInstanceFactory())[SkappViewModel::class.java]
+        try {
+            runBlocking(Dispatchers.IO) {
+                vm.loadSavedToken(ctx)
+                vm.load()
+                assertTrue("load 返回时必须已有内置代码表", vm.state.value.symbols.size >= 3000)
+            }
+        } finally {
+            store.clear()
+        }
     }
 
     @Test(timeout = 120_000)
