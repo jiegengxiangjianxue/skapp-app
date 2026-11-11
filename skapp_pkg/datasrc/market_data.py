@@ -3,7 +3,12 @@
 sym 统一无点小写：sh600519 / sz000001 / hk00700。
 """
 from __future__ import annotations
-import json, re, time, urllib.request
+
+import json
+import math
+import re
+import time
+import urllib.request
 
 UA = {"User-Agent": "Mozilla/5.0", "Referer": "finance.sina.com.cn"}
 
@@ -76,22 +81,46 @@ def daily_sina(symbol: str, scale: int = 240, datalen: int = 1023) -> list[dict]
 
 # ---------- 全市场列表（新浪 hs_a，分页 100） ----------
 def all_symbols(max_pages: int = 60) -> list[dict]:
-    out, page = [], 0
-    while page < max_pages:
-        url = (f"https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/"
-               f"Market_Center.getHQNodeData?page={page+1}&num=100&sort=symbol&asc=1&node=hs_a")
-        try:
-            data = json.loads(_http(url))
-        except Exception:
-            break
-        if not data:
-            break
-        for d in data:
-            out.append({"symbol": norm(d["symbol"]), "name": d["name"],
-                        "price": float(d["trade"]), "pct_chg": float(d["changepercent"])})
-        page += 1
-        time.sleep(0.25)
-    return out
+    base = "https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/Market_Center."
+    headers = {**UA, "Referer": "https://finance.sina.com.cn/"}
+    out = {}
+    try:
+        count = json.loads(_http(base + "getHQNodeStockCount?node=hs_a", headers=headers))
+        if isinstance(count, bool) or not isinstance(count, (str, int, float)):
+            raise ValueError("invalid symbol count")
+        expected = int(count)
+        if expected < 3000 or (isinstance(count, float) and count != expected):
+            raise ValueError("invalid symbol count")
+        for page in range(1, max_pages + 1):
+            time.sleep(0.7)
+            url = base + f"getHQNodeData?page={page}&num=100&sort=symbol&asc=1&node=hs_a"
+            data = json.loads(_http(url, headers=headers))
+            if not isinstance(data, list) or not data:
+                raise ValueError(f"invalid or empty symbol page {page}")
+            for d in data:
+                if not isinstance(d, dict) or not isinstance(d.get("symbol"), str):
+                    raise ValueError(f"invalid symbol row on page {page}")
+                symbol = norm(d["symbol"])
+                name = d.get("name")
+                if not re.fullmatch(r"(?:sh|sz|bj)[0-9]{6}", symbol) or not isinstance(name, str) or not name.strip():
+                    raise ValueError(f"invalid symbol or name on page {page}")
+                row = {"symbol": symbol, "name": name.strip()}
+                for field, source in (("price", "trade"), ("pct_chg", "changepercent")):
+                    try:
+                        value = float(d.get(source))
+                    except (TypeError, ValueError, OverflowError):
+                        value = None
+                    row[field] = value if value is not None and math.isfinite(value) else None
+                if symbol in out and out[symbol] != row:
+                    raise ValueError(f"conflicting duplicate symbol on page {page}")
+                out[symbol] = row
+            if len(out) >= expected or len(data) < 100:
+                break
+        if len(out) != expected or not {"sh", "sz"}.issubset({s[:2] for s in out}):
+            raise ValueError(f"incomplete symbol table: expected {expected}, got {len(out)} unique symbols")
+    except Exception as exc:
+        raise RuntimeError(f"Sina symbol table rejected: {exc}") from exc
+    return list(out.values())
 
 # ---------- 消息/快讯（新浪 7x24，轻量兜底源） ----------
 def news_feed(num: int = 30) -> list[dict]:

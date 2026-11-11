@@ -6,7 +6,12 @@
 次日复盘直接取 ref_price，不再指望"昨日 quotes 恰好覆盖昨日 picks"。
 """
 from __future__ import annotations
-import json, math, os, shutil, datetime as dt
+
+import datetime as dt
+import json
+import math
+import os
+import shutil
 
 HERE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 DATA = os.path.join(HERE, "data")
@@ -85,10 +90,18 @@ def _build_picks(engine: dict | None, quotes: list[dict], quote_map: dict[str, d
         # 引擎产物由 stocks-ai-view 的 engine-chain 每天产（scripts/build_picks_latest.py），
         # asof 是条目依据日期（可能早于文件生成日）；必须带进快照并标注 stale，
         # 避免把几天前的池子当今日新推
-        asof = engine.get("asof") or engine.get("date")
-        if asof:
-            picks["engine_asof"] = str(asof)
-            picks["stale"] = str(asof) < date
+        asof = engine.get("asof")
+        try:
+            parsed = dt.date.fromisoformat(str(asof))
+            valid_date = parsed.isoformat() == str(asof)
+        except ValueError:
+            valid_date = False
+        picks["engine_asof"] = str(asof) if valid_date else None
+        picks["stale"] = (not valid_date or str(asof) != date
+                          or engine.get("stale") is True
+                          or engine.get("status") == "insufficient_data")
+        picks["status"] = "insufficient_data" if picks["stale"] else "candidate_archive"
+        picks["usage"] = "historical_only" if picks["stale"] else "archive_not_live_recommendation"
     else:
         # 引擎产物缺失时只能回落自选股涨幅前列，如实标注 provenance，不冒充全市场推股
         raw = sorted(quotes, key=lambda q: -_num(q.get("pct_chg")))
@@ -128,7 +141,7 @@ def _review_from_prev(prev: dict | None, quotes: list[dict]) -> list[dict]:
     return out
 
 def make_snapshot(date: str | None = None) -> dict:
-    from skapp_pkg.datasrc.market_data import realtime_quotes, news_feed, norm
+    from skapp_pkg.datasrc.market_data import news_feed, norm, realtime_quotes
     cfg = _load_watchlist()
     date = date or dt.date.today().isoformat()
     watchlist = cfg["watchlist"]
