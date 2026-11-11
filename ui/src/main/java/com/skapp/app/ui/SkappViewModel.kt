@@ -14,9 +14,6 @@ import com.skapp.app.data.AiRouter
 import com.skapp.app.data.GitCodeAiClient
 import com.skapp.app.data.OpenAiCompatClient
 import com.skapp.app.data.GitHubModelsClient
-import com.skapp.app.data.HoloClient
-import com.skapp.app.data.SiteBoardClient
-import com.skapp.app.data.SkappApi
 import com.skapp.app.data.SymbolEntry
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -194,9 +191,7 @@ class SkappViewModel : ViewModel() {
         // GitHub 仓库写入（消息库 / 开盘推股历史）复用同一个 PAT
         val githubToken = GitHubModelsClient.parseTokens(gh).firstOrNull()
         GitHubRepoWriter.configure(githubToken)
-        SkappApi.setToken(githubToken)
-        SiteBoardClient.setToken(githubToken)
-        HoloClient.setToken(githubToken)
+        DbTables.configureGithubToken(githubToken)
         // 本地推股存档：只恢复上次落盘结果，不在启动时重算（重算要拉 11 页快照 + 40 只日 K）
         runCatching { picks.restoreLocalPicks() }
         runCatching { picks.restorePremarketDraft() }
@@ -223,9 +218,7 @@ class SkappViewModel : ViewModel() {
         prefs.edit().putString(KEY_GITHUB_TOKEN, _state.value.githubToken).apply()
         val githubToken = GitHubModelsClient.parseTokens(_state.value.githubToken).firstOrNull()
         GitHubRepoWriter.configure(githubToken)
-        SkappApi.setToken(githubToken)
-        SiteBoardClient.setToken(githubToken)
-        HoloClient.setToken(githubToken)
+        DbTables.configureGithubToken(githubToken)
     }
 
     /** 设置页「保存 GitHub token」按钮 */

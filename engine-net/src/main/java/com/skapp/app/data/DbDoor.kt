@@ -23,6 +23,12 @@ package com.skapp.app.data
  */
 object DbTables {
 
+    fun configureGithubToken(token: String?) {
+        SkappApi.setToken(token)
+        SiteBoardClient.setToken(token)
+        HoloClient.setToken(token)
+    }
+
     /** 全市场代码表（配置表）。 */
     suspend fun symbols(): List<SymbolEntry> = Db.symbols()
 

@@ -32,10 +32,10 @@ class GitHubDataRoutingTest {
         try {
             Http.fault = null
             Http.openConnection = { url -> FakeConnection(url, response(url)).also { requests += it } }
-            SkappApi.setToken(token)
+            DbTables.configureGithubToken(token)
             check(requests)
         } finally {
-            SkappApi.setToken(null)
+            DbTables.configureGithubToken(null)
             Http.openConnection = previous
             Http.fault = previousFault
         }
@@ -127,7 +127,7 @@ class GitHubDataRoutingTest {
 
     @Test
     fun clearingTokenRestoresAnonymousRouting() = withConnections("TEST-clear") { requests ->
-        SkappApi.setToken("")
+        DbTables.configureGithubToken("")
         assertEquals("controlled-body", runBlocking { SkappApi.fetchInputText(raw) })
         assertEquals(listOf(raw), requests.map { it.url.toString() })
         assertNull(requests.single().getRequestProperty("Authorization"))
