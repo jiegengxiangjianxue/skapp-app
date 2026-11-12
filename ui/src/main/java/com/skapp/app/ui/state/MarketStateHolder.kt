@@ -16,7 +16,6 @@ import com.skapp.app.data.KPeriod
 import com.skapp.app.data.KlineApi
 import com.skapp.app.data.LocalEngine
 import com.skapp.app.data.LocalEngineResult
-import com.skapp.app.data.LocalScreener
 import com.skapp.app.data.MarketDataClient
 import com.skapp.app.data.MarketHours
 import com.skapp.app.data.BundleDetail
