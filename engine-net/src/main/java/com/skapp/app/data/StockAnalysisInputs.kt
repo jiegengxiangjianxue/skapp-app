@@ -69,7 +69,7 @@ data class StockAnalysisInputs(
 
         internal val benchmarkHashes = mapOf(
             "600519" to "b1a39e978bc37ae2a8fa3027acefaa6355f2fb145bdb5fbc07462a2261012400",
-            "002242" to "4baf5881b6a571486737c593da15e9dede3b41f564905981fddfa07df98c8535",
+            "002242" to "02a88bd44e36ea50fac6013a5404d264e1e73ca1778f18e12bc1a6bca2434b21",
         )
 
         /** Hash is checked on the original UTF-8 payload including BOM and line endings. */

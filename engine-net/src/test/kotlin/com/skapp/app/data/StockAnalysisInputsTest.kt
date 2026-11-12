@@ -25,6 +25,7 @@ class StockAnalysisInputsTest {
             assertEquals(close, benchmark.bars.last().close, 1e-7)
             assertEquals(last[header.indexOf("volume")].toDouble(), benchmark.bars.last().vol)
             assertEquals(lines.size - 1, benchmark.bars.size)
+            if (code == "sz002242") assertEquals("2008-05-28", benchmark.bars.first().date)
             assertTrue(benchmark.barSources.values.contains("cnfin"))
         }
     }
