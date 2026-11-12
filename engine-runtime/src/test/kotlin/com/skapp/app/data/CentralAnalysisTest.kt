@@ -23,6 +23,15 @@ class CentralAnalysisTest {
         EngineChain.NewsEvidence(code, "event-1", "fixture negative event", "neg", null,
             "verified fixture evidence", time, source)
 
+    @Test fun compactQuoteTimesAreCalendarDatesNotEpochMilliseconds() {
+        val expected = OffsetDateTime.parse("2026-11-12T16:14:52+08:00").toInstant().toEpochMilli()
+        assertEquals(expected, CentralAnalysis.timeOf("20261112161452"))
+        assertEquals(expected, CentralAnalysis.timeOf(expected.toString()))
+        assertEquals(expected, CentralAnalysis.timeOf((expected / 1000).toString()))
+        assertNull(CentralAnalysis.timeOf("20260230161452"))
+        assertNull(CentralAnalysis.timeOf("20261112241452"))
+    }
+
     @Test fun allPanelsCanSupplyFlowNewsAndIndexToSameReview() {
         val result = CentralAnalysis.compute("600001", bars, listOf(row()),
             news = listOf(event()), newsAvailable = true,

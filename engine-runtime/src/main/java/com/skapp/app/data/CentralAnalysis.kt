@@ -46,6 +46,11 @@ object CentralAnalysis {
 
     fun timeOf(value: String?): Long? {
         if (value.isNullOrBlank()) return null
+        if (value.length == 14 && value.all { it in '0'..'9' }) return runCatching {
+            LocalDateTime.parse(value, DateTimeFormatter.ofPattern("uuuuMMddHHmmss")
+                .withResolverStyle(java.time.format.ResolverStyle.STRICT))
+                .atZone(AnalysisSessionPolicy.zone).toInstant().toEpochMilli()
+        }.getOrNull()
         return runCatching { OffsetDateTime.parse(value).toInstant().toEpochMilli() }.getOrNull()
             ?: runCatching { Instant.parse(value).toEpochMilli() }.getOrNull()
             ?: runCatching {
