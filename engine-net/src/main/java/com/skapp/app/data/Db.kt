@@ -47,7 +47,8 @@ object Db {
         val normalized = Code.normalize(code) ?: return StockAnalysisInputs(code, bars = bars, missing = listOf("invalid_code"))
         val api = json(RemoteSources.apiStock(RemoteSources.OWNER_A, RemoteSources.REPO_A, normalized))
         val holo = json(RemoteSources.stockFinance(normalized))
-        val financial = StockAnalysisInputs.financial(normalized, api, holo, nowMs)
+        val collected = json(RemoteSources.financialReports(normalized))
+        val financial = StockAnalysisInputs.financial(normalized, api, holo, nowMs, collected)
         val benchmark = if (bars.isNotEmpty() && normalized in StockAnalysisInputs.benchmarkHashes) try {
             transport.get(RemoteSources.stockBenchmark(normalized))?.let { StockAnalysisInputs.benchmark(normalized, it, nowMs) }
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
@@ -59,13 +60,13 @@ object Db {
         if (benchmark.expiresAtMs!! < nowMs || benchmark.bars.lastOrNull()?.date != bars.lastOrNull()?.date ||
             bars.any { it.date !in byDate }) return financial.copy(
             bars = bars.toList(), barsFingerprint = StockAnalysisInputs.barsFingerprint(bars),
-            missing = listOf("benchmark_stale_or_date_mismatch"))
+            missing = financial.missing + "benchmark_stale_or_date_mismatch")
         val selected = bars.map { byDate.getValue(it.date) }
         return financial.copy(bars = selected, barsFingerprint = StockAnalysisInputs.barsFingerprint(selected),
             adjustmentEvidence = benchmark.adjustmentEvidence, barSources = benchmark.barSources.filterKeys { day -> selected.any { it.date == day } },
             source = listOfNotNull(financial.source, benchmark.source).joinToString(";"),
             expiresAtMs = financial.expiresAtMs?.let { minOf(it, benchmark.expiresAtMs!!) },
-            missing = if (benchmark.expiresAtMs!! < nowMs) listOf("benchmark_stale") else emptyList())
+            missing = financial.missing + if (benchmark.expiresAtMs!! < nowMs) listOf("benchmark_stale") else emptyList())
     }
 
 

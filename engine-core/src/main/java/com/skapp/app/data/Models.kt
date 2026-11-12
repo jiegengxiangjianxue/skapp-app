@@ -25,8 +25,8 @@ data class MarketPulseRow(
     val speed: Double?,
     /**
      * speed 的来源，语义必须区分，否则同一个字段混着两种口径：
-     *   tick  = 两轮本地快照的 pctChg 之差（真实 30 秒动量）
-     *   field = 东财 f124「涨速」字段（约 5 分钟窗口，且首轮无 tick 时才用）
+     *   tick  = 同日严格递增的相邻源报价 pctChg 之差（间隔不超过 2 分钟）
+     *   field = 东财 f22「涨速」字段（约 5 分钟窗口，且首轮无 tick 时才用）
      *   none  = 无可用动量数据
      */
     val speedSource: String = "none",
@@ -48,7 +48,41 @@ data class MarketPulseRow(
     val outlook: String = "insufficient",
     val outlookReason: String? = null,
     val snapshotStatus: String = "live",
+    val sourceAtMs: Long? = null,
+    val source: String? = null,
+    val precursorSummary: String? = null,
+    val precursorHistory: List<AnomalyAlert> = emptyList(),
 )
+
+/** Intraday observation, with immutable trigger evidence and an append-only terminal result. */
+data class AnomalyAlert(
+    val code: String,
+    val name: String,
+    val triggerAtMs: Long,
+    val triggerPrice: Double,
+    val frozenBreakoutPrice: Double,
+    val expiresAtMs: Long,
+    val invalidBelow: Double,
+    val reason: String,
+    val source: String,
+    val status: String = "pending",
+    val resultAtMs: Long? = null,
+    val resultReason: String = "待验证",
+) {
+    fun display(): String {
+        val zone = java.time.ZoneId.of("Asia/Shanghai")
+        fun time(ms: Long) = java.time.Instant.ofEpochMilli(ms).atZone(zone).toLocalTime().toString()
+        val label = when (status) {
+            "fulfilled" -> "已越过固定目标（非预测准确率）"
+            "invalidated" -> "已失效"
+            "expired" -> "已到期"
+            "unproven" -> "无法验证"
+            else -> "待验证"
+        }
+        return "前兆 ${time(triggerAtMs)} @ $triggerPrice · 固定目标 >$frozenBreakoutPrice · " +
+            "失效 <$invalidBelow · 截止 ${time(expiresAtMs)} · $label · $resultReason · $reason · 来源 $source"
+    }
+}
 
 /** 引擎评分：多来源真实分数，key 为引擎名 */
 data class BundleDetail(

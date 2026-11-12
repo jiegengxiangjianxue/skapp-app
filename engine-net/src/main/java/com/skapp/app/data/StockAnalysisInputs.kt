@@ -41,7 +41,8 @@ data class StockAnalysisInputs(
 
     companion object {
         private val zone = ZoneId.of("Asia/Shanghai")
-        // Source publication time, never fetch time, controls this conservative observation TTL.
+        // Legacy source ts or the collector's per-report collectedAt controls the observation TTL.
+        // Report publication dates remain distinct and never substitute for a missing row clock.
         private const val SOURCE_TTL_MS = 24 * 60 * 60 * 1000L
 
         fun barsFingerprint(bars: List<KBar>): String = sha256(bars.joinToString("\n") {
@@ -111,21 +112,57 @@ data class StockAnalysisInputs(
                 adjustmentEvidence = "cnfin:hfq_factor:approved_benchmark:$expected", barSources = sources)
         }
 
-        private data class Report(val period: String, val eps: Double?, val dps: Double?, val source: String, val time: Long?, val fields: Map<String, Any?>)
+        private data class Report(val period: String, val eps: Double?, val dps: Double?, val source: String,
+            val time: Long?, val fields: Map<String, Any?>, val collected: Boolean = false, val missing: List<String> = emptyList())
 
-        fun financial(code: String, api: JSONObject?, holo: JSONObject?, nowMs: Long): StockAnalysisInputs {
+        fun financial(code: String, api: JSONObject?, holo: JSONObject?, nowMs: Long, collectedReport: JSONObject? = null): StockAnalysisInputs {
             val reports = mutableListOf<Report>()
-            fun collect(item: JSONObject?, root: JSONObject, source: String) {
+            fun collect(item: JSONObject?, root: JSONObject, source: String, collected: Boolean = false) {
                 if (item == null) return
                 val identity = item.optString("symbol").takeIf { it.isNotBlank() && it != "null" }
-                if (identity != null && Code.normalize(identity) != code) return
+                if ((collected && identity == null) || (identity != null && Code.normalize(identity) != code)) return
                 val period = date(item.optString("report_date"), nowMs)?.toString() ?: return
                 val announced = item.optString("announce_date").takeIf { it.isNotBlank() && it != "null" }
                 if (announced != null && date(announced, nowMs) == null) return
-                val rawTime = item.optString("ts").takeIf { it.isNotBlank() && it != "null" } ?: root.optString("ts")
+                val updated = item.optString("update_date").takeIf { it.isNotBlank() && it != "null" }
+                if (updated != null && date(updated, nowMs) == null) return
+                if (collected && (announced == null || updated == null || announced < period || updated < period)) return
+                // A root collection clock cannot renew a report not fetched during that run.
+                val rawTime = item.optString("ts").takeIf { it.isNotBlank() && it != "null" }.orEmpty()
                 if (rawTime.isNotBlank() && rawTime != "null" && timestamp(rawTime, nowMs) == null) return
-                fun number(key: String): Double? = if (item.isNull(key)) null else item.optDouble(key, Double.NaN).takeIf { it.isFinite() }
-                reports += Report(period, number("eps"), number("dps"), source, timestamp(rawTime, nowMs), item.toPlainMap())
+                fun number(key: String): Double? = (item.opt(key) as? Number)?.toDouble()?.takeIf { it.isFinite() }
+                val evidence = item.optJSONObject("data_evidence")
+                fun evidenceSource(key: String): String? {
+                    val field = evidence?.optJSONObject(key) ?: return null
+                    val allowedFields = if (key == "eps") setOf("BASIC_EPS") else setOf("PRETAX_BONUS_RMB/10", "ASSIGNDSCRPT")
+                    if (field.optString("report_date") != period || field.optString("field") !in allowedFields ||
+                        field.optString("unit") != "CNY/share" ||
+                        (field.has("symbol") && Code.normalize(field.optString("symbol")) != code) ||
+                        (field.has("confidence") && field.optString("confidence") != "verified_public") ||
+                        (field.has("snapshot_ts") && field.optString("snapshot_ts") != rawTime)) return null
+                    return field.optString("source").takeIf {
+                        try {
+                            val uri = java.net.URI(it)
+                            uri.scheme == "https" && uri.host == "datacenter-web.eastmoney.com" && uri.rawUserInfo == null
+                        } catch (_: Exception) { false }
+                    }
+                }
+                val eps = number("eps")?.takeIf { !collected || evidenceSource("eps") != null }
+                val dps = number("dps")?.takeIf { it >= 0 && (!collected || evidenceSource("dps") != null) }
+                val sources = if (collected) listOfNotNull(evidenceSource("eps"), evidenceSource("dps"))
+                    .distinct().joinToString(";").ifBlank { source } else source
+                val missing = buildList {
+                    if (identity == null) add("financial_row_identity_missing")
+                    if (timestamp(rawTime, nowMs) == null) add("financial_row_time_missing")
+                    if (!collected) {
+                        if (evidenceSource("eps") == null) add("eps_source_evidence_missing")
+                        if (evidenceSource("dps") == null) add("dps_source_evidence_missing")
+                    } else {
+                        if (eps == null) add("eps_missing_or_unverified")
+                        if (dps == null) add(item.optString("dps_reason").takeIf { it.isNotBlank() && it != "null" } ?: "dps_missing_or_unverified")
+                    }
+                }
+                reports += Report(period, eps, dps, sources, timestamp(rawTime, nowMs), item.toPlainMap(), collected, missing)
             }
             if (api != null) {
                 val detail = api.optJSONObject("detail")
@@ -142,12 +179,35 @@ data class StockAnalysisInputs(
                 val array = holo.optJSONArray("reports")
                 for (i in 0 until (array?.length() ?: 0)) collect(array?.optJSONObject(i), holo, RemoteSources.stockFinance(code))
             }
+            if (collectedReport != null && Code.normalize(collectedReport.optString("symbol")) == code &&
+                (!collectedReport.has("code") || Code.normalize(collectedReport.optString("code")) == code)) {
+                val array = collectedReport.optJSONArray("reports")
+                for (i in 0 until (array?.length() ?: 0)) collect(array?.optJSONObject(i), collectedReport,
+                    RemoteSources.financialReports(code), collected = true)
+            }
             val period = reports.maxOfOrNull { it.period }
             val matching = reports.filter { it.period == period }
             val used = matching.filter { it.eps != null || it.dps != null }.ifEmpty { matching }
             val time = if (used.isNotEmpty() && used.all { it.time != null }) used.minOf { it.time!! } else null
-            return StockAnalysisInputs(code, matching.firstNotNullOfOrNull { it.eps }, matching.firstNotNullOfOrNull { it.dps }, period,
-                used.map { it.source }.distinct().joinToString(";").takeIf { it.isNotEmpty() }, time, time?.plus(SOURCE_TTL_MS), financialFields = matching.reversed().flatMap { it.fields.entries.map { e -> e.key to e.value } }.toMap())
+            val conflicts = mutableListOf<String>()
+            fun merged(key: String, values: List<Double>): Double? {
+                val reasonConflict = matching.any { report ->
+                    report.fields["${key}_reason"]?.toString()?.contains("conflict", ignoreCase = true) == true ||
+                        (report.fields["data_evidence"] as? Map<*, *>)?.get(key).let { field ->
+                            (field as? Map<*, *>)?.get("reason")?.toString()?.contains("conflict", ignoreCase = true) == true
+                        }
+                }
+                if (values.distinct().size > 1 || reasonConflict) {
+                    conflicts += "${key}_conflict"
+                    return null
+                }
+                return values.firstOrNull()
+            }
+            val eps = merged("eps", matching.mapNotNull { it.eps }).takeUnless { matching.any { it.collected && it.eps == null } }
+            val dps = merged("dps", matching.mapNotNull { it.dps }).takeUnless { matching.any { it.collected && it.dps == null } }
+            return StockAnalysisInputs(code, eps, dps, period,
+                used.map { it.source }.distinct().joinToString(";").takeIf { it.isNotEmpty() }, time, time?.plus(SOURCE_TTL_MS),
+                missing = (conflicts + matching.flatMap { it.missing }).distinct(), financialFields = matching.flatMap { it.fields.entries.map { e -> e.key to e.value } }.toMap())
         }
     }
 }

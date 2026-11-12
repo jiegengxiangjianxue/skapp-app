@@ -44,6 +44,9 @@ internal class MarketStateHolder(shared: SharedVm) : StateHolder(shared) {
     private var quoteJob: Job? = null
 
     private var pulseJob: Job? = null
+    private val pulseRefreshLock = kotlinx.coroutines.sync.Mutex()
+    private var anomalyState = com.skapp.app.data.AnomalyWatch.State()
+    private var pulsePrevious: Map<String, com.skapp.app.data.MarketPulseRow> = emptyMap()
 
     private var detailJob: Job? = null
 
@@ -348,22 +351,46 @@ internal class MarketStateHolder(shared: SharedVm) : StateHolder(shared) {
                 "mv" to null,
                 "mainNet" to null,
                 "speed" to null,
+                "ts" to q.ts?.let { text ->
+                    try { java.time.Instant.parse(text).toEpochMilli() } catch (_: Exception) {
+                        try { java.time.LocalDateTime.parse(text).atZone(java.time.ZoneId.of("Asia/Shanghai")).toInstant().toEpochMilli() }
+                        catch (_: Exception) { null }
+                    }
+                },
+                "source" to "tencent/quote",
             )
         }
     }
 
     suspend fun refreshMarketPulse() {
+        if (!pulseRefreshLock.tryLock()) return
         _state.update { it.copy(marketPulseLoading = true) }
         try {
             // 全市场快照被拒（东财风控/限流）时不能静默留空：退到自选+推股池，口径随之缩小
             var scope = "全市场"
             val snapshot = gap("全市场快照", { emptyList<Map<String, Any?>>() }) {
-                LocalScreener.marketSnapshot(pz = 500)
+                com.skapp.app.data.LiveMarket.snapshot().map { r ->
+                    mapOf<String, Any?>("code" to r.code, "name" to r.name, "price" to r.price,
+                        "pctChg" to r.pctChg, "volRatio" to r.volRatio, "turnover" to r.volumeLots,
+                        "mainNet" to r.mainNet, "speed" to r.speed, "high" to r.high, "low" to r.low,
+                        "ts" to r.ts, "source" to r.source)
+                }
             }.ifEmpty {
                 scope = "池内"
                 poolSnapshot()
             }
-            val prevRows = _state.value.marketPulse.associateBy { it.code }
+            val now = System.currentTimeMillis()
+            val watchQuotes = snapshot.mapNotNull { raw ->
+                val code = com.skapp.app.data.Code.normalize(raw["code"]?.toString().orEmpty()) ?: return@mapNotNull null
+                fun number(key: String) = (raw[key] as? Number)?.toDouble()?.takeIf { it.isFinite() }
+                com.skapp.app.data.AnomalyWatch.Quote(code, raw["name"]?.toString().orEmpty(),
+                    number("price"), number("pctChg"), number("high"), number("low"), number("turnover"),
+                    number("volRatio"), number("mainNet"), (raw["ts"] as? Number)?.toLong() ?: 0L,
+                    raw["source"]?.toString().orEmpty())
+            }
+            anomalyState = com.skapp.app.data.AnomalyWatch.update(anomalyState, watchQuotes, now)
+            val sourceQuotes = watchQuotes.associateBy { it.code }
+            val prevRows = pulsePrevious
 
             // ── 1) 横截面基础过滤（主板 / 非 ST / 未涨停附近）──
             data class Cell(
@@ -375,10 +402,11 @@ internal class MarketStateHolder(shared: SharedVm) : StateHolder(shared) {
                 val turnover: Double?,
                 val mainNet: Double?,
                 val fieldSpeed: Double?,
+                val sourceQuote: com.skapp.app.data.AnomalyWatch.Quote?,
             )
             val cells = snapshot.mapNotNull { raw ->
-                val code = raw["code"]?.toString() ?: return@mapNotNull null
-                val pct = (raw["pctChg"] as? Number)?.toDouble() ?: return@mapNotNull null
+                val code = com.skapp.app.data.Code.normalize(raw["code"]?.toString().orEmpty()) ?: return@mapNotNull null
+                val pct = (raw["pctChg"] as? Number)?.toDouble()?.takeIf { it.isFinite() } ?: return@mapNotNull null
                 val name = raw["name"]?.toString().orEmpty()
                 // 与推荐/评分同一口径：ST 与退市整理股都排除（此前只判 ST，退市整理股会漏进候选）
                 // 池内口径允许 ETF与创业/科创（5/1/3 开头），全市场口径仍只留主板个股
@@ -395,13 +423,22 @@ internal class MarketStateHolder(shared: SharedVm) : StateHolder(shared) {
                     turnover = (raw["turnover"] as? Number)?.toDouble(),
                     mainNet = (raw["mainNet"] as? Number)?.toDouble(),
                     fieldSpeed = (raw["speed"] as? Number)?.toDouble(),
+                    sourceQuote = sourceQuotes[code],
                 )
             }
 
             // 池内也拉不到（自选为空 / 腾讯也挂）：保留上一轮结果，但把范围如实写进状态，
             // 让界面显示「异动不可用」，而不是拿旧数据冒充本轮
             if (cells.isEmpty()) {
-                _state.update { it.copy(marketPulseScope = "none") }
+                val history = anomalyState.records.takeLast(20).reversed().map { alert ->
+                    com.skapp.app.data.MarketPulseRow(alert.code, alert.name, null, null, null,
+                        volRatio = null, turnover = null, mainNet = null, snapshotStatus = "stale",
+                        precursorSummary = com.skapp.app.data.AnomalyWatch.SUMMARY,
+                        precursorHistory = listOf(alert))
+                }
+                _state.update { it.copy(marketPulseScope = "none", marketPulse = history.ifEmpty {
+                    it.marketPulse.map { row -> row.copy(snapshotStatus = "stale", speed = null, speedSource = "none") }
+                }) }
                 return
             }
 
@@ -421,16 +458,25 @@ internal class MarketStateHolder(shared: SharedVm) : StateHolder(shared) {
             val ranked = cells.map { c ->
                 val prev = prevRows[c.code]
                 val prevPct = prev?.pctChg
-                // 两种动量口径必须分开：tick = 本轮快照差（真 30 秒动量）；field = 东财 f124（约 5 分钟窗口）
-                val tickSpeed = prevPct?.let { c.pct - it }
-                val speed = tickSpeed ?: c.fieldSpeed
+                val quote = c.sourceQuote
+                val fresh = quote?.let { com.skapp.app.data.AnomalyWatch.fresh(it, now) } == true
+                val previousTime = prev?.sourceAtMs
+                val currentTime = quote?.sourceAtMs
+                val forward = fresh && previousTime != null && currentTime != null && currentTime > previousTime &&
+                    currentTime - previousTime <= 2 * 60_000L && prev?.source == quote?.source &&
+                    java.time.Instant.ofEpochMilli(previousTime).atZone(java.time.ZoneId.of("Asia/Shanghai")).toLocalDate() ==
+                    java.time.Instant.ofEpochMilli(currentTime).atZone(java.time.ZoneId.of("Asia/Shanghai")).toLocalDate()
+                val duplicate = fresh && previousTime == currentTime && prev?.source == quote?.source
+                val tickSpeed = if (forward) prevPct?.let { c.pct - it } else null
+                val monotonic = previousTime == null || currentTime != null && currentTime >= previousTime
+                val speed = if (fresh && monotonic) tickSpeed ?: c.fieldSpeed else null
                 val speedSource = when {
                     tickSpeed != null -> "tick"
-                    c.fieldSpeed != null -> "field"
+                    fresh && monotonic && c.fieldSpeed != null -> "field"
                     else -> "none"
                 }
                 // 去抖：连续同向（同为涨/同为跌）才累加轮数，否则重新计 1
-                val streak = if (prev != null && prevPct != null && prevPct != 0.0 && c.pct != 0.0 &&
+                val streak = if (duplicate) prev?.streak ?: 1 else if (forward && prev != null && prevPct != null && prevPct != 0.0 && c.pct != 0.0 &&
                     (prevPct > 0) == (c.pct > 0)
                 ) prev.streak + 1 else 1
                 val outlook = when {
@@ -447,7 +493,7 @@ internal class MarketStateHolder(shared: SharedVm) : StateHolder(shared) {
                     else -> "涨速持平"
                 }
                 val speedBasis = when (speedSource) {
-                    "tick" -> "本轮 30 秒快照差"
+                    "tick" -> "相邻源报价差"
                     "field" -> "东财涨速字段（约 5 分钟窗口，首轮替代值）"
                     else -> "无"
                 }
@@ -494,8 +540,20 @@ internal class MarketStateHolder(shared: SharedVm) : StateHolder(shared) {
                         ?: event?.get("reason")?.toString(),
                     evidenceTs = event?.get("time")?.toString() ?: event?.get("ts")?.toString(),
                     outlook = outlook,
-                    outlookReason = reason,
+                    outlookReason = if (fresh) reason else "源时刻缺失、未来或超过5分钟，行情陈旧，不参与前兆",
+                    snapshotStatus = if (fresh && monotonic) "live" else "stale",
+                    sourceAtMs = currentTime?.takeIf { it > 0 },
+                    source = quote?.source,
+                    precursorSummary = com.skapp.app.data.AnomalyWatch.SUMMARY,
+                    precursorHistory = anomalyState.records.filter { it.code == c.code },
                 ) to (if (streak >= 2) rel else rel - 12.0) // 新进榜先扣 12 分，下一轮确认后再上主榜
+            }
+            pulsePrevious = ranked.map { it.first }.filter { row ->
+                val old = prevRows[row.code]
+                row.snapshotStatus == "live" && (row.sourceAtMs ?: 0L) > (old?.sourceAtMs ?: Long.MIN_VALUE)
+            }.associateBy { it.code }.let { advanced ->
+                (prevRows.filterValues { row -> row.sourceAtMs?.let { now - it <= 5 * 60_000L } == true } + advanced)
+                    .filterKeys { it in sourceQuotes }
             }
             val rows = ranked
                 .sortedWith(
@@ -512,7 +570,16 @@ internal class MarketStateHolder(shared: SharedVm) : StateHolder(shared) {
                     row.copy(board = board)
                 }
             }
-            // 掉出榜：上一轮在榜、本轮已不在的票，取相对强度最高的 3 只，让用户看得到「谁掉队」
+            val historyOnly = anomalyState.records.takeLast(20).asReversed().filter { alert -> rows.none { it.code == alert.code } }
+                .map { alert ->
+                    val q = sourceQuotes[alert.code]
+                    com.skapp.app.data.MarketPulseRow(alert.code, alert.name, q?.price, q?.pctChg, null,
+                        volRatio = q?.volRatio, turnover = q?.volume, mainNet = q?.mainNet,
+                        sourceAtMs = q?.sourceAtMs, source = q?.source,
+                        snapshotStatus = if (q?.let { com.skapp.app.data.AnomalyWatch.fresh(it, now) } == true) "live" else "stale",
+                        precursorSummary = com.skapp.app.data.AnomalyWatch.SUMMARY, precursorHistory = listOf(alert))
+                }
+            // Terminal observations remain visible after leaving the strength board.
             val shownCodes = rows.map { it.code }.toSet()
             val dropped = prevRows.values
                 .filter { it.code !in shownCodes }
@@ -520,13 +587,15 @@ internal class MarketStateHolder(shared: SharedVm) : StateHolder(shared) {
                 .take(3)
                 .map { "${it.name} ${it.code}" }
             _state.update { it.copy(
-                marketPulse = enriched,
+                marketPulse = enriched + historyOnly,
                 marketPulseScope = scope,
-                marketPulseTs = java.time.OffsetDateTime.now().toString(),
+                marketPulseTs = watchQuotes.filter { com.skapp.app.data.AnomalyWatch.fresh(it, now) }
+                    .maxOfOrNull { it.sourceAtMs }?.let { java.time.Instant.ofEpochMilli(it).toString() },
                 pulseDropped = dropped,
             ) }
         } finally {
             _state.update { it.copy(marketPulseLoading = false) }
+            pulseRefreshLock.unlock()
         }
     }
 

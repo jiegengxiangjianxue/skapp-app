@@ -50,6 +50,10 @@ object RemoteSources {
     fun symbols(owner: String = OWNER_SYMBOLS, repo: String = REPO_SYMBOLS): String =
         "${RAW}/$owner/$repo/main/data/search/symbols.json"
 
+    /** Public financial collector output; prefixed file name, report-level evidence clocks. */
+    fun financialReports(code: String): String =
+        appFile(OWNER_A, REPO_A, "fin/${SkappApi.prefixed(code)}.json")
+
     /** 静态 API */
     fun apiIndex(owner: String = OWNER_A, repo: String = REPO_A): String =
         "${base(owner, repo)}/api/index.json"

@@ -169,6 +169,9 @@ fun TodayBoardScreen(vm: SkappViewModel, state: UiState) {
                     fontWeight = FontWeight.SemiBold,
                 )
             }
+            item {
+                Text("试验前兆，未验证预测准确率，观察非交易指令", style = MaterialTheme.typography.bodySmall)
+            }
             items(marketPulse, key = { it.code }) { row ->
                 PulseCard(row)
             }
@@ -313,6 +316,11 @@ private fun PulseCard(row: MarketPulseRow) {
                 Text(row.name.ifEmpty { row.code },
                     style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
                 Text(row.code, style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
+                Text("${row.snapshotStatus} · 源时点 ${row.sourceAtMs?.let { java.time.Instant.ofEpochMilli(it).toString() } ?: "未知"} · ${row.source ?: "未知来源"}",
+                    style = MaterialTheme.typography.labelSmall, color = SkColors.textSecondary)
+                row.precursorHistory.forEach { alert ->
+                    Text(alert.display(), style = MaterialTheme.typography.bodySmall)
+                }
             }
             Column(horizontalAlignment = Alignment.End) {
                 row.price?.let {

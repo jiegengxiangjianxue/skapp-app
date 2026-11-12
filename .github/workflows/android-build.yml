@@ -343,7 +343,7 @@ jobs:
           - { module: engine-algo, group: price-levels, filters: '*PriceLevelParityTest,*SuperTrendTest,*IndicatorWindowTest' }
           - { module: engine-algo, group: factors, filters: '*FactorDecorrelationTest,*FactorWeightStrategyTest,*EngineWeightsTest' }
           - { module: engine-algo, group: picking, filters: '*EngineChainSelfCheckTest,*ExitPlanTest,*PositionCapTest,*ScenarioRulesTest,*LimitHistoryTest,*PortfolioRiskEngineTest' }
-          - { module: engine-algo, group: sectors-pulse, filters: '*LocalSectorsTest,*SectorAliasTest,*SectorLinkTest,*ResonanceAndPulseTest,*LivePulseTest,*PeadEventsTest' }
+          - { module: engine-algo, group: sectors-pulse, filters: '*LocalSectorsTest,*SectorAliasTest,*SectorLinkTest,*ResonanceAndPulseTest,*LivePulseTest,*PeadEventsTest,*AnomalyWatchTest' }
           - { module: engine-algo, group: render-contracts, filters: '*UiRenderContractTest,*ScreenDataContractTest,*CloudArtifactIntegrationTest' }
           - { module: engine-algo, group: perf, filters: '*PerfProbeTest' }
           - { module: engine-runtime, group: wiring, filters: '*BoardStatsWiringTest,*ChainIntegrityTest,*CloudParamsTest,*EngineFeedLiveTest,*HeartbeatPolicyTest,*ScreenerRequestTest,*StockInputWiringTest,*CentralAnalysisTest,*CentralEngineE2ETest' }

@@ -174,6 +174,11 @@ private fun PulseHeader(state: UiState) {
                 "排序：横截面相对强度（涨幅分位 45% + 量比分位 35% + 资金分位 20%），连续 2 轮确认优先",
             style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary,
         )
+        state.marketPulse.flatMap { it.precursorHistory }.distinctBy { it.code to it.triggerAtMs }
+            .sortedByDescending { it.triggerAtMs }.take(12).forEach { alert ->
+                Text("${alert.name} ${alert.code} · ${alert.display()}", style = MaterialTheme.typography.bodySmall)
+            }
+        Text("试验前兆，未验证预测准确率，观察非交易指令", style = MaterialTheme.typography.labelSmall)
         if (state.pulseDropped.isNotEmpty()) {
             Text(
                 "本轮掉出：${state.pulseDropped.joinToString("、")}",
@@ -221,11 +226,12 @@ private fun PulseRowCard(row: MarketPulseRow, vm: SkappViewModel) {
             )
             Text(
                 when {
-                    row.streak >= 2 -> "连续 ${row.streak} 轮同向（已确认）"
-                    else -> "本轮新进（未经 2 轮确认，仅观察）"
+                    row.snapshotStatus != "live" -> "行情陈旧/源时间不足"
+                    row.streak >= 2 -> "连续 ${row.streak} 条源报价同向（行情描述）"
+                    else -> "仅单条源报价，观察中"
                 } + " · 涨速 " + (row.speed?.let { "%+.2f%%".format(it) } ?: "暂无") +
                     when (row.speedSource) {
-                        "tick" -> "（30 秒快照差）"
+                        "tick" -> "（相邻源报价差）"
                         "field" -> "（东财字段·首轮替代）"
                         else -> ""
                     },
@@ -233,6 +239,10 @@ private fun PulseRowCard(row: MarketPulseRow, vm: SkappViewModel) {
                 color = if (row.streak >= 2) SkColors.textSecondary else MaterialTheme.colorScheme.primary,
             )
             Text(row.outlookReason ?: "暂无推断依据", style = MaterialTheme.typography.bodySmall, color = SkColors.textSecondary)
+            Text("源时点 ${row.sourceAtMs?.let { java.time.Instant.ofEpochMilli(it).toString() } ?: "未知"} · ${row.source ?: "未知来源"}",
+                style = MaterialTheme.typography.labelSmall, color = SkColors.textSecondary)
+            row.precursorSummary?.let { Text(it, style = MaterialTheme.typography.labelSmall) }
+            row.precursorHistory.forEach { alert -> Text(alert.display(), style = MaterialTheme.typography.bodySmall) }
             if (row.eventTitle != null) Text(
                 "事件：${row.eventTitle} · ${row.eventDirection ?: "方向暂无"} · ${row.eventReason ?: "理由暂无"} · 时点 ${row.evidenceTs ?: "暂无"}",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary,

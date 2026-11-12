@@ -80,12 +80,13 @@ class StockAnalysisInputsTest {
         }
     }
 
-    @Test fun `real detail date timestamp is retained and never refreshed`() {
+    @Test fun `legacy detail root timestamp cannot renew a report row`() {
         val root = JSONObject("""{"code":"600519","detail":{"ts":"2026-10-16","financial_latest":{"symbol":"sh600519","report_date":"2003-09-30","announce_date":"2004-10-20","eps":"","roe":"12"}}}""")
         val input = StockAnalysisInputs.financial("600519", root, null, now)
         assertEquals("2003-09-30", input.reportPeriod)
         assertNull(input.eps)
-        assertEquals(java.time.LocalDate.of(2026, 10, 16).atStartOfDay(java.time.ZoneId.of("Asia/Shanghai")).toInstant().toEpochMilli(), input.snapshotAtMs)
+        assertNull(input.snapshotAtMs)
+        assertTrue("financial_row_time_missing" in input.gaps(now))
         assertEquals("12", input.financialFields["roe"])
         assertTrue("source_stale" in input.gaps(now))
     }
@@ -107,6 +108,97 @@ class StockAnalysisInputsTest {
         for (report in listOf("\"report_date\":\"2026-02-30\"", "\"report_date\":\"2026-06-30\",\"announce_date\":\"2027-01-01\"")) {
             val root = JSONObject("{\"symbol\":\"sh600519\",\"reports\":[{$report,\"eps\":1}]}")
             assertNull(StockAnalysisInputs.financial("600519", null, root, now).eps)
+        }
+    }
+
+    private fun collected(period: String = "2026-09-30", rowTime: String = "2026-11-08T09:00:00Z"): JSONObject = JSONObject("""
+        {"symbol":"600519","code":"sh600519","ts":"2026-11-08T09:00:00Z","reports":[
+          {"symbol":"600519","report_date":"$period","announce_date":"2026-10-30","update_date":"2026-10-30",
+           "eps":42.5,"dps":null,"dps_reason":"no_implemented_dividend","ts":"$rowTime",
+           "data_evidence":{"eps":{"source":"https://datacenter-web.eastmoney.com/api/data/v1/get?reportName=RPT_LICO_FN_CPD","field":"BASIC_EPS","report_date":"$period","unit":"CNY/share"}}}
+        ]}
+    """)
+
+    @Test fun `collected report cold starts with latest EPS and real provenance but no invented DPS or factor`() = runBlocking {
+        val doc = collected().toString()
+        val input = Db.stockAnalysisInputs("600519", bars, now, StockInputTransport { url ->
+            if (url.endsWith("/fin/sh600519.json")) doc else null
+        })
+        assertEquals(42.5, input.eps)
+        assertEquals("2026-09-30", input.reportPeriod)
+        assertNull(input.dps)
+        assertTrue(input.source!!.contains("datacenter-web.eastmoney.com"))
+        assertTrue(input.financialFields.containsKey("data_evidence"))
+        assertTrue(input.gaps(now).any { it.contains("cnfin_benchmark_unverified") })
+    }
+
+    @Test fun `collected row timestamp is never renewed from root and identity is checked twice`() {
+        val stale = StockAnalysisInputs.financial("600519", null, null, now, collected(rowTime = "2026-10-01T09:00:00Z"))
+        assertTrue("source_stale" in stale.gaps(now))
+        val noTime = StockAnalysisInputs.financial("600519", null, null, now, collected(rowTime = ""))
+        assertNull(noTime.snapshotAtMs)
+        for (doc in listOf(collected().put("symbol", "002242"), collected().also {
+            it.getJSONArray("reports").getJSONObject(0).put("symbol", "002242")
+        })) assertNull(StockAnalysisInputs.financial("600519", null, null, now, doc).eps)
+    }
+
+    @Test fun `collected latest period never borrows historical dividend and same period conflicts reject`() {
+        val old = JSONObject("""{"symbol":"sh600519","ts":"2026-11-08T09:00:00Z","reports":[{"report_date":"2025-12-31","dps":20}]}""")
+        assertNull(StockAnalysisInputs.financial("600519", null, old, now, collected()).dps)
+        val conflict = JSONObject("""{"symbol":"sh600519","ts":"2026-11-08T09:00:00Z","reports":[{"report_date":"2026-09-30","eps":99}]}""")
+        val input = StockAnalysisInputs.financial("600519", null, conflict, now, collected())
+        assertNull(input.eps)
+        assertTrue(input.missing.contains("eps_conflict"))
+        val explicitConflict = collected().also {
+            it.getJSONArray("reports").getJSONObject(0).put("dps_reason", "dividend_conflict")
+        }
+        assertTrue(StockAnalysisInputs.financial("600519", null, null, now, explicitConflict).missing.any { it.contains("conflict") })
+    }
+
+    @Test fun `collected explicit zero and same period merge preserve field provenance`() {
+        val doc = collected()
+        val row = doc.getJSONArray("reports").getJSONObject(0)
+        row.put("dps", 0).put("dps_reason", JSONObject.NULL)
+        row.getJSONObject("data_evidence").put("dps", JSONObject("""{"symbol":"600519","report_date":"2026-09-30","source":"https://datacenter-web.eastmoney.com/api/data/v1/get?reportName=RPT_LICO_FN_CPD","field":"ASSIGNDSCRPT","unit":"CNY/share","confidence":"verified_public","snapshot_ts":"2026-11-08T09:00:00Z"}"""))
+        val input = StockAnalysisInputs.financial("600519", null, null, now, doc)
+        assertEquals(0.0, input.dps)
+        assertEquals(42.5, input.eps)
+        assertTrue(input.missing.isEmpty())
+        assertTrue("DPS" !in input.gaps(now))
+        val duplicate = JSONObject(row.toString()).put("eps", 43.0)
+        doc.getJSONArray("reports").put(duplicate)
+        assertNull(StockAnalysisInputs.financial("600519", null, null, now, doc).eps)
+    }
+
+    @Test fun `unverified boolean future source and cross period evidence fail closed`() {
+        for (mutate in listOf<(JSONObject) -> Unit>(
+            { it.put("eps", true) },
+            { it.put("announce_date", "2027-01-01") },
+            { it.put("update_date", "2027-01-01") },
+            { it.put("ts", "2027-01-01T00:00:00Z") },
+            { it.getJSONObject("data_evidence").getJSONObject("eps").put("report_date", "2026-06-30") },
+            { it.getJSONObject("data_evidence").getJSONObject("eps").put("symbol", "002242") },
+            { it.getJSONObject("data_evidence").getJSONObject("eps").put("source", "https://example.invalid/financial") }
+        )) {
+            val doc = collected()
+            mutate(doc.getJSONArray("reports").getJSONObject(0))
+            assertNull(StockAnalysisInputs.financial("600519", null, null, now, doc).eps)
+        }
+    }
+
+    @Test fun `legacy root clocks and missing field evidence cannot pass financial gates`() {
+        val row = JSONObject("""{"report_date":"2026-09-30","eps":42.5,"dps":0}""")
+        val holo = JSONObject().put("symbol", "600519").put("ts", "2026-11-08T09:00:00Z")
+            .put("reports", org.json.JSONArray().put(row))
+        val api = JSONObject().put("code", "600519").put("ts", "2026-11-08T09:00:00Z")
+            .put("detail", JSONObject().put("financial_latest", row))
+        for (input in listOf(StockAnalysisInputs.financial("600519", api, null, now),
+            StockAnalysisInputs.financial("600519", null, holo, now))) {
+            assertEquals(42.5, input.eps)
+            assertTrue("financial_row_identity_missing" in input.gaps(now))
+            assertTrue("financial_row_time_missing" in input.gaps(now))
+            assertTrue("eps_source_evidence_missing" in input.gaps(now))
+            assertTrue("dps_source_evidence_missing" in input.gaps(now))
         }
     }
 
